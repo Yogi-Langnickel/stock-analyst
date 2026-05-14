@@ -44,6 +44,12 @@ export:
 PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf
 ```
 
+Store a validated PDF into ignored private local upload storage:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli process-pdf ./data/private/issue.pdf
+```
+
 Future dependency setup should use a virtual environment:
 
 ```sh
@@ -55,5 +61,6 @@ pip install -e ".[dev]"
 ## Documentation
 
 - [Implementation plan](docs/implementation-plan.md)
+- [Free market data options](docs/free-market-data-options.md)
 - [Persona review and revisions](docs/persona-review.md)
 - [Security and privacy](docs/security-and-privacy.md)

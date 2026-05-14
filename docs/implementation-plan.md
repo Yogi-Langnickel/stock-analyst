@@ -59,6 +59,11 @@ Recommended initial shape:
 - Enrichment: RSS/API first. Scrapling only as a controlled, allowlisted
   enrichment adapter for company/news context.
 
+Free market-data enrichment is documented in
+`docs/free-market-data-options.md`. It remains disabled by default, cannot
+overwrite magazine-extracted values, and must mark missing or ambiguous provider
+data as reviewer-gated rather than inferred.
+
 Do not defer the frontend decision past PDF intake. Build and test the first
 intake UI alongside upload validation so accessibility and recovery behavior are
 verified before extraction complexity grows.
@@ -190,6 +195,8 @@ Acceptance:
 
 Acceptance:
 
+- Completed first slice: validated PDFs can be copied into ignored private
+  local storage with a JSONL manifest and duplicate checksum detection.
 - Uploader can upload with one primary action: "Choose PDF" and "Upload issue".
 - A non-technical user can upload a PDF without seeing technical terms.
 - Body text is at least 18px, touch targets are at least 44px, focus states are

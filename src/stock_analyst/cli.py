@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from stock_analyst.intake import IntakeError, preview_pdf_intake
+from stock_analyst.intake import IntakeError, preview_pdf_intake, store_pdf_upload
 from stock_analyst.pipeline import PdfProcessingError, calculate_processing_steps
 
 
@@ -24,12 +24,34 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Validate only. Do not copy, OCR, extract, or export.",
     )
+    process_pdf.add_argument(
+        "--upload-dir",
+        type=Path,
+        default=Path("data/uploads"),
+        help="Private local upload directory used when --dry-run is not set.",
+    )
 
     return parser
 
 
-def run_process_pdf(pdf_path: Path, *, dry_run: bool) -> dict[str, object]:
+def run_process_pdf(
+    pdf_path: Path,
+    *,
+    dry_run: bool,
+    upload_dir: Path = Path("data/uploads"),
+) -> dict[str, object]:
     intake = preview_pdf_intake(pdf_path)
+    storage: dict[str, object] = {"stored": False}
+
+    if not dry_run:
+        stored = store_pdf_upload(pdf_path, upload_dir)
+        storage = {
+            "stored": True,
+            "duplicate": stored.duplicate,
+            "status": stored.status,
+            "storedPath": str(stored.stored_path),
+            "manifestPath": str(stored.manifest_path),
+        }
 
     return {
         "dryRun": dry_run,
@@ -37,6 +59,7 @@ def run_process_pdf(pdf_path: Path, *, dry_run: bool) -> dict[str, object]:
         "checksumSha256": intake.checksum_sha256,
         "sizeBytes": intake.size_bytes,
         "status": intake.status,
+        "storage": storage,
         "steps": calculate_processing_steps(pdf_path),
     }
 
@@ -47,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "process-pdf":
-            result = run_process_pdf(args.pdf, dry_run=args.dry_run)
+            result = run_process_pdf(args.pdf, dry_run=args.dry_run, upload_dir=args.upload_dir)
         else:
             parser.error(f"Unsupported command: {args.command}")
     except (IntakeError, PdfProcessingError) as error:
