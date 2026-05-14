@@ -410,10 +410,12 @@ and visible dry-run output first.
 
 ## Immediate Next Tasks
 
-1. Wire a local SQLite schema and repository layer.
 1. Define extraction schemas, confidence fields, status transitions, and
    fixture manifest format.
-1. Implement checksum and upload validation.
-1. Add a CLI command for `process-pdf --dry-run <file>`.
+1. Implement checksum and upload validation. Initial local helper is in
+   `stock_analyst.intake`.
+1. Add a CLI command for `process-pdf --dry-run <file>`. Initial command is in
+   `stock_analyst.cli`.
+1. Wire a local SQLite schema and repository layer.
 1. Add the first private fixture outside Git and record expected extraction rows.
 1. Extend the accessible intake UI into a working local upload page.

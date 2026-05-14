@@ -39,7 +39,10 @@ independent financial advice.
 - Keep reusable implementation code under `src/stock_analyst/`.
 - Add focused tests before changing extraction, normalization, review gating, or
   export behavior.
-- Run `python3 -m compileall src tests` after scaffold or Python changes.
+- Run `PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests` after
+  scaffold or Python changes.
+- Run `PYTHONPATH=src python3 -m unittest discover tests` for the current
+  standard-library test suite.
 
 ## Memory
 

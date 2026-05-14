@@ -33,7 +33,15 @@ keep all rows draft-only until manual review.
 No dependencies are installed by default in this scaffold.
 
 ```sh
-python3 -m compileall src tests
+PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests
+PYTHONPATH=src python3 -m unittest discover tests
+```
+
+Dry-run a local PDF intake without copying, OCR, extraction, external calls, or
+export:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf
 ```
 
 Future dependency setup should use a virtual environment:
