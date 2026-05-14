@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stock Analyst</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="upload-panel" aria-labelledby="page-title">
+        <p class="eyebrow">Privater Familienbereich</p>
+        <h1 id="page-title">Magazin-PDF hochladen</h1>
+        <p class="intro">
+          Lade eine Ausgabe hoch. Die Datei bleibt privat und wird erst nach
+          Prüfung für die Familie sichtbar.
+        </p>
+
+        <form class="upload-form">
+          <label class="file-label" for="issue-pdf">PDF-Ausgabe auswählen</label>
+          <input id="issue-pdf" name="issue-pdf" type="file" accept="application/pdf" />
+
+          <button type="button">Ausgabe hochladen</button>
+        </form>
+
+        <ol class="status-list" aria-label="Verarbeitungsschritte">
+          <li><span aria-hidden="true"></span>Datei auswählen</li>
+          <li><span aria-hidden="true"></span>Datei prüfen</li>
+          <li><span aria-hidden="true"></span>Zur Prüfung vorbereiten</li>
+        </ol>
+
+        <p class="help">
+          Wenn etwas nicht klappt, kann ein Familienmitglied die Datei erneut
+          hochladen oder die Prüfung übernehmen.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
