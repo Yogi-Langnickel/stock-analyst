@@ -1,6 +1,6 @@
 # Stock Analyst Agent Memory
 
-Status: active  
+Status: active
 Created: 2026-05-15
 
 ## Current Truth
@@ -15,7 +15,9 @@ Created: 2026-05-15
   as fixture-driven enrichment and cannot overwrite magazine source values.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
   Vantage, Twelve Data, and SEC companyfacts, but live adapters are not
-  implemented.
+  implemented. Cache request metadata can be built deterministically for known
+  providers without creating files, exposing credential-like parameters, or
+  making network calls.
 - Manual review remains mandatory before family-visible digest rows or exports.
 
 ## Commands

@@ -101,3 +101,15 @@ because adapters, cache policy, throttling, and terms checks are not complete.
   from environment-like mappings without reading or exposing secret values.
 - Unit tests prove provider metadata does not permit live network access and
   key-based providers remain metadata-only until adapters are explicitly built.
+
+## Third Slice Implemented
+
+- Provider metadata now records rate-limit notes and whether cache files are
+  required before live access.
+- `stock_analyst.market_data.describe_market_data_request` normalizes known
+  provider request identity for future cache lookup.
+- `stock_analyst.market_data.build_market_data_cache_metadata` returns a
+  deterministic path under ignored `data/market-cache` without creating files
+  or making network calls.
+- Unit tests prove cache identity rejects credential-like parameters and
+  unknown provider IDs.

@@ -1,8 +1,11 @@
 import unittest
 from decimal import Decimal
+from pathlib import Path
 
 from stock_analyst.market_data import (
     available_provider_metadata,
+    build_market_data_cache_metadata,
+    describe_market_data_request,
     load_market_data_config,
     market_data_disabled,
     parse_stooq_daily_csv,
@@ -19,6 +22,8 @@ class MarketDataTest(unittest.TestCase):
         self.assertIn("twelve_data", providers)
         self.assertIn("sec_companyfacts", providers)
         self.assertFalse(any(provider.network_access for provider in providers.values()))
+        self.assertTrue(providers["alpha_vantage"].cache_required_before_live)
+        self.assertTrue(providers["alpha_vantage"].rate_limit_notes)
 
     def test_market_data_config_defaults_to_disabled(self) -> None:
         config = load_market_data_config({})
@@ -94,6 +99,43 @@ class MarketDataTest(unittest.TestCase):
 
         self.assertEqual(result.status, "needs_review")
         self.assertIsNone(result.quote)
+
+    def test_market_data_request_descriptor_normalizes_safe_cache_identity(self) -> None:
+        descriptor = describe_market_data_request(
+            provider=" Stooq_CSV ",
+            symbol=" aapl.us ",
+            endpoint=" Daily ",
+            params={"Interval": "1d", "OutputSize": 30},
+        )
+        cache = build_market_data_cache_metadata(
+            descriptor,
+            cache_root=Path("data/market-cache"),
+        )
+
+        self.assertEqual(descriptor.provider, "stooq_csv")
+        self.assertEqual(descriptor.symbol, "AAPL.US")
+        self.assertEqual(descriptor.params, (("interval", "1d"), ("outputsize", "30")))
+        self.assertEqual(cache.provider, "stooq_csv")
+        self.assertEqual(cache.cache_path.parent, Path("data/market-cache/stooq_csv"))
+        self.assertTrue(cache.cache_path.name.startswith("aapl.us-daily-"))
+        self.assertEqual(cache.cache_path.suffix, ".json")
+
+    def test_market_data_request_descriptor_rejects_secret_cache_params(self) -> None:
+        with self.assertRaises(ValueError):
+            describe_market_data_request(
+                provider="alpha_vantage",
+                symbol="MSFT",
+                endpoint="daily",
+                params={"apikey": "should-not-enter-cache-identity"},
+            )
+
+    def test_market_data_request_descriptor_rejects_unknown_provider(self) -> None:
+        with self.assertRaises(ValueError):
+            describe_market_data_request(
+                provider="../unknown",
+                symbol="MSFT",
+                endpoint="daily",
+            )
 
 
 if __name__ == "__main__":

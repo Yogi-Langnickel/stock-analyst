@@ -1,6 +1,6 @@
 # Stock Analyst Unblock Notes
 
-Status: non-blocking for local implementation  
+Status: non-blocking for local implementation
 Created: 2026-05-15
 
 Local development can continue on scoped branches. These items block normal
