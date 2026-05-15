@@ -1,11 +1,27 @@
 # Free Market Data Options
 
-Status: active plan  
+Status: active plan
 Created: 2026-05-15
+Last checked: 2026-05-15
 
 Market data is enrichment only. It can help reviewers validate context, stale
 prices, symbols, and broad market moves, but it must not overwrite magazine
 source fields or fill missing recommendation details.
+
+## Provider Status
+
+| Provider | Current implementation | Credentials | Network in tests | Fit |
+| --- | --- | --- | --- | --- |
+| `disabled` | Available default | None | No | Tests, local PDF intake, family review |
+| `stooq_csv` | Local CSV parser only | None | No | First deterministic price-context parser |
+| `alpha_vantage` | Metadata only | `ALPHA_VANTAGE_API_KEY` | No | Optional future key-based daily and cross-asset context |
+| `twelve_data` | Metadata only | `TWELVE_DATA_API_KEY` | No | Optional future quote/time-series/reference context |
+| `sec_companyfacts` | Metadata only | No key; `SEC_USER_AGENT` before live access | No | Optional future US issuer fundamentals and filing metadata |
+
+`STOCK_ANALYST_MARKET_DATA_PROVIDER` defaults to `disabled`. Selecting
+`stooq_csv` only enables parsing caller-supplied CSV text; it does not fetch
+from Stooq. Selecting key-based or SEC providers does not enable live calls
+because adapters, cache policy, throttling, and terms checks are not complete.
 
 ## Recommended Order
 
@@ -36,6 +52,28 @@ source fields or fill missing recommendation details.
    - Official free source for US fundamentals and filing metadata.
    - Use for issuer/company context, not price validation.
 
+## Current Provider Notes
+
+- Alpha Vantage: official support says free API service covers most datasets up
+  to 25 requests per day and requires accepting Alpha Vantage terms when
+  claiming a free key. The terms describe personal, non-commercial use and a
+  separate commercial-use path. Source:
+  <https://www.alphavantage.co/support/> and
+  <https://www.alphavantage.co/terms_of_service/>.
+- Twelve Data: Basic is listed as free with 8 API credits per minute and 800 per
+  day, with endpoint-specific credit weights. Source:
+  <https://twelvedata.com/pricing>.
+- SEC companyfacts: the official SEC API exposes
+  `data.sec.gov/api/xbrl/companyfacts/CIK##########.json`, bulk companyfacts ZIP
+  data, and real-time API updates. SEC fair-access guidance limits each user to
+  no more than 10 requests per second and requires efficient, identified
+  automated access. Sources:
+  <https://www.sec.gov/search-filings/edgar-application-programming-interfaces>
+  and <https://www.sec.gov/about/developer-resources>.
+- Stooq CSV: keep as the first no-key parser for reviewer-supplied CSV text.
+  Before adding a live downloader, confirm Stooq terms, acceptable request
+  rates, caching expectations, and symbol coverage for US/EU instruments.
+
 ## Implementation Plan
 
 1. Keep `STOCK_ANALYST_MARKET_DATA_PROVIDER=disabled` as the default.
@@ -54,3 +92,12 @@ source fields or fill missing recommendation details.
 - `stock_analyst.market_data.market_data_disabled`
 - `stock_analyst.market_data.parse_stooq_daily_csv`
 - Unit tests proving missing prices stay review-gated.
+
+## Second Slice Implemented
+
+- Static provider metadata for disabled, Stooq CSV, Alpha Vantage, Twelve Data,
+  and SEC companyfacts.
+- `stock_analyst.market_data.load_market_data_config` resolves provider choice
+  from environment-like mappings without reading or exposing secret values.
+- Unit tests prove provider metadata does not permit live network access and
+  key-based providers remain metadata-only until adapters are explicitly built.
