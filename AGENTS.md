@@ -48,6 +48,7 @@ independent financial advice.
 
 This repo starts with lightweight documentation:
 
+- `docs/agent-memory.md`
 - `docs/implementation-plan.md`
 - `docs/persona-review.md`
 - `docs/security-and-privacy.md`

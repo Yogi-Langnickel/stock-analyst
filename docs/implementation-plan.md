@@ -4,6 +4,19 @@ Status: active draft
 Created: 2026-05-14  
 Revised after persona review: 2026-05-14
 
+## Start Here
+
+- Current slice: local-first PDF intake, private ignored upload storage,
+  checksum duplicate detection, and disabled-by-default market-data enrichment.
+- Hard boundary: market data is context only and cannot overwrite magazine
+  source values or invent missing price, stop-loss, target, ticker, ISIN, WKN,
+  or recommendation data.
+- Performance constraints: dedupe before expensive OCR, keep OCR and provider
+  enrichment as separate queues, and cache future provider responses under
+  ignored `data/market-cache`.
+- Read `docs/agent-memory.md` for compact current state before loading this full
+  plan.
+
 ## Goal
 
 Build a private family application that turns family-owned Der Aktionaer PDF

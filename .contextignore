@@ -1,0 +1,17 @@
+.venv/
+.pycache/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+data/
+uploads/
+exports/
+*.pdf
+*.xlsx
+*.csv
+*.jsonl
+.env
+.env.*
