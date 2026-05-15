@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from io import StringIO
 from pathlib import Path
@@ -130,6 +130,13 @@ class MarketDataCacheMetadata:
     cache_key: str
     cache_path: Path
     safe_identity: Mapping[str, object]
+    retrieved_at: datetime | None = None
+    observed_on: date | None = None
+    ttl_seconds: int | None = None
+    expires_at: datetime | None = None
+    source_url_hash: str | None = None
+    terms_checked_at: date | None = None
+    terms_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -188,8 +195,24 @@ def build_market_data_cache_metadata(
     descriptor: MarketDataRequestDescriptor,
     *,
     cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
+    retrieved_at: datetime | None = None,
+    observed_on: date | None = None,
+    ttl_seconds: int | None = None,
+    source_url: str | None = None,
+    terms_checked_at: date | None = None,
+    terms_version: str | None = None,
 ) -> MarketDataCacheMetadata:
     """Return deterministic cache metadata without creating files or making network calls."""
+
+    normalized_retrieved_at = _normalize_cache_datetime(retrieved_at)
+    if ttl_seconds is not None and ttl_seconds < 0:
+        raise ValueError("market data cache ttl_seconds cannot be negative")
+    expires_at = (
+        normalized_retrieved_at + timedelta(seconds=ttl_seconds)
+        if normalized_retrieved_at is not None and ttl_seconds is not None
+        else None
+    )
+    normalized_terms_version = terms_version.strip() if terms_version else None
 
     safe_identity: Mapping[str, object] = {
         "provider": descriptor.provider,
@@ -214,6 +237,13 @@ def build_market_data_cache_metadata(
         cache_key=cache_key,
         cache_path=cache_path,
         safe_identity=safe_identity,
+        retrieved_at=normalized_retrieved_at,
+        observed_on=observed_on,
+        ttl_seconds=ttl_seconds,
+        expires_at=expires_at,
+        source_url_hash=_hash_source_url(source_url),
+        terms_checked_at=terms_checked_at,
+        terms_version=normalized_terms_version,
     )
 
 
@@ -341,3 +371,20 @@ def _normalize_safe_cache_params(params: Mapping[str, object]) -> tuple[tuple[st
 def _slug_for_cache(value: str) -> str:
     slug = re.sub(r"[^a-z0-9._-]+", "-", value.strip().lower()).strip("-")
     return slug or "request"
+
+
+def _normalize_cache_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _hash_source_url(source_url: str | None) -> str | None:
+    if not source_url:
+        return None
+    normalized_url = source_url.strip()
+    if not normalized_url:
+        return None
+    return hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()[:16]

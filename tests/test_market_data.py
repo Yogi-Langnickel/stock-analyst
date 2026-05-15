@@ -1,4 +1,5 @@
 import unittest
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -119,6 +120,51 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(cache.cache_path.parent, Path("data/market-cache/stooq_csv"))
         self.assertTrue(cache.cache_path.name.startswith("aapl.us-daily-"))
         self.assertEqual(cache.cache_path.suffix, ".json")
+        self.assertIsNone(cache.retrieved_at)
+        self.assertIsNone(cache.observed_on)
+        self.assertIsNone(cache.ttl_seconds)
+        self.assertIsNone(cache.expires_at)
+        self.assertIsNone(cache.source_url_hash)
+        self.assertIsNone(cache.terms_checked_at)
+        self.assertIsNone(cache.terms_version)
+
+    def test_market_data_cache_metadata_records_freshness_and_terms_without_raw_url(
+        self,
+    ) -> None:
+        descriptor = describe_market_data_request(
+            provider="stooq_csv",
+            symbol="AAPL.US",
+            endpoint="daily",
+        )
+        cache = build_market_data_cache_metadata(
+            descriptor,
+            retrieved_at=datetime(2026, 5, 15, 8, 30, tzinfo=timezone.utc),
+            observed_on=date(2026, 5, 14),
+            ttl_seconds=86_400,
+            source_url="https://stooq.example/q/d/l/?s=aapl.us&i=d",
+            terms_checked_at=date(2026, 5, 15),
+            terms_version="stooq-manual-review-2026-05-15",
+        )
+
+        self.assertEqual(cache.retrieved_at.isoformat(), "2026-05-15T08:30:00+00:00")
+        self.assertEqual(cache.observed_on.isoformat(), "2026-05-14")
+        self.assertEqual(cache.ttl_seconds, 86_400)
+        self.assertEqual(cache.expires_at.isoformat(), "2026-05-16T08:30:00+00:00")
+        self.assertEqual(cache.source_url_hash, "0d4f4a3a2dc26821")
+        self.assertNotIn("source_url", cache.safe_identity)
+        self.assertNotIn("stooq.example", repr(cache))
+        self.assertEqual(cache.terms_checked_at.isoformat(), "2026-05-15")
+        self.assertEqual(cache.terms_version, "stooq-manual-review-2026-05-15")
+
+    def test_market_data_cache_metadata_rejects_negative_ttl(self) -> None:
+        descriptor = describe_market_data_request(
+            provider="stooq_csv",
+            symbol="AAPL.US",
+            endpoint="daily",
+        )
+
+        with self.assertRaises(ValueError):
+            build_market_data_cache_metadata(descriptor, ttl_seconds=-1)
 
     def test_market_data_request_descriptor_rejects_secret_cache_params(self) -> None:
         with self.assertRaises(ValueError):

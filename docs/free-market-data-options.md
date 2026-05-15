@@ -83,9 +83,13 @@ because adapters, cache policy, throttling, and terms checks are not complete.
    provider.
 4. Attach enrichment output as source metadata with provider, observed date,
    and status.
-5. Mark unavailable or ambiguous market rows as `needs_review`; never infer a
+5. Cache metadata must carry freshness and compliance review fields before any
+   live adapter is enabled: `retrieved_at`, `observed_on` when the provider
+   supplies one, `ttl_seconds`, `expires_at`, `source_url_hash` instead of raw
+   URLs, `terms_checked_at`, and a terms version or review note.
+6. Mark unavailable or ambiguous market rows as `needs_review`; never infer a
    missing price, stop loss, target, ticker, ISIN, WKN, or recommendation.
-6. Add provider terms/rate-limit notes before enabling network calls.
+7. Add provider terms/rate-limit notes before enabling network calls.
 
 ## First Slice Implemented
 
@@ -113,3 +117,14 @@ because adapters, cache policy, throttling, and terms checks are not complete.
   or making network calls.
 - Unit tests prove cache identity rejects credential-like parameters and
   unknown provider IDs.
+
+## Fourth Slice Implemented
+
+- Cache metadata now includes placeholders or caller-supplied values for
+  `retrieved_at`, `observed_on`, `ttl_seconds`, `expires_at`,
+  `source_url_hash`, `terms_checked_at`, and `terms_version`.
+- `source_url_hash` stores a SHA-256 prefix of the source URL so future cache
+  records can be audited without retaining raw provider URLs that may include
+  sensitive query structure.
+- TTL expiry is computed only from supplied metadata; live providers remain
+  disabled and no network access is added.
