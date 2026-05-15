@@ -3,14 +3,32 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
+import re
 import shutil
 
 PDF_MAGIC = b"%PDF-"
 READ_CHUNK_SIZE = 1024 * 1024
+ISSUE_DATE_PATTERNS = (
+    re.compile(
+        r"(?P<year>20\d{2})[-_. ]?"
+        r"(?P<month>0[1-9]|1[0-2])[-_. ]?"
+        r"(?P<day>0[1-9]|[12]\d|3[01])"
+    ),
+    re.compile(
+        r"(?P<day>0[1-9]|[12]\d|3[01])[-_. ]"
+        r"(?P<month>0[1-9]|1[0-2])[-_. ]"
+        r"(?P<year>20\d{2})"
+    ),
+    re.compile(
+        r"(?P<day>0[1-9]|[12]\d|3[01])"
+        r"(?P<month>0[1-9]|1[0-2])"
+        r"(?P<year>20\d{2})"
+    ),
+)
 
 
 class IntakeError(ValueError):
@@ -22,6 +40,8 @@ class IntakePreview:
     filename: str
     checksum_sha256: str
     size_bytes: int
+    source_pdf_id: str
+    issue_date_guess: str | None
     accepted_at: str
     status: str
 
@@ -31,6 +51,8 @@ class StoredPdfUpload:
     filename: str
     checksum_sha256: str
     size_bytes: int
+    source_pdf_id: str
+    issue_date_guess: str | None
     stored_path: Path
     manifest_path: Path
     accepted_at: str
@@ -46,6 +68,23 @@ def calculate_sha256(path: Path) -> str:
             digest.update(chunk)
 
     return digest.hexdigest()
+
+
+def guess_issue_date(filename: str) -> str | None:
+    """Return an ISO date guessed from a filename, without inferring missing parts."""
+
+    for pattern in ISSUE_DATE_PATTERNS:
+        match = pattern.search(filename)
+        if match:
+            year = match.group("year")
+            month = match.group("month")
+            day = match.group("day")
+            try:
+                return date.fromisoformat(f"{year}-{month}-{day}").isoformat()
+            except ValueError:
+                continue
+
+    return None
 
 
 def assert_pdf_upload(path: Path) -> None:
@@ -66,11 +105,14 @@ def preview_pdf_intake(path: Path) -> IntakePreview:
     """Validate and summarize a PDF without copying or processing it."""
 
     assert_pdf_upload(path)
+    checksum = calculate_sha256(path)
 
     return IntakePreview(
         filename=path.name,
-        checksum_sha256=calculate_sha256(path),
+        checksum_sha256=checksum,
         size_bytes=path.stat().st_size,
+        source_pdf_id=f"pdf_{checksum[:16]}",
+        issue_date_guess=guess_issue_date(path.name),
         accepted_at=datetime.now(timezone.utc).isoformat(),
         status="ready_for_review",
     )
@@ -119,9 +161,16 @@ def store_pdf_upload(
             "filename": preview.filename,
             "checksumSha256": preview.checksum_sha256,
             "sizeBytes": preview.size_bytes,
+            "sourcePdfId": preview.source_pdf_id,
+            "issueDateGuess": preview.issue_date_guess,
             "storedPath": stored_path.name,
             "acceptedAt": preview.accepted_at,
             "status": "uploaded",
+            "processingStatus": {
+                "stage": "queued_for_text_extraction",
+                "status": "pending",
+                "externalServicesEnabled": False,
+            },
         }
 
         with manifest_path.open("a", encoding="utf-8") as manifest:
@@ -131,6 +180,8 @@ def store_pdf_upload(
         filename=preview.filename,
         checksum_sha256=preview.checksum_sha256,
         size_bytes=preview.size_bytes,
+        source_pdf_id=preview.source_pdf_id,
+        issue_date_guess=preview.issue_date_guess,
         stored_path=stored_path,
         manifest_path=manifest_path,
         accepted_at=preview.accepted_at,

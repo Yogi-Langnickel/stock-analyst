@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from stock_analyst.extraction import PdfTextExtractionResult, TextExtractionStatus
 from stock_analyst.schemas import RecommendationDraft
 
 
@@ -39,3 +40,45 @@ def apply_manual_review_gate(rows: list[RecommendationDraft]) -> list[Recommenda
     for row in rows:
         row.mark_review_gate()
     return rows
+
+
+def build_draft_review_status(
+    *,
+    upload_status: str,
+    extraction: PdfTextExtractionResult | None = None,
+) -> dict[str, object]:
+    """Return a local status summary for upload through draft review readiness."""
+
+    if upload_status == "duplicate":
+        return {
+            "stage": "intake",
+            "status": "duplicate",
+            "readyForDraftReview": False,
+            "message": "This PDF is already in private local storage.",
+        }
+
+    if extraction is None:
+        return {
+            "stage": "text_extraction",
+            "status": "pending",
+            "readyForDraftReview": False,
+            "message": "PDF is queued for local text extraction.",
+        }
+
+    if extraction.status == TextExtractionStatus.EXTRACTED:
+        return {
+            "stage": "draft_review",
+            "status": "needs_review",
+            "readyForDraftReview": True,
+            "pageCount": extraction.page_count,
+            "message": "Extracted text is ready for manual draft review.",
+        }
+
+    return {
+        "stage": "text_extraction",
+        "status": "needs_review",
+        "readyForDraftReview": False,
+        "pageCount": extraction.page_count,
+        "message": extraction.failure_reason
+        or "Local extraction needs reviewer attention before draft review.",
+    }

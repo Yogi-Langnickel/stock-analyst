@@ -10,7 +10,11 @@ Created: 2026-05-15
 - Source PDFs, extracted text, review notes, spreadsheet IDs, and exports are
   private and must not be committed.
 - Local PDF intake can validate PDFs, copy them into ignored private storage,
-  record a JSONL manifest, and detect duplicates by checksum.
+  record a JSONL manifest with source ID, checksum, issue date guess, and
+  processing status, and detect duplicates by checksum.
+- Local text extraction is scaffolded behind an injected adapter. PyMuPDF is an
+  optional local adapter; tests use deterministic no-network stubs and low-text
+  pages are marked for future OCR instead of sending PDFs externally.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha

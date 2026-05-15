@@ -9,10 +9,10 @@ financial advice, a recommendation, or a suitability assessment.
 
 ## Current Status
 
-Initialized planning and scaffold. The first implementation target is a
-local-first prototype that can ingest a PDF, provide an accessible uploader,
-extract page text with references, create draft article/table candidates, and
-keep all rows draft-only until manual review.
+Initialized planning and scaffold. The current local-first prototype can
+validate and store PDFs, record checksum/issue-date manifest metadata, detect
+duplicates, scaffold local text extraction status, and keep all rows draft-only
+until manual review.
 
 ## Intended Users
 
@@ -49,6 +49,10 @@ Store a validated PDF into ignored private local upload storage:
 ```sh
 PYTHONPATH=src python3 -m stock_analyst.cli process-pdf ./data/private/issue.pdf
 ```
+
+The manifest records only local metadata such as checksum, guessed issue date,
+private storage filename, and processing status. Source PDFs and extracted text
+remain in ignored private storage and must not be committed.
 
 Future dependency setup should use a virtual environment:
 

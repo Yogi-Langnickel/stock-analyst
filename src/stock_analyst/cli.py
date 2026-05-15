@@ -7,7 +7,11 @@ import json
 from pathlib import Path
 
 from stock_analyst.intake import IntakeError, preview_pdf_intake, store_pdf_upload
-from stock_analyst.pipeline import PdfProcessingError, calculate_processing_steps
+from stock_analyst.pipeline import (
+    PdfProcessingError,
+    build_draft_review_status,
+    calculate_processing_steps,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,13 +56,24 @@ def run_process_pdf(
             "storedPath": str(stored.stored_path),
             "manifestPath": str(stored.manifest_path),
         }
+        processing_status = build_draft_review_status(upload_status=stored.status)
+    else:
+        processing_status = {
+            "stage": "intake",
+            "status": "dry_run",
+            "readyForDraftReview": False,
+            "message": "Validated only; no file was copied or extracted.",
+        }
 
     return {
         "dryRun": dry_run,
         "filename": intake.filename,
         "checksumSha256": intake.checksum_sha256,
         "sizeBytes": intake.size_bytes,
+        "sourcePdfId": intake.source_pdf_id,
+        "issueDateGuess": intake.issue_date_guess,
         "status": intake.status,
+        "processingStatus": processing_status,
         "storage": storage,
         "steps": calculate_processing_steps(pdf_path),
     }
