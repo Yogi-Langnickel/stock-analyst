@@ -150,6 +150,20 @@ tabs:
 | `low_priority_back_matter` | `Extraction Audit` | Back matter after statistics. |
 <!-- markdownlint-enable MD013 -->
 
+## Local Export Plan
+
+The local `workbook-export-plan` command builds a JSON dry run of planned row
+DTOs for the workbook tabs. It currently routes:
+
+- stock recommendation cards to `Recommendation Cards`
+- derivative cards to `Derivative Tips`
+- dividend strategy rows to `Dividend Focus`
+- section-inventory routing hints to `Extraction Audit`
+
+The command does not call Google Sheets and does not write export files. Planned
+rows are draft reviewer infrastructure only: `exportable=false`,
+`requiresManualReview=true`, and `approvedRows=0`.
+
 ## Reviewer Rule
 
 Approved exports should use neutral wording such as "magazine says" or

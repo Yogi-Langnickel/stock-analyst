@@ -31,6 +31,7 @@ from stock_analyst.quality_report import build_extraction_quality_report
 from stock_analyst.recommendation_cards import extract_recommendation_cards_from_pdf
 from stock_analyst.review_queue import build_review_queue_from_manifest
 from stock_analyst.section_inventory import build_section_inventory_from_pdf
+from stock_analyst.workbook_export import build_workbook_export_plan_from_pdf
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -170,6 +171,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
     )
     dividend_strategy.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    workbook_export_plan = subcommands.add_parser(
+        "workbook-export-plan",
+        help="Build a local dry-run Google Sheets row plan without writing to Sheets.",
+    )
+    workbook_export_plan.add_argument("pdf", type=Path)
+    workbook_export_plan.add_argument(
+        "--issue-id",
+        default=None,
+        help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
+    )
+    workbook_export_plan.add_argument(
         "--min-embedded-chars",
         type=int,
         default=40,
@@ -397,6 +415,20 @@ def run_dividend_strategy(
     return extraction.to_dict()
 
 
+def run_workbook_export_plan(
+    pdf_path: Path,
+    *,
+    issue_id: str | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    plan = build_workbook_export_plan_from_pdf(
+        pdf_path,
+        issue_id=issue_id,
+        min_embedded_chars=min_embedded_chars,
+    )
+    return plan.to_dict()
+
+
 def run_google_access_smoke_command(
     *,
     env_file: Path | None = None,
@@ -469,6 +501,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "dividend-strategy":
             result = run_dividend_strategy(
+                args.pdf,
+                issue_id=args.issue_id,
+                min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "workbook-export-plan":
+            result = run_workbook_export_plan(
                 args.pdf,
                 issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,

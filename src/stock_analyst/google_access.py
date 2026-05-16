@@ -216,7 +216,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     ),
     GoogleSheetTabSpec(
         "Dividend Focus",
-        ("Issue", "Page", "Instrument", "WKN", "Dividend", "Yield", "Period", "Ex date", "Review status"),
+        ("Issue", "Page", "Instrument", "WKN", "Payout count", "Yield", "Period", "Ex date", "Review status"),
         "Dividend section and multi-period dividend data.",
     ),
     GoogleSheetTabSpec(

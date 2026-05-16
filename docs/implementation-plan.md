@@ -301,9 +301,15 @@ Acceptance:
   back matter.
 - Section inventory rows are routing/review hints only. Statistics and
   quick-check context cannot create approved recommendations by themselves.
+- Completed first workbook export-plan slice: local extraction artifacts can be
+  converted into tab-routed Google Sheet row DTOs without live Sheets writes,
+  credentials, network, or export files. Planned rows are non-exportable and
+  require manual review. Source block references are currently
+  `manual_review_pending` placeholders until extraction block IDs exist.
 
 - No missing value is invented.
-- Each row has issue, page, and source block references.
+- Each row has issue and page references. Source block references must be added
+  before approved-row export is enabled.
 - Low-confidence rows cannot reach approved export state automatically.
 
 ### 5. Digest Generation

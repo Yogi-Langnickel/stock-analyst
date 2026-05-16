@@ -36,6 +36,10 @@ Created: 2026-05-15
   AKTIONAER depot positions, depot transactions, chart-check pages,
   quick-check tables, statistics context, and low-priority back matter with
   suggested Google Sheet destinations.
+- A local workbook export-plan command can route draft recommendation cards,
+  derivative cards, dividend strategy rows, and section-inventory audit hints
+  into Google Sheet tab row DTOs without writing to Sheets. Every planned row
+  remains `needs_review`, non-exportable, and marked manual-review-required.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
@@ -72,6 +76,7 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli dividend-strategy ./data/private/issues/DA_2026_03.pdf`
+- `PYTHONPATH=src python3 -m stock_analyst.cli workbook-export-plan ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli google-access-smoke --env-file .env`
 - `PYTHONPATH=src python3 -m stock_analyst.cli google-drive-pdfs --env-file .env`
 - `PYTHONPATH=src python3 -m stock_analyst.cli google-drive-pdfs --env-file .env --manifest ./data/private/drive-pdf-metadata.jsonl`
