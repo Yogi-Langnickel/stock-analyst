@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+from stock_analyst.dividend_strategy import build_dividend_strategy_from_pdf
 from stock_analyst.intake import (
     BatchPdfIntakeItem,
     IntakeError,
@@ -144,6 +145,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
     )
     section_inventory.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    dividend_strategy = subcommands.add_parser(
+        "dividend-strategy",
+        help="Extract local draft dividend strategy rows from embedded PDF text.",
+    )
+    dividend_strategy.add_argument("pdf", type=Path)
+    dividend_strategy.add_argument(
+        "--issue-id",
+        default=None,
+        help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
+    )
+    dividend_strategy.add_argument(
         "--min-embedded-chars",
         type=int,
         default=40,
@@ -307,6 +325,20 @@ def run_section_inventory(
     return inventory.to_dict()
 
 
+def run_dividend_strategy(
+    pdf_path: Path,
+    *,
+    issue_id: str | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    extraction = build_dividend_strategy_from_pdf(
+        pdf_path,
+        issue_id=issue_id,
+        min_embedded_chars=min_embedded_chars,
+    )
+    return extraction.to_dict()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -342,6 +374,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "section-inventory":
             result = run_section_inventory(
+                args.pdf,
+                issue_id=args.issue_id,
+                min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "dividend-strategy":
+            result = run_dividend_strategy(
                 args.pdf,
                 issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,
