@@ -18,6 +18,7 @@ from stock_analyst.pipeline import (
     build_draft_review_status,
     calculate_processing_steps,
 )
+from stock_analyst.quality_report import build_extraction_quality_report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,6 +67,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--manifest-name",
         default="uploads.jsonl",
         help="Manifest filename inside the upload directory.",
+    )
+
+    quality_report = subcommands.add_parser(
+        "extraction-quality-report",
+        help="Summarize local embedded-text extraction quality for imported PDFs.",
+    )
+    quality_report.add_argument(
+        "manifest",
+        type=Path,
+        help="Local JSONL upload manifest created by import-pdf-folder.",
+    )
+    quality_report.add_argument(
+        "--upload-dir",
+        type=Path,
+        default=None,
+        help="Private local upload directory. Defaults to the manifest parent.",
+    )
+    quality_report.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
     )
 
     return parser
@@ -169,6 +192,20 @@ def run_import_pdf_folder(
     }
 
 
+def run_extraction_quality_report(
+    manifest_path: Path,
+    *,
+    upload_dir: Path | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    report = build_extraction_quality_report(
+        manifest_path,
+        upload_dir=upload_dir,
+        min_embedded_chars=min_embedded_chars,
+    )
+    return report.to_dict()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -184,9 +221,15 @@ def main(argv: list[str] | None = None) -> int:
                 upload_dir=args.upload_dir,
                 manifest_name=args.manifest_name,
             )
+        elif args.command == "extraction-quality-report":
+            result = run_extraction_quality_report(
+                args.manifest,
+                upload_dir=args.upload_dir,
+                min_embedded_chars=args.min_embedded_chars,
+            )
         else:
             parser.error(f"Unsupported command: {args.command}")
-    except (IntakeError, PdfProcessingError) as error:
+    except (FileNotFoundError, IntakeError, PdfProcessingError, ValueError) as error:
         parser.exit(2, f"error: {error}\n")
 
     print(json.dumps(result, indent=2, sort_keys=True))

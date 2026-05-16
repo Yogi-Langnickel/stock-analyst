@@ -11,8 +11,8 @@ financial advice, a recommendation, or a suitability assessment.
 
 Initialized planning and scaffold. The current local-first prototype can
 validate and store PDFs, record checksum/issue-date manifest metadata, detect
-duplicates, scaffold local text extraction status, and keep all rows draft-only
-until manual review.
+duplicates, scaffold local text extraction status, report embedded-text quality
+for imported PDFs, and keep all rows draft-only until manual review.
 
 ## Intended Users
 
@@ -60,6 +60,13 @@ Import a local folder of PDFs into ignored private upload storage:
 
 ```sh
 PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --recursive ./data/private/issues
+```
+
+Review local embedded-text extraction quality for imported PDFs without Drive,
+Sheets, market data, OCR, LLM, or network calls:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli extraction-quality-report ./data/uploads/uploads.jsonl
 ```
 
 The manifest records only local metadata such as checksum, guessed issue date,

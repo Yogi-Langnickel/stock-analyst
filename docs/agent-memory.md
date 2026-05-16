@@ -15,6 +15,9 @@ Created: 2026-05-15
 - Local text extraction is scaffolded behind an injected adapter. PyMuPDF is an
   optional local adapter; tests use deterministic no-network stubs and low-text
   pages are marked for future OCR instead of sending PDFs externally.
+- Imported PDF manifests can be summarized with a local extraction quality
+  report that emits draft-readiness, missing-file, extraction-failure, and
+  OCR-needed counts without exposing extracted page text.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
@@ -30,6 +33,7 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m unittest discover tests`
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --dry-run ./data/private/issues`
+- `PYTHONPATH=src python3 -m stock_analyst.cli extraction-quality-report ./data/uploads/uploads.jsonl`
 
 ## Performance And Context Notes
 
