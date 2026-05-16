@@ -21,6 +21,10 @@ Created: 2026-05-15
 - Imported PDF manifests can also produce a local review queue with
   draft-review, restore-missing-file, local-OCR, and rerun-extraction actions.
   The queue is metadata-only and does not expose extracted page text.
+- Configured Google Drive folders can be listed for PDF metadata only. The
+  Drive listing does not download PDFs or inspect PDF content, and optional
+  JSONL manifests must stay in ignored private storage because they include
+  Drive file identifiers and filenames.
 - A local embedded-text recommendation-card extractor exists for labelled card
   rows. It captures printed name, instrument type, WKN, current price, target,
   stop, chance/risk dots, market cap, new/follow-up status, performance since
@@ -69,6 +73,8 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli dividend-strategy ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli google-access-smoke --env-file .env`
+- `PYTHONPATH=src python3 -m stock_analyst.cli google-drive-pdfs --env-file .env`
+- `PYTHONPATH=src python3 -m stock_analyst.cli google-drive-pdfs --env-file .env --manifest ./data/private/drive-pdf-metadata.jsonl`
 
 ## Performance And Context Notes
 

@@ -106,6 +106,22 @@ This reads only Drive folder metadata and spreadsheet/tab names. It does not
 copy PDFs, write rows, run extraction, or expose the service-account private
 key.
 
+List PDF metadata in the configured Drive folder without downloading source
+PDFs:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli google-drive-pdfs --env-file .env
+```
+
+Optionally write a metadata-only JSONL manifest to ignored private storage:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli google-drive-pdfs --env-file .env --manifest ./data/private/drive-pdf-metadata.jsonl
+```
+
+Treat this output as private because it includes Drive file identifiers and
+filenames. It does not contain PDF text, credentials, or downloaded PDF bytes.
+
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.

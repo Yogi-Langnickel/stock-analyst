@@ -9,8 +9,10 @@ from pathlib import Path
 from stock_analyst.dividend_strategy import build_dividend_strategy_from_pdf
 from stock_analyst.google_access import (
     GoogleAccessError,
+    build_drive_pdf_metadata_result,
     load_google_access_config,
     run_google_access_smoke,
+    write_drive_pdf_metadata_manifest,
 )
 from stock_analyst.intake import (
     BatchPdfIntakeItem,
@@ -182,6 +184,29 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional local env file with GOOGLE_* config. Do not commit it.",
+    )
+
+    google_drive_pdfs = subcommands.add_parser(
+        "google-drive-pdfs",
+        help="List configured Drive folder PDF metadata without downloading files.",
+    )
+    google_drive_pdfs.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Optional local env file with GOOGLE_* config. Do not commit it.",
+    )
+    google_drive_pdfs.add_argument(
+        "--page-size",
+        type=int,
+        default=100,
+        help="Drive API page size for listing PDF metadata.",
+    )
+    google_drive_pdfs.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="Optional private local JSONL path for metadata-only Drive import rows.",
     )
 
     return parser
@@ -363,6 +388,20 @@ def run_google_access_smoke_command(
     return run_google_access_smoke(config)
 
 
+def run_google_drive_pdfs_command(
+    *,
+    env_file: Path | None = None,
+    page_size: int = 100,
+    manifest: Path | None = None,
+) -> dict[str, object]:
+    config = load_google_access_config(env_file=env_file)
+    result = build_drive_pdf_metadata_result(config, page_size=page_size)
+    if manifest is not None:
+        write_drive_pdf_metadata_manifest(result, manifest)
+        result["manifestPath"] = str(manifest)
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -410,6 +449,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "google-access-smoke":
             result = run_google_access_smoke_command(env_file=args.env_file)
+        elif args.command == "google-drive-pdfs":
+            result = run_google_drive_pdfs_command(
+                env_file=args.env_file,
+                page_size=args.page_size,
+                manifest=args.manifest,
+            )
         else:
             parser.error(f"Unsupported command: {args.command}")
     except (FileNotFoundError, GoogleAccessError, IntakeError, PdfProcessingError, ValueError) as error:

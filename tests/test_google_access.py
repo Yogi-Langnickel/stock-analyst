@@ -4,9 +4,12 @@ from pathlib import Path
 
 from stock_analyst.google_access import (
     GoogleAccessError,
+    build_drive_pdf_metadata_result,
+    list_drive_pdf_metadata,
     load_env_file,
     load_google_access_config,
     run_google_access_smoke,
+    write_drive_pdf_metadata_manifest,
 )
 
 
@@ -22,10 +25,20 @@ class _FakeDriveFiles:
     def __init__(self, payload):
         self.payload = payload
         self.request = None
+        self.list_requests = []
 
     def get(self, **kwargs):
         self.request = kwargs
         return _FakeExecute(self.payload)
+
+    def list(self, **kwargs):
+        self.list_requests.append(kwargs)
+        page_token = kwargs.get("pageToken")
+        if isinstance(self.payload, dict):
+            return _FakeExecute(self.payload)
+        if page_token:
+            return _FakeExecute(self.payload[1])
+        return _FakeExecute(self.payload[0])
 
 
 class _FakeDrive:
@@ -139,6 +152,98 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["drive"]["folderName"], "Der Aktionär Issues")
         self.assertEqual(result["sheets"]["title"], "Der Aktionär Summaries")
         self.assertNotIn("secret", str(result))
+
+    def test_drive_pdf_metadata_listing_is_metadata_only_and_paginated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            drive = _FakeDrive(
+                [
+                    {
+                        "nextPageToken": "next",
+                        "files": [
+                            {
+                                "id": "1DrivePdfFileAlpha",
+                                "name": "DA_2026_05.pdf",
+                                "mimeType": "application/pdf",
+                                "md5Checksum": "abc123",
+                                "size": "4096",
+                                "createdTime": "2026-05-14T08:00:00Z",
+                                "modifiedTime": "2026-05-15T08:00:00Z",
+                                "webViewLink": "https://drive.google.com/file/d/private",
+                            }
+                        ],
+                    },
+                    {
+                        "files": [
+                            {
+                                "id": "1DrivePdfFileBeta",
+                                "name": "DA_2026_06.pdf",
+                                "mimeType": "application/pdf",
+                            }
+                        ],
+                    },
+                ]
+            )
+
+            files = list_drive_pdf_metadata(
+                config,
+                drive_service_factory=lambda: drive,
+                page_size=25,
+            )
+
+        self.assertEqual(len(files), 2)
+        self.assertEqual(files[0].source_pdf_id, "drive_1DrivePdfFileAlp")
+        self.assertEqual(files[0].size_bytes, 4096)
+        self.assertEqual(files[1].name, "DA_2026_06.pdf")
+        self.assertEqual(len(drive.files_resource.list_requests), 2)
+        self.assertIn("mimeType = 'application/pdf'", drive.files_resource.list_requests[0]["q"])
+        self.assertEqual(drive.files_resource.list_requests[0]["pageSize"], 25)
+
+    def test_drive_pdf_metadata_result_can_write_private_jsonl_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            credentials_path = root / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            result = build_drive_pdf_metadata_result(
+                config,
+                drive_service_factory=lambda: _FakeDrive(
+                    {
+                        "files": [
+                            {
+                                "id": "1DrivePdfFileAlpha",
+                                "name": "DA_2026_05.pdf",
+                                "mimeType": "application/pdf",
+                            }
+                        ]
+                    }
+                ),
+            )
+            manifest_path = root / "drive" / "pdf-metadata.jsonl"
+
+            written = write_drive_pdf_metadata_manifest(result, manifest_path)
+
+            lines = written.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(written, manifest_path)
+        self.assertEqual(len(lines), 1)
+        self.assertIn('"stage": "drive_metadata_imported"', lines[0])
+        self.assertIn('"status": "pending_local_download"', lines[0])
+        self.assertNotIn("private_key", lines[0])
 
 
 if __name__ == "__main__":
