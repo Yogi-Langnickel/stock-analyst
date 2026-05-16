@@ -34,6 +34,10 @@ independent financial advice.
 ## Workflow
 
 - Work on scoped branches. Completed deliverables target `develop`.
+- Take implementation work from planning through reviewed merge into `develop`
+  when the path is clear. `master` is release/promotion only; the assistant may
+  prepare promotion evidence, but must not merge into `master` without explicit
+  user approval.
 - Use `rg` and `rg --files` for search.
 - Keep plans in `docs/`.
 - Keep reusable implementation code under `src/stock_analyst/`.

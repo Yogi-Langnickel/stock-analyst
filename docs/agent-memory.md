@@ -29,6 +29,11 @@ Created: 2026-05-15
   providers without creating files, exposing credential-like parameters, or
   making network calls.
 - Manual review remains mandatory before family-visible digest rows or exports.
+- Next real-corpus unblock is user-provided private PDFs from the last two years
+  in ignored local `data/private/issues/` or a private Drive folder. Local
+  folder handoff is fastest because current commands do not need Drive/Sheets.
+- Use service account first for future private Drive/Sheets automation unless
+  per-user Google identity becomes a product requirement.
 
 ## Commands
 
@@ -55,4 +60,5 @@ Created: 2026-05-15
 - `AGENTS.md` for hard privacy/source rules.
 - `docs/implementation-plan.md` for milestone details.
 - `docs/free-market-data-options.md` before changing enrichment behavior.
-- `unblockme.md` before configuring remotes or enabling live providers.
+- `unblockme.md` before configuring Drive/Sheets, enabling live providers, or
+  asking for user PDF handoff.

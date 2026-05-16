@@ -84,6 +84,11 @@ Local PDF intake does not require Google Drive or Google Sheets credentials.
 Those will only be needed later to sync source PDFs into a private Drive folder
 or export approved, reviewed rows into a configured Sheet.
 
+For the next real-corpus validation slice, put private PDFs in ignored local
+`data/private/issues/` or a private Google Drive folder following
+[unblockme.md](unblockme.md). A local folder is fastest because the current
+pipeline can import and report extraction quality without any network provider.
+
 Future dependency setup should use a virtual environment:
 
 ```sh
@@ -98,3 +103,4 @@ pip install -e ".[dev]"
 - [Free market data options](docs/free-market-data-options.md)
 - [Persona review and revisions](docs/persona-review.md)
 - [Security and privacy](docs/security-and-privacy.md)
+- [Unblock steps](unblockme.md)
