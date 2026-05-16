@@ -74,6 +74,28 @@ Recommended initial shape:
 - Enrichment: RSS/API first. Scrapling only as a controlled, allowlisted
   enrichment adapter for company/news context.
 
+Recommended Drive/Lambda/local split:
+
+- Google Drive remains the source handoff location once the service account and
+  folder permissions are configured. The weekly issue normally arrives between
+  Wednesday and Thursday.
+- An EventBridge scheduled preprocessing Lambda can check the Drive folder
+  hourly on Wednesday/Thursday, detect unseen PDFs by Drive file ID/checksum,
+  and write lightweight preprocessing state.
+- Lambda preprocessing should stay cheap: detect new files, collect metadata,
+  copy or queue references, run light embedded-text/table probes only if the
+  package size and runtime stay reliable, and then stop.
+- Heavy processing stays local first on the user's or uploader's computer:
+  OCR, large PDF parsing, manual review, and any costly retry/debug loop should
+  be runnable without AWS, Google Sheets, market-data providers, or LLM calls.
+- A daily enrichment job can run separately after extraction, updating
+  asset-class-specific context from approved providers without overwriting
+  magazine-source values.
+- Lambda environment variables may hold non-secret config such as folder IDs,
+  spreadsheet IDs, schedule mode, and Secrets Manager secret names. Do not store
+  Google service-account JSON or private keys directly in Lambda environment
+  variables; fetch secrets from a dedicated secret store at runtime.
+
 Free market-data enrichment is documented in
 `docs/free-market-data-options.md`. It remains disabled by default, cannot
 overwrite magazine-extracted values, and must mark missing or ambiguous provider

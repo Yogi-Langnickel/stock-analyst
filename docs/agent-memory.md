@@ -45,6 +45,14 @@ Created: 2026-05-15
   folder handoff is fastest because current commands do not need Drive/Sheets.
 - Use service account first for future private Drive/Sheets automation unless
   per-user Google identity becomes a product requirement.
+- Target Drive workflow: dad drops each weekly PDF into the shared Drive folder
+  between Wednesday and Thursday; a future EventBridge/Lambda preprocessor may
+  check hourly on those days for new files and record lightweight metadata, while
+  heavy OCR/parsing/review remains local-first.
+- Target workbook name is `Der Aktionär Summaries`; start with a `Navigation
+  Dashboard` plus asset-class dashboard tabs for Stocks, Commodities, Options,
+  Forex, and Example Portfolios, with specialized daily enrichment areas per
+  asset class.
 
 ## Commands
 
@@ -56,6 +64,7 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli review-queue ./data/uploads/uploads.jsonl`
 - `PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf`
+- `PYTHONPATH=src python3 -m stock_analyst.cli dividend-strategy ./data/private/issues/DA_2026_03.pdf`
 
 ## Performance And Context Notes
 
