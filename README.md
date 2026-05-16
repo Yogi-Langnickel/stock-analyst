@@ -13,7 +13,8 @@ Initialized planning and scaffold. The current local-first prototype can
 validate and store PDFs, record checksum/issue-date manifest metadata, detect
 duplicates, scaffold local text extraction status, report embedded-text quality
 for imported PDFs, extract draft recommendation-card rows from embedded text,
-and keep all rows draft-only until manual review.
+inventory high-value magazine table/section surfaces, and keep all rows
+draft-only until manual review.
 
 ## Intended Users
 
@@ -85,6 +86,15 @@ and marks rows as `needs_review`:
 PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf
 ```
 
+Inventory important magazine sections and table surfaces, including dividend
+strategy tables, derivative overview tables, AKTIONAER depot snapshots,
+transaction tables, chart-check pages, quick-check tables, statistics, and
+low-priority back matter:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf
+```
+
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.
@@ -110,6 +120,7 @@ pip install -e ".[dev]"
 
 - [Implementation plan](docs/implementation-plan.md)
 - [Free market data options](docs/free-market-data-options.md)
+- [Google Sheets layout](docs/google-sheets-layout.md)
 - [OCR options](docs/ocr-options.md)
 - [Persona review and revisions](docs/persona-review.md)
 - [Security and privacy](docs/security-and-privacy.md)

@@ -27,6 +27,11 @@ Created: 2026-05-15
   recommendation, recommended issue/date, dividend yield/trend, KUV/KGV, next
   report date, and derivative fields such as underlying price, base price,
   Omega/Hebel, and runtime. It is draft-only and emits `needs_review`.
+- A local section inventory command exists for high-value magazine tables and
+  sections. It flags dividend strategy tables, derivative overview tables,
+  AKTIONAER depot positions, depot transactions, chart-check pages,
+  quick-check tables, statistics context, and low-priority back matter with
+  suggested Google Sheet destinations.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
@@ -50,6 +55,7 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli extraction-quality-report ./data/uploads/uploads.jsonl`
 - `PYTHONPATH=src python3 -m stock_analyst.cli review-queue ./data/uploads/uploads.jsonl`
 - `PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf`
+- `PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf`
 
 ## Performance And Context Notes
 
@@ -69,6 +75,7 @@ Created: 2026-05-15
 - `AGENTS.md` for hard privacy/source rules.
 - `docs/implementation-plan.md` for milestone details.
 - `docs/free-market-data-options.md` before changing enrichment behavior.
+- `docs/google-sheets-layout.md` before changing export destinations.
 - `docs/ocr-options.md` before enabling local or remote OCR.
 - `unblockme.md` before configuring Drive/Sheets, enabling live providers, or
   asking for user PDF handoff.

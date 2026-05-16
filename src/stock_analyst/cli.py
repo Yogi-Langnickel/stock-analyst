@@ -21,6 +21,7 @@ from stock_analyst.pipeline import (
 from stock_analyst.quality_report import build_extraction_quality_report
 from stock_analyst.recommendation_cards import extract_recommendation_cards_from_pdf
 from stock_analyst.review_queue import build_review_queue_from_manifest
+from stock_analyst.section_inventory import build_section_inventory_from_pdf
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -126,6 +127,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
     )
     recommendation_cards.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    section_inventory = subcommands.add_parser(
+        "section-inventory",
+        help="Find important table and section surfaces from embedded PDF text.",
+    )
+    section_inventory.add_argument("pdf", type=Path)
+    section_inventory.add_argument(
+        "--issue-id",
+        default=None,
+        help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
+    )
+    section_inventory.add_argument(
         "--min-embedded-chars",
         type=int,
         default=40,
@@ -275,6 +293,20 @@ def run_recommendation_cards(
     return cards.to_dict()
 
 
+def run_section_inventory(
+    pdf_path: Path,
+    *,
+    issue_id: str | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    inventory = build_section_inventory_from_pdf(
+        pdf_path,
+        issue_id=issue_id,
+        min_embedded_chars=min_embedded_chars,
+    )
+    return inventory.to_dict()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -304,6 +336,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "recommendation-cards":
             result = run_recommendation_cards(
+                args.pdf,
+                issue_id=args.issue_id,
+                min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "section-inventory":
+            result = run_section_inventory(
                 args.pdf,
                 issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,

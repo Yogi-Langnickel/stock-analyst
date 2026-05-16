@@ -8,7 +8,8 @@ Revised after persona review: 2026-05-14
 
 - Current slice: local-first PDF intake, private ignored upload storage,
   checksum duplicate detection, embedded-text recommendation-card extraction,
-  and disabled-by-default market-data enrichment.
+  high-value section/table inventory, and disabled-by-default market-data
+  enrichment.
 - Hard boundary: market data is context only and cannot overwrite magazine
   source values or invent missing price, stop-loss, target, ticker, ISIN, WKN,
   or recommendation data.
@@ -271,6 +272,13 @@ Acceptance:
   when both appear on the same page.
 - Rows from this extractor are always `needs_review`; no family-facing or
   exportable row is created automatically.
+- Completed first section-inventory slice: embedded-text extraction can flag
+  important table and section surfaces for dividend strategy tables, derivative
+  overview tables, AKTIONAER depot positions, depot transactions,
+  chart-check pages, quick-check tables, statistics context, and low-priority
+  back matter.
+- Section inventory rows are routing/review hints only. Statistics and
+  quick-check context cannot create approved recommendations by themselves.
 
 - No missing value is invented.
 - Each row has issue, page, and source block references.
