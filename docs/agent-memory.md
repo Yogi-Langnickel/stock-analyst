@@ -21,6 +21,12 @@ Created: 2026-05-15
 - Imported PDF manifests can also produce a local review queue with
   draft-review, restore-missing-file, local-OCR, and rerun-extraction actions.
   The queue is metadata-only and does not expose extracted page text.
+- A local embedded-text recommendation-card extractor exists for labelled card
+  rows. It captures printed name, instrument type, WKN, current price, target,
+  stop, chance/risk dots, market cap, new/follow-up status, performance since
+  recommendation, recommended issue/date, dividend yield/trend, KUV/KGV, next
+  report date, and derivative fields such as underlying price, base price,
+  Omega/Hebel, and runtime. It is draft-only and emits `needs_review`.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
@@ -43,10 +49,13 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --dry-run ./data/private/issues`
 - `PYTHONPATH=src python3 -m stock_analyst.cli extraction-quality-report ./data/uploads/uploads.jsonl`
 - `PYTHONPATH=src python3 -m stock_analyst.cli review-queue ./data/uploads/uploads.jsonl`
+- `PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf`
 
 ## Performance And Context Notes
 
 - Preserve checksum dedupe before expensive OCR or enrichment.
+- Run embedded-text recommendation-card extraction before OCR; queue OCR only
+  for low-text pages or missing fields that matter to review.
 - Keep OCR/PDF extraction and provider enrichment as separate queues so provider
   latency cannot block PDF review.
 - Cache future market-data responses under ignored `data/market-cache` before
@@ -60,5 +69,6 @@ Created: 2026-05-15
 - `AGENTS.md` for hard privacy/source rules.
 - `docs/implementation-plan.md` for milestone details.
 - `docs/free-market-data-options.md` before changing enrichment behavior.
+- `docs/ocr-options.md` before enabling local or remote OCR.
 - `unblockme.md` before configuring Drive/Sheets, enabling live providers, or
   asking for user PDF handoff.
