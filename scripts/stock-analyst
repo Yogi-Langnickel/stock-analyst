@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -n "${STOCK_ANALYST_PYTHON:-}" ]]; then
+  PYTHON_BIN="${STOCK_ANALYST_PYTHON}"
+elif [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+  PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
+elif command -v python3.13 >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v python3.13)"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v python3)"
+else
+  echo "No Python interpreter found. Create .venv or set STOCK_ANALYST_PYTHON." >&2
+  exit 127
+fi
+
+export PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-${ROOT_DIR}/.pycache}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/stock-analyst which-python
+  scripts/stock-analyst compile
+  scripts/stock-analyst test
+  scripts/stock-analyst cli <stock_analyst.cli args...>
+  scripts/stock-analyst workbook-export-plan <pdf> [args...]
+  scripts/stock-analyst recommendation-cards <pdf> [args...]
+  scripts/stock-analyst section-inventory <pdf> [args...]
+  scripts/stock-analyst dividend-strategy <pdf> [args...]
+  scripts/stock-analyst python <python args...>
+
+The wrapper prefers .venv/bin/python when present. It does not need shell
+activation and keeps PYTHONPATH pointed at ./src for local commands.
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 2
+fi
+
+COMMAND="$1"
+shift
+
+case "${COMMAND}" in
+  which-python)
+    echo "${PYTHON_BIN}"
+    ;;
+  compile)
+    cd "${ROOT_DIR}"
+    "${PYTHON_BIN}" -m compileall src tests
+    ;;
+  test)
+    cd "${ROOT_DIR}"
+    "${PYTHON_BIN}" -m unittest discover tests
+    ;;
+  cli)
+    cd "${ROOT_DIR}"
+    "${PYTHON_BIN}" -m stock_analyst.cli "$@"
+    ;;
+  workbook-export-plan|recommendation-cards|section-inventory|dividend-strategy|process-pdf|import-pdf-folder|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap)
+    cd "${ROOT_DIR}"
+    "${PYTHON_BIN}" -m stock_analyst.cli "${COMMAND}" "$@"
+    ;;
+  python)
+    cd "${ROOT_DIR}"
+    "${PYTHON_BIN}" "$@"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    echo "Unknown command: ${COMMAND}" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

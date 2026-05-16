@@ -67,6 +67,14 @@ Created: 2026-05-15
 
 ## Commands
 
+- `scripts/stock-analyst which-python`: show the interpreter selected by the
+  wrapper. It prefers `.venv/bin/python`, then `python3.13`, then `python3`.
+- `scripts/stock-analyst compile`: compile `src` and `tests` through the
+  selected interpreter.
+- `scripts/stock-analyst test`: run the unittest suite through the selected
+  interpreter.
+- `scripts/stock-analyst workbook-export-plan ./data/private/issues/DA_2026_03.pdf`:
+  run the local workbook plan through the venv-aware wrapper.
 - `PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests`
 - `PYTHONPATH=src python3 -m unittest discover tests`
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`

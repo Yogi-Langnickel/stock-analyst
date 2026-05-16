@@ -32,7 +32,16 @@ draft-only until manual review.
 
 ## Local Development
 
-No dependencies are installed by default in this scaffold.
+Use the local wrapper so commands run through `.venv/bin/python` when the
+virtual environment exists. This avoids relying on interactive shell activation:
+
+```sh
+scripts/stock-analyst which-python
+scripts/stock-analyst compile
+scripts/stock-analyst test
+```
+
+The raw commands remain:
 
 ```sh
 PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests
@@ -84,6 +93,13 @@ and marks rows as `needs_review`:
 
 ```sh
 PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf
+```
+
+With the wrapper:
+
+```sh
+scripts/stock-analyst recommendation-cards ./data/private/issues/DA_2026_03.pdf
+scripts/stock-analyst workbook-export-plan ./data/private/issues/DA_2026_03.pdf
 ```
 
 Inventory important magazine sections and table surfaces, including dividend
@@ -152,6 +168,9 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
 ```
+
+After setup, `scripts/stock-analyst ...` automatically uses `.venv/bin/python`;
+manual activation is optional for interactive work.
 
 ## Documentation
 
