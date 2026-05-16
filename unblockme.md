@@ -3,15 +3,14 @@
 Status: non-blocking for local implementation
 Created: 2026-05-15
 
-Local development can continue on scoped branches. These items block normal
-remote PR flow or live-provider enablement only.
+Local development can continue on scoped branches. These items block
+live-provider enablement only.
 
 ## Git Flow
 
-- No remote is configured for this repository.
-- Current implementation work is on `feature/free-api-intake-plan`.
-- Before a PR/review flow exists, configure a remote and decide whether
-  `develop` remains the integration branch.
+- `origin` is configured at `https://github.com/Yogi-Langnickel/stock-analyst.git`.
+- `develop` tracks `origin/develop` and remains the integration branch.
+- Use scoped feature branches from `develop` for new PR/review work.
 
 ## Market Data Providers
 

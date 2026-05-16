@@ -60,6 +60,35 @@ class StoredPdfUpload:
     duplicate: bool
 
 
+@dataclass(frozen=True)
+class BatchPdfIntakeItem:
+    filename: str
+    path: Path
+    status: str
+    checksum_sha256: str | None = None
+    source_pdf_id: str | None = None
+    issue_date_guess: str | None = None
+    size_bytes: int | None = None
+    stored_path: Path | None = None
+    manifest_path: Path | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class BatchPdfIntakeResult:
+    source_dir: Path
+    upload_dir: Path
+    dry_run: bool
+    recursive: bool
+    manifest_path: Path
+    total_pdf_candidates: int
+    uploaded_count: int
+    duplicate_count: int
+    invalid_count: int
+    dry_run_valid_count: int
+    items: tuple[BatchPdfIntakeItem, ...]
+
+
 def calculate_sha256(path: Path) -> str:
     digest = sha256()
 
@@ -187,4 +216,99 @@ def store_pdf_upload(
         accepted_at=preview.accepted_at,
         status="duplicate" if duplicate else "uploaded",
         duplicate=duplicate,
+    )
+
+
+def import_pdf_folder(
+    source_dir: Path,
+    upload_dir: Path,
+    *,
+    dry_run: bool = False,
+    recursive: bool = False,
+    manifest_name: str = "uploads.jsonl",
+) -> BatchPdfIntakeResult:
+    """Import valid PDFs from a local folder into private storage.
+
+    This intentionally handles only local filesystem intake. It does not call
+    Google Drive, Google Sheets, OCR, extraction, market data, or LLM providers.
+    """
+
+    if not source_dir.is_dir():
+        raise IntakeError("Batch intake source path must be a folder.")
+
+    folder_entries = source_dir.rglob("*") if recursive else source_dir.glob("*")
+    candidates = sorted(
+        (path for path in folder_entries if path.is_file() and path.suffix.lower() == ".pdf"),
+        key=lambda path: str(path.relative_to(source_dir)).lower(),
+    )
+    manifest_path = upload_dir / manifest_name
+    items: list[BatchPdfIntakeItem] = []
+    uploaded_count = 0
+    duplicate_count = 0
+    invalid_count = 0
+    dry_run_valid_count = 0
+
+    for pdf_path in candidates:
+        try:
+            if dry_run:
+                preview = preview_pdf_intake(pdf_path)
+                dry_run_valid_count += 1
+                items.append(
+                    BatchPdfIntakeItem(
+                        filename=preview.filename,
+                        path=pdf_path,
+                        status="valid",
+                        checksum_sha256=preview.checksum_sha256,
+                        source_pdf_id=preview.source_pdf_id,
+                        issue_date_guess=preview.issue_date_guess,
+                        size_bytes=preview.size_bytes,
+                    )
+                )
+                continue
+
+            stored = store_pdf_upload(
+                pdf_path,
+                upload_dir,
+                manifest_name=manifest_name,
+            )
+            if stored.duplicate:
+                duplicate_count += 1
+            else:
+                uploaded_count += 1
+            items.append(
+                BatchPdfIntakeItem(
+                    filename=stored.filename,
+                    path=pdf_path,
+                    status=stored.status,
+                    checksum_sha256=stored.checksum_sha256,
+                    source_pdf_id=stored.source_pdf_id,
+                    issue_date_guess=stored.issue_date_guess,
+                    size_bytes=stored.size_bytes,
+                    stored_path=stored.stored_path,
+                    manifest_path=stored.manifest_path,
+                )
+            )
+        except IntakeError as error:
+            invalid_count += 1
+            items.append(
+                BatchPdfIntakeItem(
+                    filename=pdf_path.name,
+                    path=pdf_path,
+                    status="invalid",
+                    error=str(error),
+                )
+            )
+
+    return BatchPdfIntakeResult(
+        source_dir=source_dir,
+        upload_dir=upload_dir,
+        dry_run=dry_run,
+        recursive=recursive,
+        manifest_path=manifest_path,
+        total_pdf_candidates=len(candidates),
+        uploaded_count=uploaded_count,
+        duplicate_count=duplicate_count,
+        invalid_count=invalid_count,
+        dry_run_valid_count=dry_run_valid_count,
+        items=tuple(items),
     )

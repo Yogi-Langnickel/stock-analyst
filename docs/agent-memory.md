@@ -9,9 +9,9 @@ Created: 2026-05-15
   PDFs into reviewed, source-linked digest rows.
 - Source PDFs, extracted text, review notes, spreadsheet IDs, and exports are
   private and must not be committed.
-- Local PDF intake can validate PDFs, copy them into ignored private storage,
-  record a JSONL manifest with source ID, checksum, issue date guess, and
-  processing status, and detect duplicates by checksum.
+- Local PDF intake can validate one PDF or a folder of PDFs, copy them into
+  ignored private storage, record a JSONL manifest with source ID, checksum,
+  issue date guess, and processing status, and detect duplicates by checksum.
 - Local text extraction is scaffolded behind an injected adapter. PyMuPDF is an
   optional local adapter; tests use deterministic no-network stubs and low-text
   pages are marked for future OCR instead of sending PDFs externally.
@@ -29,6 +29,7 @@ Created: 2026-05-15
 - `PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests`
 - `PYTHONPATH=src python3 -m unittest discover tests`
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`
+- `PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --dry-run ./data/private/issues`
 
 ## Performance And Context Notes
 

@@ -2,10 +2,11 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from stock_analyst.cli import run_process_pdf
+from stock_analyst.cli import run_import_pdf_folder, run_process_pdf
 from stock_analyst.intake import (
     IntakeError,
     guess_issue_date,
+    import_pdf_folder,
     preview_pdf_intake,
     store_pdf_upload,
 )
@@ -94,6 +95,93 @@ class IntakeTest(unittest.TestCase):
                 len(second.manifest_path.read_text(encoding="utf-8").splitlines()),
                 1,
             )
+
+    def test_import_pdf_folder_dry_run_reports_valid_and_invalid_without_manifest(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_dir = root / "source"
+            upload_dir = root / "uploads"
+            source_dir.mkdir()
+            write_file(source_dir / "aktionaer-2026-05-14.PDF", b"%PDF-1.7\none")
+            write_file(source_dir / "broken.pdf", b"not a pdf")
+            write_file(source_dir / "notes.txt", b"%PDF-1.7\nignored")
+
+            result = import_pdf_folder(source_dir, upload_dir, dry_run=True)
+
+            self.assertEqual(result.total_pdf_candidates, 2)
+            self.assertEqual(result.dry_run_valid_count, 1)
+            self.assertEqual(result.invalid_count, 1)
+            self.assertEqual(result.uploaded_count, 0)
+            self.assertEqual(result.duplicate_count, 0)
+            self.assertFalse(result.manifest_path.exists())
+            self.assertEqual([item.status for item in result.items], ["valid", "invalid"])
+            self.assertEqual(result.items[0].issue_date_guess, "2026-05-14")
+
+    def test_import_pdf_folder_stores_unique_pdfs_and_marks_batch_duplicates(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_dir = root / "source"
+            upload_dir = root / "uploads"
+            source_dir.mkdir()
+            write_file(source_dir / "a.pdf", b"%PDF-1.7\nsame")
+            write_file(source_dir / "b.pdf", b"%PDF-1.7\nsame")
+            write_file(source_dir / "c.pdf", b"%PDF-1.7\nother")
+
+            result = import_pdf_folder(source_dir, upload_dir)
+
+            self.assertEqual(result.total_pdf_candidates, 3)
+            self.assertEqual(result.uploaded_count, 2)
+            self.assertEqual(result.duplicate_count, 1)
+            self.assertEqual(result.invalid_count, 0)
+            self.assertEqual(
+                [item.status for item in result.items],
+                ["uploaded", "duplicate", "uploaded"],
+            )
+            self.assertEqual(len(result.manifest_path.read_text(encoding="utf-8").splitlines()), 2)
+
+    def test_import_pdf_folder_can_include_nested_pdfs_when_recursive(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_dir = root / "source"
+            upload_dir = root / "uploads"
+            nested_dir = source_dir / "archive"
+            nested_dir.mkdir(parents=True)
+            write_file(source_dir / "top.pdf", b"%PDF-1.7\ntop")
+            write_file(nested_dir / "nested.pdf", b"%PDF-1.7\nnested")
+
+            flat_result = import_pdf_folder(source_dir, upload_dir, dry_run=True)
+            recursive_result = import_pdf_folder(
+                source_dir,
+                upload_dir,
+                dry_run=True,
+                recursive=True,
+            )
+
+            self.assertEqual(flat_result.total_pdf_candidates, 1)
+            self.assertEqual(recursive_result.total_pdf_candidates, 2)
+
+    def test_import_pdf_folder_cli_summary_exposes_local_only_status(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_dir = root / "source"
+            upload_dir = root / "uploads"
+            source_dir.mkdir()
+            write_file(source_dir / "issue.pdf", b"%PDF-1.7\nprivate test")
+
+            result = run_import_pdf_folder(
+                source_dir,
+                dry_run=False,
+                recursive=False,
+                upload_dir=upload_dir,
+            )
+
+            self.assertIs(result["dryRun"], False)
+            self.assertIs(result["externalServicesEnabled"], False)
+            self.assertEqual(result["uploadedCount"], 1)
+            self.assertEqual(result["duplicateCount"], 0)
+            self.assertEqual(result["invalidCount"], 0)
+            self.assertEqual(result["items"][0]["status"], "uploaded")
+            self.assertIn("manifestPath", result["items"][0])
 
 
 if __name__ == "__main__":

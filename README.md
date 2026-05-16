@@ -50,9 +50,25 @@ Store a validated PDF into ignored private local upload storage:
 PYTHONPATH=src python3 -m stock_analyst.cli process-pdf ./data/private/issue.pdf
 ```
 
+Validate a local folder of PDFs without copying anything:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --dry-run ./data/private/issues
+```
+
+Import a local folder of PDFs into ignored private upload storage:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --recursive ./data/private/issues
+```
+
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.
+
+Local PDF intake does not require Google Drive or Google Sheets credentials.
+Those will only be needed later to sync source PDFs into a private Drive folder
+or export approved, reviewed rows into a configured Sheet.
 
 Future dependency setup should use a virtual environment:
 

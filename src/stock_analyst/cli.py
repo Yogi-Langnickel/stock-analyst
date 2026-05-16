@@ -6,7 +6,13 @@ import argparse
 import json
 from pathlib import Path
 
-from stock_analyst.intake import IntakeError, preview_pdf_intake, store_pdf_upload
+from stock_analyst.intake import (
+    BatchPdfIntakeItem,
+    IntakeError,
+    import_pdf_folder,
+    preview_pdf_intake,
+    store_pdf_upload,
+)
 from stock_analyst.pipeline import (
     PdfProcessingError,
     build_draft_review_status,
@@ -33,6 +39,33 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data/uploads"),
         help="Private local upload directory used when --dry-run is not set.",
+    )
+
+    import_folder = subcommands.add_parser(
+        "import-pdf-folder",
+        help="Batch validate or store PDFs from a local folder.",
+    )
+    import_folder.add_argument("folder", type=Path)
+    import_folder.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate only. Do not copy files or write the manifest.",
+    )
+    import_folder.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Include PDFs in nested folders.",
+    )
+    import_folder.add_argument(
+        "--upload-dir",
+        type=Path,
+        default=Path("data/uploads"),
+        help="Private local upload directory used when --dry-run is not set.",
+    )
+    import_folder.add_argument(
+        "--manifest-name",
+        default="uploads.jsonl",
+        help="Manifest filename inside the upload directory.",
     )
 
     return parser
@@ -79,6 +112,63 @@ def run_process_pdf(
     }
 
 
+def _batch_item_to_dict(item: BatchPdfIntakeItem) -> dict[str, object]:
+    result: dict[str, object] = {
+        "filename": item.filename,
+        "path": str(item.path),
+        "status": item.status,
+    }
+
+    if item.checksum_sha256 is not None:
+        result["checksumSha256"] = item.checksum_sha256
+    if item.source_pdf_id is not None:
+        result["sourcePdfId"] = item.source_pdf_id
+    if item.issue_date_guess is not None:
+        result["issueDateGuess"] = item.issue_date_guess
+    if item.size_bytes is not None:
+        result["sizeBytes"] = item.size_bytes
+    if item.stored_path is not None:
+        result["storedPath"] = str(item.stored_path)
+    if item.manifest_path is not None:
+        result["manifestPath"] = str(item.manifest_path)
+    if item.error is not None:
+        result["error"] = item.error
+
+    return result
+
+
+def run_import_pdf_folder(
+    folder: Path,
+    *,
+    dry_run: bool,
+    recursive: bool,
+    upload_dir: Path = Path("data/uploads"),
+    manifest_name: str = "uploads.jsonl",
+) -> dict[str, object]:
+    batch = import_pdf_folder(
+        folder,
+        upload_dir,
+        dry_run=dry_run,
+        recursive=recursive,
+        manifest_name=manifest_name,
+    )
+
+    return {
+        "dryRun": batch.dry_run,
+        "recursive": batch.recursive,
+        "sourceDir": str(batch.source_dir),
+        "uploadDir": str(batch.upload_dir),
+        "manifestPath": str(batch.manifest_path),
+        "totalPdfCandidates": batch.total_pdf_candidates,
+        "uploadedCount": batch.uploaded_count,
+        "duplicateCount": batch.duplicate_count,
+        "invalidCount": batch.invalid_count,
+        "dryRunValidCount": batch.dry_run_valid_count,
+        "externalServicesEnabled": False,
+        "items": [_batch_item_to_dict(item) for item in batch.items],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -86,6 +176,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "process-pdf":
             result = run_process_pdf(args.pdf, dry_run=args.dry_run, upload_dir=args.upload_dir)
+        elif args.command == "import-pdf-folder":
+            result = run_import_pdf_folder(
+                args.folder,
+                dry_run=args.dry_run,
+                recursive=args.recursive,
+                upload_dir=args.upload_dir,
+                manifest_name=args.manifest_name,
+            )
         else:
             parser.error(f"Unsupported command: {args.command}")
     except (IntakeError, PdfProcessingError) as error:

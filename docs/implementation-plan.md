@@ -210,6 +210,9 @@ Acceptance:
 
 - Completed first slice: validated PDFs can be copied into ignored private
   local storage with a JSONL manifest and duplicate checksum detection.
+- Completed local batch slice: a folder of PDFs can be dry-run validated or
+  imported into the same ignored private storage and manifest without Drive,
+  Sheets, OCR, extraction, market-data, or LLM provider calls.
 - Uploader can upload with one primary action: "Choose PDF" and "Upload issue".
 - A non-technical user can upload a PDF without seeing technical terms.
 - Body text is at least 18px, touch targets are at least 44px, focus states are
