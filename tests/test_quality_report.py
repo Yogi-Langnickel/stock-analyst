@@ -9,6 +9,7 @@ from stock_analyst.quality_report import (
     build_extraction_quality_report,
     read_jsonl_manifest,
 )
+from stock_analyst.cli import run_review_queue
 
 
 def write_pdf(path: Path, content: bytes = b"%PDF-1.7\nprivate synthetic") -> Path:
@@ -119,6 +120,21 @@ class QualityReportTest(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 read_jsonl_manifest(manifest)
+
+    def test_cli_review_queue_returns_privacy_safe_counts(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            upload_dir = root / "uploads"
+            stored = store_pdf_upload(write_pdf(root / "missing.pdf"), upload_dir)
+            stored.stored_path.unlink()
+
+            result = run_review_queue(stored.manifest_path)
+
+        self.assertEqual(result["totalItems"], 1)
+        self.assertEqual(result["missingFileCount"], 1)
+        self.assertEqual(result["externalServicesEnabled"], False)
+        self.assertEqual(result["items"][0]["action"], "restore_missing_file")
+        self.assertNotIn("text", json.dumps(result).lower())
 
 
 if __name__ == "__main__":

@@ -69,6 +69,13 @@ Sheets, market data, OCR, LLM, or network calls:
 PYTHONPATH=src python3 -m stock_analyst.cli extraction-quality-report ./data/uploads/uploads.jsonl
 ```
 
+Generate a local review queue from the same manifest, including draft-review and
+reprocess-needed actions:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli review-queue ./data/uploads/uploads.jsonl
+```
+
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.

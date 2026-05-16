@@ -19,6 +19,7 @@ from stock_analyst.pipeline import (
     calculate_processing_steps,
 )
 from stock_analyst.quality_report import build_extraction_quality_report
+from stock_analyst.review_queue import build_review_queue_from_manifest
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -85,6 +86,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Private local upload directory. Defaults to the manifest parent.",
     )
     quality_report.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    review_queue = subcommands.add_parser(
+        "review-queue",
+        help="List local draft-review and reprocess-needed actions from an upload manifest.",
+    )
+    review_queue.add_argument(
+        "manifest",
+        type=Path,
+        help="Local JSONL upload manifest created by import-pdf-folder.",
+    )
+    review_queue.add_argument(
+        "--upload-dir",
+        type=Path,
+        default=None,
+        help="Private local upload directory. Defaults to the manifest parent.",
+    )
+    review_queue.add_argument(
         "--min-embedded-chars",
         type=int,
         default=40,
@@ -206,6 +229,20 @@ def run_extraction_quality_report(
     return report.to_dict()
 
 
+def run_review_queue(
+    manifest_path: Path,
+    *,
+    upload_dir: Path | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    queue = build_review_queue_from_manifest(
+        manifest_path,
+        upload_dir=upload_dir,
+        min_embedded_chars=min_embedded_chars,
+    )
+    return queue.to_dict()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -223,6 +260,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "extraction-quality-report":
             result = run_extraction_quality_report(
+                args.manifest,
+                upload_dir=args.upload_dir,
+                min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "review-queue":
+            result = run_review_queue(
                 args.manifest,
                 upload_dir=args.upload_dir,
                 min_embedded_chars=args.min_embedded_chars,

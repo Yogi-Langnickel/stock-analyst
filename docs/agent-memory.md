@@ -18,6 +18,9 @@ Created: 2026-05-15
 - Imported PDF manifests can be summarized with a local extraction quality
   report that emits draft-readiness, missing-file, extraction-failure, and
   OCR-needed counts without exposing extracted page text.
+- Imported PDF manifests can also produce a local review queue with
+  draft-review, restore-missing-file, local-OCR, and rerun-extraction actions.
+  The queue is metadata-only and does not expose extracted page text.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
@@ -34,6 +37,7 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --dry-run ./data/private/issues`
 - `PYTHONPATH=src python3 -m stock_analyst.cli extraction-quality-report ./data/uploads/uploads.jsonl`
+- `PYTHONPATH=src python3 -m stock_analyst.cli review-queue ./data/uploads/uploads.jsonl`
 
 ## Performance And Context Notes
 
