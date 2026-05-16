@@ -7,7 +7,8 @@ Revised after persona review: 2026-05-14
 ## Start Here
 
 - Current slice: local-first PDF intake, private ignored upload storage,
-  checksum duplicate detection, and disabled-by-default market-data enrichment.
+  checksum duplicate detection, embedded-text recommendation-card extraction,
+  and disabled-by-default market-data enrichment.
 - Hard boundary: market data is context only and cannot overwrite magazine
   source values or invent missing price, stop-loss, target, ticker, ISIN, WKN,
   or recommendation data.
@@ -258,6 +259,18 @@ Acceptance:
 1. Mark rows missing ticker/ISIN/WKN as `needs_review`.
 
 Acceptance:
+
+- Completed first labelled-card slice: embedded-text extraction can emit
+  draft-only recommendation-card rows for real local PDFs, including printed
+  instrument name, WKN, current price, target, stop, chance/risk dots, market
+  cap, new/follow-up status, original issue/date, performance since
+  recommendation, dividend yield/trend, KUV/KGV, next report date, and
+  derivative fields such as underlying price, base price, Omega/Hebel, and
+  runtime.
+- The extractor keeps derivatives and underlying stocks as separate draft rows
+  when both appear on the same page.
+- Rows from this extractor are always `needs_review`; no family-facing or
+  exportable row is created automatically.
 
 - No missing value is invented.
 - Each row has issue, page, and source block references.

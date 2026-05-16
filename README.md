@@ -12,7 +12,8 @@ financial advice, a recommendation, or a suitability assessment.
 Initialized planning and scaffold. The current local-first prototype can
 validate and store PDFs, record checksum/issue-date manifest metadata, detect
 duplicates, scaffold local text extraction status, report embedded-text quality
-for imported PDFs, and keep all rows draft-only until manual review.
+for imported PDFs, extract draft recommendation-card rows from embedded text,
+and keep all rows draft-only until manual review.
 
 ## Intended Users
 
@@ -76,6 +77,14 @@ reprocess-needed actions:
 PYTHONPATH=src python3 -m stock_analyst.cli review-queue ./data/uploads/uploads.jsonl
 ```
 
+Extract draft recommendation cards from a private local PDF. This uses embedded
+PDF text only, does not call OCR, Drive, Sheets, market data, or LLM providers,
+and marks rows as `needs_review`:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf
+```
+
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.
@@ -101,6 +110,7 @@ pip install -e ".[dev]"
 
 - [Implementation plan](docs/implementation-plan.md)
 - [Free market data options](docs/free-market-data-options.md)
+- [OCR options](docs/ocr-options.md)
 - [Persona review and revisions](docs/persona-review.md)
 - [Security and privacy](docs/security-and-privacy.md)
 - [Unblock steps](unblockme.md)

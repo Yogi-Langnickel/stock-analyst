@@ -19,6 +19,7 @@ from stock_analyst.pipeline import (
     calculate_processing_steps,
 )
 from stock_analyst.quality_report import build_extraction_quality_report
+from stock_analyst.recommendation_cards import extract_recommendation_cards_from_pdf
 from stock_analyst.review_queue import build_review_queue_from_manifest
 
 
@@ -108,6 +109,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Private local upload directory. Defaults to the manifest parent.",
     )
     review_queue.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    recommendation_cards = subcommands.add_parser(
+        "recommendation-cards",
+        help="Extract local draft recommendation cards from embedded PDF text.",
+    )
+    recommendation_cards.add_argument("pdf", type=Path)
+    recommendation_cards.add_argument(
+        "--issue-id",
+        default=None,
+        help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
+    )
+    recommendation_cards.add_argument(
         "--min-embedded-chars",
         type=int,
         default=40,
@@ -243,6 +261,20 @@ def run_review_queue(
     return queue.to_dict()
 
 
+def run_recommendation_cards(
+    pdf_path: Path,
+    *,
+    issue_id: str | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    cards = extract_recommendation_cards_from_pdf(
+        pdf_path,
+        issue_id=issue_id,
+        min_embedded_chars=min_embedded_chars,
+    )
+    return cards.to_dict()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -268,6 +300,12 @@ def main(argv: list[str] | None = None) -> int:
             result = run_review_queue(
                 args.manifest,
                 upload_dir=args.upload_dir,
+                min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "recommendation-cards":
+            result = run_recommendation_cards(
+                args.pdf,
+                issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,
             )
         else:
