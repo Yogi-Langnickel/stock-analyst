@@ -77,6 +77,156 @@ class DrivePdfMetadata:
         return result
 
 
+@dataclass(frozen=True)
+class GoogleSheetTabSpec:
+    title: str
+    headers: tuple[str, ...]
+    purpose: str
+
+
+DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
+    GoogleSheetTabSpec(
+        "Navigation Dashboard",
+        ("Area", "Tab", "Purpose", "Status"),
+        "Low-clutter entrypoint for the workbook.",
+    ),
+    GoogleSheetTabSpec(
+        "Stocks",
+        ("Symbol", "Company", "WKN", "ISIN", "Issue", "Page", "Recommendation", "Review status"),
+        "Equity dashboard and reviewed stock mentions.",
+    ),
+    GoogleSheetTabSpec(
+        "Commodities",
+        ("Commodity", "Instrument", "Issue", "Page", "Recommendation", "Context", "Review status"),
+        "Commodity recommendations and context.",
+    ),
+    GoogleSheetTabSpec(
+        "Options",
+        (
+            "Underlying",
+            "Derivative WKN",
+            "Type",
+            "Base price",
+            "Omega/Hebel",
+            "Runtime",
+            "Issue",
+            "Page",
+            "Review status",
+        ),
+        "Option and derivative recommendations.",
+    ),
+    GoogleSheetTabSpec(
+        "Forex",
+        ("Pair", "Issue", "Page", "Recommendation", "Macro context", "Review status"),
+        "Currency-pair recommendations and macro context.",
+    ),
+    GoogleSheetTabSpec(
+        "Example Portfolios",
+        ("Portfolio", "Instrument", "WKN", "Position", "Stop", "Issue", "Page", "Review status"),
+        "Publisher model portfolio snapshots.",
+    ),
+    GoogleSheetTabSpec(
+        "Review Queue",
+        ("Source ID", "Issue", "Page", "Section", "Problem", "Suggested action", "Status"),
+        "Reviewer-only draft extraction queue.",
+    ),
+    GoogleSheetTabSpec(
+        "Reviewed Magazine Mentions",
+        (
+            "Source ID",
+            "Issue",
+            "Page",
+            "Asset class",
+            "Name",
+            "WKN",
+            "ISIN",
+            "Recommendation",
+            "Current price",
+            "Target",
+            "Stop",
+            "Approved by",
+            "Approved at",
+        ),
+        "Approved stock-centric export rows.",
+    ),
+    GoogleSheetTabSpec(
+        "Recommendation Cards",
+        (
+            "Source ID",
+            "Issue",
+            "Page",
+            "Name",
+            "WKN",
+            "Chance/Risk",
+            "Recommendation type",
+            "Current price",
+            "Target",
+            "Stop",
+            "Market cap",
+            "KGV",
+            "KUV",
+            "Dividend",
+            "Review status",
+        ),
+        "Structured labelled recommendation-card fields.",
+    ),
+    GoogleSheetTabSpec(
+        "Derivative Tips",
+        (
+            "Source ID",
+            "Issue",
+            "Page",
+            "Underlying",
+            "Derivative",
+            "WKN",
+            "Base value",
+            "Base price",
+            "Omega/Hebel",
+            "Runtime",
+            "Target",
+            "Stop",
+            "Review status",
+        ),
+        "Derivative overview tables and option cards.",
+    ),
+    GoogleSheetTabSpec(
+        "AKTIONAER Depot",
+        ("Issue", "Page", "Position", "Instrument", "WKN", "Weight", "Stop", "Performance", "Review status"),
+        "Publisher model-depot position snapshots.",
+    ),
+    GoogleSheetTabSpec(
+        "Depot Transactions",
+        ("Issue", "Page", "Date", "Action", "Instrument", "WKN", "Quantity", "Price", "Review status"),
+        "Publisher model-depot transaction ledger.",
+    ),
+    GoogleSheetTabSpec(
+        "Chart Check",
+        ("Issue", "Page", "Instrument", "WKN", "Signal", "Trend", "Support", "Resistance", "Review status"),
+        "Chart-check section extraction.",
+    ),
+    GoogleSheetTabSpec(
+        "Stock Quickcheck",
+        ("Issue", "Page", "Instrument", "WKN", "Evaluation", "Signal", "Comment", "Review status"),
+        "Normalized quick-check table rows.",
+    ),
+    GoogleSheetTabSpec(
+        "Statistics Context",
+        ("Issue", "Page", "Context type", "Name", "Value", "Period", "Source note", "Review status"),
+        "Context-only market, index, sector, and stock statistics.",
+    ),
+    GoogleSheetTabSpec(
+        "Dividend Focus",
+        ("Issue", "Page", "Instrument", "WKN", "Dividend", "Yield", "Period", "Ex date", "Review status"),
+        "Dividend section and multi-period dividend data.",
+    ),
+    GoogleSheetTabSpec(
+        "Extraction Audit",
+        ("Run ID", "Issue", "Page", "Section", "Severity", "Message", "Action", "Created at"),
+        "Extraction warnings, skipped pages, and parser audit rows.",
+    ),
+)
+
+
 def load_env_file(path: Path) -> dict[str, str]:
     if not path.exists():
         raise GoogleAccessError(f"env file does not exist: {path}")
@@ -185,6 +335,85 @@ def run_google_access_smoke(
     }
 
 
+def bootstrap_google_sheet(
+    config: GoogleAccessConfig,
+    *,
+    sheets_service_factory=None,
+    tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
+    write_headers: bool = True,
+) -> dict[str, object]:
+    """Create missing workbook tabs and write stable header rows.
+
+    The operation only writes sheet structure and header labels. It does not
+    export recommendations or private PDF-derived rows.
+    """
+
+    if sheets_service_factory is None:
+        _drive_service_factory, sheets_service_factory = _google_service_factories(config)
+
+    sheets = sheets_service_factory()
+    try:
+        spreadsheet = (
+            sheets.spreadsheets()
+            .get(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                fields="spreadsheetId,properties.title,sheets.properties.title",
+            )
+            .execute()
+        )
+        existing_titles = tuple(
+            sheet.get("properties", {}).get("title")
+            for sheet in spreadsheet.get("sheets", [])
+            if sheet.get("properties", {}).get("title")
+        )
+        missing_titles = tuple(
+            spec.title for spec in tab_specs if spec.title not in set(existing_titles)
+        )
+
+        if missing_titles:
+            sheets.spreadsheets().batchUpdate(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                body={
+                    "requests": [
+                        {"addSheet": {"properties": {"title": title}}}
+                        for title in missing_titles
+                    ]
+                },
+            ).execute()
+
+        header_ranges = _build_sheet_header_ranges(tab_specs) if write_headers else ()
+        if header_ranges:
+            sheets.spreadsheets().values().batchUpdate(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                body={
+                    "valueInputOption": "RAW",
+                    "data": list(header_ranges),
+                },
+            ).execute()
+    except Exception as error:
+        raise GoogleAccessError(
+            "Google Sheets bootstrap failed. Verify network access, API enablement, "
+            "service-account sheet sharing, and configured spreadsheet ID."
+        ) from error
+
+    return {
+        "ok": True,
+        "externalServicesEnabled": True,
+        "spreadsheetId": config.sheets_spreadsheet_id,
+        "existingTabs": list(existing_titles),
+        "createdTabs": list(missing_titles),
+        "headerRowsWritten": len(tab_specs) if write_headers else 0,
+        "tabs": [
+            {
+                "title": spec.title,
+                "headers": list(spec.headers),
+                "purpose": spec.purpose,
+            }
+            for spec in tab_specs
+        ],
+    }
+
+
 def list_drive_pdf_metadata(
     config: GoogleAccessConfig,
     *,
@@ -281,6 +510,35 @@ def write_drive_pdf_metadata_manifest(
             manifest.write(f"{json.dumps(manifest_row, sort_keys=True)}\n")
 
     return manifest_path
+
+
+def _build_sheet_header_ranges(
+    tab_specs: tuple[GoogleSheetTabSpec, ...],
+) -> tuple[dict[str, object], ...]:
+    return tuple(
+        {
+            "range": f"{_quote_sheet_title(spec.title)}!A1:{_column_letter(len(spec.headers))}1",
+            "values": [list(spec.headers)],
+        }
+        for spec in tab_specs
+    )
+
+
+def _quote_sheet_title(title: str) -> str:
+    escaped_title = title.replace("'", "''")
+    return f"'{escaped_title}'"
+
+
+def _column_letter(column_number: int) -> str:
+    if column_number < 1:
+        raise GoogleAccessError("column_number must be positive")
+
+    letters = ""
+    current = column_number
+    while current:
+        current, remainder = divmod(current - 1, 26)
+        letters = f"{chr(65 + remainder)}{letters}"
+    return letters
 
 
 def _google_service_factories(config: GoogleAccessConfig):

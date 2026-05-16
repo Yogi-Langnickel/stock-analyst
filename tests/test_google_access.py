@@ -4,6 +4,7 @@ from pathlib import Path
 
 from stock_analyst.google_access import (
     GoogleAccessError,
+    bootstrap_google_sheet,
     build_drive_pdf_metadata_result,
     list_drive_pdf_metadata,
     load_env_file,
@@ -52,9 +53,27 @@ class _FakeDrive:
 class _FakeSpreadsheets:
     def __init__(self, payload):
         self.payload = payload
+        self.batch_update_requests = []
+        self.values_resource = _FakeValues()
 
     def get(self, **_kwargs):
         return _FakeExecute(self.payload)
+
+    def batchUpdate(self, **kwargs):
+        self.batch_update_requests.append(kwargs)
+        return _FakeExecute({"updated": True})
+
+    def values(self):
+        return self.values_resource
+
+
+class _FakeValues:
+    def __init__(self):
+        self.batch_update_requests = []
+
+    def batchUpdate(self, **kwargs):
+        self.batch_update_requests.append(kwargs)
+        return _FakeExecute({"updated": True})
 
 
 class _FakeSheets:
@@ -244,6 +263,72 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn('"stage": "drive_metadata_imported"', lines[0])
         self.assertIn('"status": "pending_local_download"', lines[0])
         self.assertNotIn("private_key", lines[0])
+
+    def test_google_sheet_bootstrap_creates_missing_tabs_and_headers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "properties": {"title": "Der Aktionär Summaries"},
+                    "sheets": [
+                        {"properties": {"title": "Navigation Dashboard"}},
+                        {"properties": {"title": "Stocks"}},
+                    ],
+                }
+            )
+
+            result = bootstrap_google_sheet(config, sheets_service_factory=lambda: sheets)
+
+        self.assertTrue(result["ok"])
+        self.assertIn("Options", result["createdTabs"])
+        self.assertEqual(result["headerRowsWritten"], len(result["tabs"]))
+        batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
+        self.assertIn({"addSheet": {"properties": {"title": "Options"}}}, batch_body["requests"])
+        values_body = sheets.spreadsheets_resource.values_resource.batch_update_requests[0]["body"]
+        self.assertEqual(values_body["valueInputOption"], "RAW")
+        self.assertIn(
+            {
+                "range": "'Navigation Dashboard'!A1:D1",
+                "values": [["Area", "Tab", "Purpose", "Status"]],
+            },
+            values_body["data"],
+        )
+
+    def test_google_sheet_bootstrap_can_skip_header_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [{"properties": {"title": "Navigation Dashboard"}}],
+                }
+            )
+
+            result = bootstrap_google_sheet(
+                config,
+                sheets_service_factory=lambda: sheets,
+                write_headers=False,
+            )
+
+        self.assertEqual(result["headerRowsWritten"], 0)
+        self.assertEqual(sheets.spreadsheets_resource.values_resource.batch_update_requests, [])
 
 
 if __name__ == "__main__":

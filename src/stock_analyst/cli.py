@@ -9,6 +9,7 @@ from pathlib import Path
 from stock_analyst.dividend_strategy import build_dividend_strategy_from_pdf
 from stock_analyst.google_access import (
     GoogleAccessError,
+    bootstrap_google_sheet,
     build_drive_pdf_metadata_result,
     load_google_access_config,
     run_google_access_smoke,
@@ -209,6 +210,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional private local JSONL path for metadata-only Drive import rows.",
     )
 
+    google_sheets_bootstrap = subcommands.add_parser(
+        "google-sheets-bootstrap",
+        help="Create missing workbook tabs and write stable header rows.",
+    )
+    google_sheets_bootstrap.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Optional local env file with GOOGLE_* config. Do not commit it.",
+    )
+    google_sheets_bootstrap.add_argument(
+        "--skip-headers",
+        action="store_true",
+        help="Create missing tabs without writing header rows.",
+    )
+
     return parser
 
 
@@ -402,6 +419,15 @@ def run_google_drive_pdfs_command(
     return result
 
 
+def run_google_sheets_bootstrap_command(
+    *,
+    env_file: Path | None = None,
+    write_headers: bool = True,
+) -> dict[str, object]:
+    config = load_google_access_config(env_file=env_file)
+    return bootstrap_google_sheet(config, write_headers=write_headers)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -454,6 +480,11 @@ def main(argv: list[str] | None = None) -> int:
                 env_file=args.env_file,
                 page_size=args.page_size,
                 manifest=args.manifest,
+            )
+        elif args.command == "google-sheets-bootstrap":
+            result = run_google_sheets_bootstrap_command(
+                env_file=args.env_file,
+                write_headers=not args.skip_headers,
             )
         else:
             parser.error(f"Unsupported command: {args.command}")

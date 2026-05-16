@@ -75,6 +75,7 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli google-access-smoke --env-file .env`
 - `PYTHONPATH=src python3 -m stock_analyst.cli google-drive-pdfs --env-file .env`
 - `PYTHONPATH=src python3 -m stock_analyst.cli google-drive-pdfs --env-file .env --manifest ./data/private/drive-pdf-metadata.jsonl`
+- `PYTHONPATH=src python3 -m stock_analyst.cli google-sheets-bootstrap --env-file .env`
 
 ## Performance And Context Notes
 

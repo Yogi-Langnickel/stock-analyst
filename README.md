@@ -122,6 +122,16 @@ PYTHONPATH=src python3 -m stock_analyst.cli google-drive-pdfs --env-file .env --
 Treat this output as private because it includes Drive file identifiers and
 filenames. It does not contain PDF text, credentials, or downloaded PDF bytes.
 
+Create any missing workbook tabs from `docs/google-sheets-layout.md` and write
+stable header rows without exporting private PDF content:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli google-sheets-bootstrap --env-file .env
+```
+
+Use `--skip-headers` if you only want to create missing tabs and preserve
+existing first-row labels.
+
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.
