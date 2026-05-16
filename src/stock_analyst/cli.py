@@ -7,6 +7,11 @@ import json
 from pathlib import Path
 
 from stock_analyst.dividend_strategy import build_dividend_strategy_from_pdf
+from stock_analyst.google_access import (
+    GoogleAccessError,
+    load_google_access_config,
+    run_google_access_smoke,
+)
 from stock_analyst.intake import (
     BatchPdfIntakeItem,
     IntakeError,
@@ -166,6 +171,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=40,
         help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    google_access_smoke = subcommands.add_parser(
+        "google-access-smoke",
+        help="Check configured Google Drive folder and Sheets access.",
+    )
+    google_access_smoke.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Optional local env file with GOOGLE_* config. Do not commit it.",
     )
 
     return parser
@@ -339,6 +355,14 @@ def run_dividend_strategy(
     return extraction.to_dict()
 
 
+def run_google_access_smoke_command(
+    *,
+    env_file: Path | None = None,
+) -> dict[str, object]:
+    config = load_google_access_config(env_file=env_file)
+    return run_google_access_smoke(config)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -384,9 +408,11 @@ def main(argv: list[str] | None = None) -> int:
                 issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,
             )
+        elif args.command == "google-access-smoke":
+            result = run_google_access_smoke_command(env_file=args.env_file)
         else:
             parser.error(f"Unsupported command: {args.command}")
-    except (FileNotFoundError, IntakeError, PdfProcessingError, ValueError) as error:
+    except (FileNotFoundError, GoogleAccessError, IntakeError, PdfProcessingError, ValueError) as error:
         parser.exit(2, f"error: {error}\n")
 
     print(json.dumps(result, indent=2, sort_keys=True))

@@ -95,6 +95,17 @@ low-priority back matter:
 PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf
 ```
 
+Check Google Drive/Sheets access after the service account JSON is stored in an
+ignored private path and a local env file points at the configured folder/sheet:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli google-access-smoke --env-file .env
+```
+
+This reads only Drive folder metadata and spreadsheet/tab names. It does not
+copy PDFs, write rows, run extraction, or expose the service-account private
+key.
+
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.

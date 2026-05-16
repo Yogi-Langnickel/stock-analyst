@@ -45,6 +45,9 @@ Created: 2026-05-15
   folder handoff is fastest because current commands do not need Drive/Sheets.
 - Use service account first for future private Drive/Sheets automation unless
   per-user Google identity becomes a product requirement.
+- Dev Google Drive/Sheets IDs are configured for the service account
+  `stock-analyst@stock-analyst-496512.iam.gserviceaccount.com`; see
+  `unblockme.md` for the non-secret folder/sheet IDs and smoke command.
 - Target Drive workflow: dad drops each weekly PDF into the shared Drive folder
   between Wednesday and Thursday; a future EventBridge/Lambda preprocessor may
   check hourly on those days for new files and record lightweight metadata, while
@@ -65,6 +68,7 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli dividend-strategy ./data/private/issues/DA_2026_03.pdf`
+- `PYTHONPATH=src python3 -m stock_analyst.cli google-access-smoke --env-file .env`
 
 ## Performance And Context Notes
 
