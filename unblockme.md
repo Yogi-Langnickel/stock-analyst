@@ -118,6 +118,12 @@ Create these tabs:
 - `Extraction Audit`
 - `Private Fixture Expectations`
 
+The emerging export layout is documented in `docs/google-sheets-layout.md`.
+It adds dedicated tabs for `Recommendation Cards`, `Derivative Tips`,
+`AKTIONAER Depot`, `Depot Transactions`, `Chart Check`, `Stock Quickcheck`,
+`Statistics Context`, and `Dividend Focus`. Keep these tabs reviewer/export
+oriented until the family-facing UI is built.
+
 Rules:
 
 - Only approved rows should go to family-facing tabs.
