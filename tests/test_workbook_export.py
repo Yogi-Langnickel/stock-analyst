@@ -73,10 +73,10 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(result["rowCount"], 2)
         self.assertEqual(
             result["rowsByTab"],
-            {"Extraction Audit": 1, "Recommendation Cards": 1},
+            {"Extraction Audit": 1, "Stocks": 1},
         )
 
-    def test_routes_stock_card_to_recommendation_card_sheet_row(self) -> None:
+    def test_routes_stock_card_to_stocks_sheet_row(self) -> None:
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
             issue_id="2026-W03",
@@ -103,20 +103,34 @@ class WorkbookExportPlanTest(unittest.TestCase):
 
         result = plan.to_dict()
         row = result["rows"][0]
+        stock_tab = next(tab for tab in result["tabs"] if tab["title"] == "Stocks")
 
         self.assertFalse(result["googleWritesEnabled"])
+        self.assertFalse(result["externalServicesEnabled"])
         self.assertNotIn("pdfPath", result)
         self.assertIn("privateSourceId", result)
         self.assertTrue(result["manualReviewRequired"])
         self.assertEqual(result["approvedRows"], 0)
-        self.assertEqual(row["tab"], "Recommendation Cards")
+        self.assertEqual(row["tab"], "Stocks")
+        self.assertEqual(row["rowKind"], "stock_recommendation")
         self.assertFalse(row["exportable"])
         self.assertTrue(row["requiresManualReview"])
         self.assertEqual(row["reviewStatus"], ReviewStatus.NEEDS_REVIEW.value)
         self.assertEqual(row["sourceBlock"], "manual_review_pending")
-        self.assertEqual(len(row["values"]), len(headers_for("Recommendation Cards")))
-        self.assertEqual(row["values"][3], "Banco Sabadell")
-        self.assertEqual(row["values"][5], "5/5")
+        self.assertEqual(len(row["values"]), len(headers_for("Stocks")))
+        self.assertEqual(stock_tab["headerRow"], 3)
+        self.assertIn({"cell": "A1", "value": "date updated"}, stock_tab["metadataCells"])
+        self.assertEqual(row["values"][0], "Banco Sabadell")
+        self.assertEqual(row["values"][1], "A0MRD4")
+        self.assertEqual(row["values"][2], "")
+        self.assertEqual(row["values"][3], "3,33 EUR")
+        self.assertEqual(row["values"][4], "18,6 %")
+        self.assertEqual(row["values"][5], "4,30 EUR")
+        self.assertEqual(row["values"][6], "2,70 EUR")
+        self.assertEqual(row["values"][7], "new_recommendation")
+        self.assertEqual(row["values"][8], "")
+        self.assertEqual(row["values"][9], "2026-W03")
+        self.assertEqual(row["values"][10], "22")
         self.assertIn("manual_review_required", row["warnings"][0])
 
     def test_routes_derivative_cards_without_putting_name_in_source_id(self) -> None:
@@ -243,6 +257,14 @@ class WorkbookExportPlanTest(unittest.TestCase):
             self.assertFalse(row["exportable"])
             self.assertTrue(row["requiresManualReview"])
             self.assertEqual(row["sourceBlock"], "manual_review_pending")
+
+            headers = headers_for(str(row["tab"]))
+            if "Review status" in headers:
+                review_status_index = headers.index("Review status")
+                self.assertEqual(
+                    row["values"][review_status_index],
+                    ReviewStatus.NEEDS_REVIEW.value,
+                )
 
     def test_routes_section_inventory_to_extraction_audit_with_suggested_sheet(self) -> None:
         plan = build_workbook_export_plan(

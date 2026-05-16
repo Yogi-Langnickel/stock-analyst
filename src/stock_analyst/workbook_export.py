@@ -89,6 +89,11 @@ class WorkbookExportPlan:
                 {
                     "title": title,
                     "headers": list(_headers_for_tab(title)),
+                    "headerRow": _header_row_for_tab(title),
+                    "metadataCells": [
+                        {"cell": cell, "value": value}
+                        for cell, value in _metadata_cells_for_tab(title)
+                    ],
                 }
                 for title in tabs
             ],
@@ -179,29 +184,25 @@ def _card_rows(cards: Sequence[RecommendationCard]) -> list[WorkbookDraftRow]:
 def _recommendation_card_row(card: RecommendationCard) -> WorkbookDraftRow:
     dividend = _join_non_empty((card.dividend_yield, card.dividend_per_share_trend))
     return WorkbookDraftRow(
-        tab="Recommendation Cards",
-        row_kind="recommendation_card",
+        tab="Stocks",
+        row_kind="stock_recommendation",
         source_id=_source_id("card", card.issue_id, card.page, card.wkn),
         issue_id=card.issue_id,
         page=card.page,
         review_status=ReviewStatus.NEEDS_REVIEW,
         source_block="manual_review_pending",
         values=(
-            _source_id("card", card.issue_id, card.page, card.wkn),
-            card.issue_id,
-            str(card.page),
             card.instrument_name,
             card.wkn or "",
-            _chance_risk(card.chance, card.risk),
-            card.recommendation_status or "",
+            "",
             card.current_price or "",
+            dividend,
             card.target or "",
             card.stop or "",
-            card.market_cap or "",
-            card.kgv_26e or "",
-            card.kuv_26e or "",
-            dividend,
-            card.review_status.value,
+            card.recommendation_status or "",
+            "",
+            card.issue_id,
+            str(card.page),
         ),
     )
 
@@ -229,7 +230,7 @@ def _derivative_card_row(card: RecommendationCard) -> WorkbookDraftRow:
             card.runtime or "",
             card.target or "",
             card.stop or "",
-            card.review_status.value,
+            ReviewStatus.NEEDS_REVIEW.value,
         ),
     )
 
@@ -256,7 +257,7 @@ def _dividend_rows(rows: Sequence[DividendStrategyRow]) -> list[WorkbookDraftRow
                     row.dividend_yield,
                     row.month,
                     row.next_cum_day or "",
-                    row.review_status.value,
+                    ReviewStatus.NEEDS_REVIEW.value,
                 ),
             )
         )
@@ -340,6 +341,20 @@ def _headers_for_tab(title: str) -> tuple[str, ...]:
     for spec in DEFAULT_SHEET_TABS:
         if spec.title == title:
             return spec.headers
+    return ()
+
+
+def _header_row_for_tab(title: str) -> int:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == title:
+            return spec.header_row
+    return 1
+
+
+def _metadata_cells_for_tab(title: str) -> tuple[tuple[str, str], ...]:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == title:
+            return spec.metadata_cells
     return ()
 
 

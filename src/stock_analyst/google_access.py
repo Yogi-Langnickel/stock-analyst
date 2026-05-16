@@ -82,6 +82,8 @@ class GoogleSheetTabSpec:
     title: str
     headers: tuple[str, ...]
     purpose: str
+    header_row: int = 1
+    metadata_cells: tuple[tuple[str, str], ...] = ()
 
 
 DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
@@ -92,8 +94,22 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     ),
     GoogleSheetTabSpec(
         "Stocks",
-        ("Symbol", "Company", "WKN", "ISIN", "Issue", "Page", "Recommendation", "Review status"),
+        (
+            "Company",
+            "WKN",
+            "Current Price*",
+            "Price at Recommendation",
+            "Dividends",
+            "Target",
+            "Stop",
+            "Recommendation",
+            "date updated",
+            "issue",
+            "page",
+        ),
         "Equity dashboard and reviewed stock mentions.",
+        header_row=3,
+        metadata_cells=(("A1", "date updated"), ("B1", "")),
     ),
     GoogleSheetTabSpec(
         "Commodities",
@@ -407,6 +423,11 @@ def bootstrap_google_sheet(
             {
                 "title": spec.title,
                 "headers": list(spec.headers),
+                "headerRow": spec.header_row,
+                "metadataCells": [
+                    {"cell": cell, "value": value}
+                    for cell, value in spec.metadata_cells
+                ],
                 "purpose": spec.purpose,
             }
             for spec in tab_specs
@@ -515,13 +536,25 @@ def write_drive_pdf_metadata_manifest(
 def _build_sheet_header_ranges(
     tab_specs: tuple[GoogleSheetTabSpec, ...],
 ) -> tuple[dict[str, object], ...]:
-    return tuple(
+    metadata_ranges = tuple(
         {
-            "range": f"{_quote_sheet_title(spec.title)}!A1:{_column_letter(len(spec.headers))}1",
+            "range": f"{_quote_sheet_title(spec.title)}!{cell}",
+            "values": [[value]],
+        }
+        for spec in tab_specs
+        for cell, value in spec.metadata_cells
+    )
+    header_ranges = tuple(
+        {
+            "range": (
+                f"{_quote_sheet_title(spec.title)}!A{spec.header_row}:"
+                f"{_column_letter(len(spec.headers))}{spec.header_row}"
+            ),
             "values": [list(spec.headers)],
         }
         for spec in tab_specs
     )
+    return metadata_ranges + header_ranges
 
 
 def _quote_sheet_title(title: str) -> str:

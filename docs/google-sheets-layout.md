@@ -38,7 +38,11 @@ issues have been extracted and the repeated sections are clearer.
    Dashboard-style view for equity recommendations, major indexes such as DAX
    and Dow Jones, small trend charts, key article bullets, reviewed
    recommendation state, and stock-specific enrichment such as insider buying
-   or selling.
+   or selling. Cell `A1` contains the tab-level `date updated` label and `B1`
+   contains the latest tab update timestamp. The stock table header starts on
+   row 3 with `Company`, `WKN`, `Current Price*`, `Price at Recommendation`,
+   `Dividends`, `Target`, `Stop`, `Recommendation`, `date updated`, `issue`,
+   and `page`.
 
 3. `Commodities`
    Commodity-related recommendations, article bullets, price/context snapshots,
@@ -155,7 +159,7 @@ tabs:
 The local `workbook-export-plan` command builds a JSON dry run of planned row
 DTOs for the workbook tabs. It currently routes:
 
-- stock recommendation cards to `Recommendation Cards`
+- stock recommendation cards to `Stocks`
 - derivative cards to `Derivative Tips`
 - dividend strategy rows to `Dividend Focus`
 - section-inventory routing hints to `Extraction Audit`

@@ -302,6 +302,48 @@ class GoogleAccessTest(unittest.TestCase):
             },
             values_body["data"],
         )
+        self.assertIn(
+            {
+                "range": "'Stocks'!A1",
+                "values": [["date updated"]],
+            },
+            values_body["data"],
+        )
+        self.assertIn(
+            {
+                "range": "'Stocks'!B1",
+                "values": [[""]],
+            },
+            values_body["data"],
+        )
+        self.assertIn(
+            {
+                "range": "'Stocks'!A3:K3",
+                "values": [[
+                    "Company",
+                    "WKN",
+                    "Current Price*",
+                    "Price at Recommendation",
+                    "Dividends",
+                    "Target",
+                    "Stop",
+                    "Recommendation",
+                    "date updated",
+                    "issue",
+                    "page",
+                ]],
+            },
+            values_body["data"],
+        )
+        stock_tab = next(tab for tab in result["tabs"] if tab["title"] == "Stocks")
+        self.assertEqual(stock_tab["headerRow"], 3)
+        self.assertEqual(
+            stock_tab["metadataCells"],
+            [
+                {"cell": "A1", "value": "date updated"},
+                {"cell": "B1", "value": ""},
+            ],
+        )
 
     def test_google_sheet_bootstrap_can_skip_header_writes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
