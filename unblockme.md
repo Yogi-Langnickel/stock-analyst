@@ -99,9 +99,22 @@ Drive adapter setup steps when requested:
 6. Give Viewer access if the app only reads uploaded PDFs; give Editor access
    only if the app will upload/archive files or write status artifacts.
 7. Put these values in local `.env`, never in chat or Git:
+   - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
    - `GOOGLE_DRIVE_FOLDER_ID`
    - `GOOGLE_SHEETS_SPREADSHEET_ID`
    - `GOOGLE_APPLICATION_CREDENTIALS`
+8. Run the metadata-only access smoke:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli google-access-smoke --env-file .env
+```
+
+Current configured dev values, without secrets:
+
+- Service account:
+  `stock-analyst@stock-analyst-496512.iam.gserviceaccount.com`
+- Drive folder ID: `1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb`
+- Spreadsheet ID: `1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE`
 
 ## Google Sheet Setup
 
