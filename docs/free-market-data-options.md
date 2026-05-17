@@ -229,3 +229,7 @@ recommendations, target prices, stop prices, or WKN/source fields.
 - Dry-run planning now reads a provider/day budget ledger from
   `STOCK_ANALYST_MARKET_DATA_BUDGET_DIR` and counts prior local usage against
   the same daily cap. Missing ledgers default to zero prior usage.
+- Market-data cache files now have a structured credential-free cache record
+  format with metadata, freshness fields, source URL hash, terms review fields,
+  and provider response payload. Raw provider URLs and API keys must not be
+  stored in cache files.

@@ -17,7 +17,9 @@ from stock_analyst.market_data import (
     market_data_disabled,
     plan_fmp_enrichment_requests,
     plan_market_data_enrichment_requests,
+    read_market_data_cache_record,
     write_market_data_budget_state,
+    write_market_data_cache_record,
     parse_stooq_daily_csv,
 )
 from stock_analyst.cli import run_market_data_plan_command
@@ -286,6 +288,43 @@ class MarketDataTest(unittest.TestCase):
         self.assertNotIn("stooq.example", repr(cache))
         self.assertEqual(cache.terms_checked_at.isoformat(), "2026-05-15")
         self.assertEqual(cache.terms_version, "stooq-manual-review-2026-05-15")
+
+    def test_market_data_cache_record_round_trips_without_raw_url_or_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            descriptor = describe_market_data_request(
+                provider="twelve_data",
+                symbol="AAPL",
+                endpoint="price",
+                params={"symbol": "AAPL"},
+            )
+            metadata = build_market_data_cache_metadata(
+                descriptor,
+                cache_root=Path(temp_dir) / "cache",
+                retrieved_at=datetime(2026, 5, 17, 1, 2, tzinfo=timezone.utc),
+                observed_on=date(2026, 5, 16),
+                ttl_seconds=3600,
+                source_url="https://api.twelvedata.com/price?symbol=AAPL&apikey=secret",
+                terms_checked_at=date(2026, 5, 17),
+                terms_version="twelve-data-review-2026-05-17",
+            )
+
+            path = write_market_data_cache_record(
+                metadata,
+                {"price": "190.00"},
+                stored_at=datetime(2026, 5, 17, 1, 3, tzinfo=timezone.utc),
+            )
+            record_text = path.read_text(encoding="utf-8")
+            loaded = read_market_data_cache_record(path)
+
+        self.assertEqual(loaded.metadata.provider, "twelve_data")
+        self.assertEqual(loaded.metadata.symbol, "AAPL")
+        self.assertEqual(loaded.metadata.observed_on, date(2026, 5, 16))
+        self.assertEqual(loaded.metadata.ttl_seconds, 3600)
+        self.assertEqual(loaded.metadata.terms_version, "twelve-data-review-2026-05-17")
+        self.assertEqual(loaded.response_payload, {"price": "190.00"})
+        self.assertNotIn("apikey", record_text.lower())
+        self.assertNotIn("secret", record_text.lower())
+        self.assertNotIn("api.twelvedata.com", record_text)
 
     def test_market_data_cache_metadata_rejects_negative_ttl(self) -> None:
         descriptor = describe_market_data_request(

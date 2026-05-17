@@ -284,6 +284,13 @@ class MarketDataCacheMetadata:
 
 
 @dataclass(frozen=True)
+class MarketDataCacheRecord:
+    metadata: MarketDataCacheMetadata
+    response_payload: object
+    stored_at: datetime
+
+
+@dataclass(frozen=True)
 class MarketDataBudgetState:
     provider: str
     budget_date: date
@@ -575,6 +582,52 @@ def build_market_data_cache_metadata(
         source_url_hash=_hash_source_url(source_url),
         terms_checked_at=terms_checked_at,
         terms_version=normalized_terms_version,
+    )
+
+
+def write_market_data_cache_record(
+    metadata: MarketDataCacheMetadata,
+    response_payload: object,
+    *,
+    stored_at: datetime | None = None,
+) -> Path:
+    """Persist a credential-free market data response cache record."""
+
+    normalized_stored_at = _normalize_cache_datetime(stored_at) or datetime.now(timezone.utc)
+    metadata.cache_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "metadata": _cache_metadata_to_payload(metadata),
+        "responsePayload": response_payload,
+        "storedAt": normalized_stored_at.isoformat(),
+    }
+    metadata.cache_path.write_text(
+        f"{json.dumps(payload, sort_keys=True, separators=(',', ':'))}\n",
+        encoding="utf-8",
+    )
+    return metadata.cache_path
+
+
+def read_market_data_cache_record(path: Path) -> MarketDataCacheRecord:
+    """Read a previously persisted market data cache record."""
+
+    if not path.exists():
+        raise ValueError(f"market data cache record does not exist: {path}")
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"market data cache record is not an object: {path}")
+
+    metadata_payload = payload.get("metadata")
+    if not isinstance(metadata_payload, dict):
+        raise ValueError(f"market data cache record is missing metadata: {path}")
+
+    return MarketDataCacheRecord(
+        metadata=_cache_metadata_from_payload(metadata_payload, cache_path=path),
+        response_payload=payload.get("responsePayload"),
+        stored_at=_normalize_cache_datetime(
+            datetime.fromisoformat(str(payload.get("storedAt")))
+        )
+        or datetime.now(timezone.utc),
     )
 
 
@@ -906,10 +959,81 @@ def _non_negative_int_payload(payload: Mapping[str, object], key: str) -> int:
     return parsed
 
 
+def _cache_metadata_to_payload(metadata: MarketDataCacheMetadata) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "provider": metadata.provider,
+        "symbol": metadata.symbol,
+        "cacheKey": metadata.cache_key,
+        "safeIdentity": metadata.safe_identity,
+    }
+    if metadata.retrieved_at is not None:
+        payload["retrievedAt"] = metadata.retrieved_at.isoformat()
+    if metadata.observed_on is not None:
+        payload["observedOn"] = metadata.observed_on.isoformat()
+    if metadata.ttl_seconds is not None:
+        payload["ttlSeconds"] = metadata.ttl_seconds
+    if metadata.expires_at is not None:
+        payload["expiresAt"] = metadata.expires_at.isoformat()
+    if metadata.source_url_hash is not None:
+        payload["sourceUrlHash"] = metadata.source_url_hash
+    if metadata.terms_checked_at is not None:
+        payload["termsCheckedAt"] = metadata.terms_checked_at.isoformat()
+    if metadata.terms_version is not None:
+        payload["termsVersion"] = metadata.terms_version
+    return payload
+
+
+def _cache_metadata_from_payload(
+    payload: Mapping[str, object],
+    *,
+    cache_path: Path,
+) -> MarketDataCacheMetadata:
+    provider = str(payload.get("provider") or "").strip()
+    symbol = str(payload.get("symbol") or "").strip()
+    cache_key = str(payload.get("cacheKey") or "").strip()
+    safe_identity = payload.get("safeIdentity")
+    if not provider or not symbol or not cache_key:
+        raise ValueError(f"market data cache record metadata is incomplete: {cache_path}")
+    if not isinstance(safe_identity, dict):
+        raise ValueError(f"market data cache record safe identity is invalid: {cache_path}")
+
+    return MarketDataCacheMetadata(
+        provider=provider,
+        symbol=symbol,
+        cache_key=cache_key,
+        cache_path=cache_path,
+        safe_identity=dict(safe_identity),
+        retrieved_at=_optional_datetime_payload(payload.get("retrievedAt")),
+        observed_on=_optional_date_payload(payload.get("observedOn")),
+        ttl_seconds=(
+            _non_negative_int_payload(payload, "ttlSeconds")
+            if payload.get("ttlSeconds") is not None
+            else None
+        ),
+        expires_at=_optional_datetime_payload(payload.get("expiresAt")),
+        source_url_hash=_optional_string_payload(payload.get("sourceUrlHash")),
+        terms_checked_at=_optional_date_payload(payload.get("termsCheckedAt")),
+        terms_version=_optional_string_payload(payload.get("termsVersion")),
+    )
+
+
+def _optional_date_payload(value: object) -> date | None:
+    if value is None:
+        return None
+    return date.fromisoformat(str(value))
+
+
 def _optional_datetime_payload(value: object) -> datetime | None:
     if value is None:
         return None
     return _normalize_cache_datetime(datetime.fromisoformat(str(value)))
+
+
+def _optional_string_payload(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _normalize_unique_symbols(symbols: tuple[str, ...]) -> tuple[str, ...]:
