@@ -109,6 +109,17 @@ index or constituent-table context is kept as review/audit context and does not
 create stock rows unless a stock is explicitly mentioned as a recommendation
 row.
 
+Render pages for private visual review and optional local OCR:
+
+```sh
+scripts/stock-analyst visual-ocr-review ./data/private/issues/DA_2026_03.pdf --pages 22,62-63 --render
+scripts/stock-analyst visual-ocr-review ./data/private/issues/DA_2026_03.pdf --page 22 --ocr --write-ocr-text
+```
+
+The command writes rendered page PNGs, and optionally OCR text, under ignored
+private storage. Its JSON output contains file paths, sizes, hashes, and status
+metadata only; it does not print OCR text or call remote OCR providers.
+
 Inventory important magazine sections and table surfaces, including dividend
 strategy tables, derivative overview tables, AKTIONAER depot snapshots,
 transaction tables, chart-check pages, quick-check tables, statistics, and

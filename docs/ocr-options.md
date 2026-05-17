@@ -56,12 +56,42 @@ Sources:
 - Record `ocr_status` separately from recommendation review status.
 - Keep provider selection configurable so local development remains fully
   offline.
+- Treat PDF rendering and OCR libraries as optional local tools. Missing
+  PyMuPDF, Pillow, Tesseract, or pytesseract should produce dependency/status
+  output instead of triggering remote OCR or enrichment.
+
+## Local Visual/OCR Capability
+
+The first local visual review slice is implemented through:
+
+```sh
+scripts/stock-analyst visual-ocr-review ./data/private/issues/DA_2026_03.pdf --pages 22,62-63 --render
+scripts/stock-analyst visual-ocr-review ./data/private/issues/DA_2026_03.pdf --page 22 --ocr --write-ocr-text
+```
+
+Behavior:
+
+- Renders selected pages to private PNG artifacts using PyMuPDF.
+- Optionally runs local Tesseract through `pytesseract`.
+- Writes optional OCR text only to ignored private storage.
+- Returns JSON with paths, dimensions, hashes, character counts, statuses, and
+  failure reasons, but never returns OCR text.
+- Uses no network and no external OCR provider.
+- The package exposes PDF/OCR dependencies as optional extras so core tests and
+  planning commands can run without local OCR tooling installed.
+
+Smoke result on 2026-05-17:
+
+- Rendering pages 22, 62, and 63 of `DA_2026_03.pdf` succeeded locally.
+- Local OCR was wired but blocked by missing local `tesseract` binary on this
+  machine. Installing Tesseract plus German/English language data should unblock
+  the local OCR path.
 
 ## Next Implementation Slice
 
-1. Add a local `ocr-needed` report listing pages below the embedded-text
-   threshold or pages where required fixture fields are missing.
-2. Add a Tesseract adapter behind an explicit local config flag.
+1. Add visual review fixtures for important magazine pages and tables.
+2. Add an `ocr-needed` report listing pages below the embedded-text threshold
+   or pages where required fixture fields are missing.
 3. Add a remote OCR queue contract without implementing Google calls yet.
 4. Only after review, add a Google Vision adapter that processes selected pages,
    not complete issues by default.
