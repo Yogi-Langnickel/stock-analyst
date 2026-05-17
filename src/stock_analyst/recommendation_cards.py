@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import re
 from typing import Sequence
@@ -59,6 +59,7 @@ WKN_RE = re.compile(r"^[A-Z0-9]{6}$")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 YEAR_RE = re.compile(r"^20\d{2}e?$")
 DECIMAL_VALUE_RE = re.compile(r"^\d+(?:,\d+)?\*?$")
+MONEY_VALUE_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s+(?:EUR|USD)$")
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,21 @@ class RecommendationCardExtraction:
         }
 
 
+@dataclass(frozen=True)
+class _VisualChanceRiskPair:
+    chance: int
+    risk: int
+
+
+@dataclass(frozen=True)
+class _VisualDotRating:
+    page_number: int
+    y_midpoint: float
+    x_midpoint: float
+    kind: str
+    rating: int
+
+
 def extract_recommendation_cards_from_pdf(
     pdf_path: Path,
     *,
@@ -161,6 +177,9 @@ def extract_recommendation_cards_from_pdf(
         min_embedded_chars=min_embedded_chars,
     )
     resolved_issue_id = issue_id or _issue_id_from_filename(pdf_path)
+    visual_pairs_by_page = (
+        _visual_chance_risk_pairs_by_page(pdf_path) if extractor is None else {}
+    )
     cards: list[RecommendationCard] = []
 
     for page in extraction.pages:
@@ -169,6 +188,7 @@ def extract_recommendation_cards_from_pdf(
                 page.text.splitlines(),
                 issue_id=resolved_issue_id,
                 page_number=page.page_number,
+                visual_chance_risk_pairs=visual_pairs_by_page.get(page.page_number, ()),
             )
         )
 
@@ -186,6 +206,7 @@ def extract_recommendation_cards_from_lines(
     *,
     issue_id: str,
     page_number: int,
+    visual_chance_risk_pairs: Sequence[_VisualChanceRiskPair] = (),
 ) -> tuple[RecommendationCard, ...]:
     """Extract card rows from page lines produced by local PDF text extraction."""
 
@@ -212,7 +233,124 @@ def extract_recommendation_cards_from_lines(
                 continue
         index += 1
 
+    table_cards = _extract_duel_table_cards(
+        normalized_lines,
+        issue_id=issue_id,
+        page_number=page_number,
+    )
+    existing_wkns = {card.wkn for card in cards if card.wkn}
+    cards.extend(card for card in table_cards if card.wkn not in existing_wkns)
+
+    return _apply_visual_chance_risk_pairs(tuple(cards), visual_chance_risk_pairs)
+
+
+def _extract_duel_table_cards(
+    lines: Sequence[str],
+    *,
+    issue_id: str,
+    page_number: int,
+) -> tuple[RecommendationCard, ...]:
+    try:
+        header_index = lines.index("Unternehmen")
+    except ValueError:
+        return ()
+    if "Empf.-" not in lines[header_index:] or "Risiko" not in lines[header_index:]:
+        return ()
+
+    try:
+        start_index = header_index + lines[header_index:].index("Risiko") + 1
+    except ValueError:
+        return ()
+
+    cards: list[RecommendationCard] = []
+    index = start_index
+    while index + 8 < len(lines):
+        name = lines[index]
+        wkn = lines[index + 1]
+        if not WKN_RE.match(wkn):
+            index += 1
+            continue
+
+        current_price = lines[index + 2]
+        market_cap = _market_cap_from_billions_value(lines[index + 3])
+        dividend_yield = _percentage_from_table_value(lines[index + 4])
+        kuv_26e = _dash_to_empty(lines[index + 5])
+        kgv_26e = _dash_to_empty(lines[index + 6])
+        index += 7
+
+        performance_since_recommendation: str | None = None
+        if index < len(lines) and PERCENT_RE.match(lines[index]):
+            performance_since_recommendation = lines[index]
+            index += 1
+
+        recommendation_status: str | None = None
+        if index < len(lines) and lines[index] == "Neuempfehlung":
+            recommendation_status = "new_recommendation"
+            index += 1
+        elif index < len(lines) and lines[index].lower() == "kein kauf":
+            recommendation_status = "no_buy"
+            index += 1
+
+        target: str | None = None
+        stop: str | None = None
+        if index + 1 < len(lines) and MONEY_VALUE_RE.match(lines[index]):
+            target = lines[index]
+            stop = lines[index + 1] if MONEY_VALUE_RE.match(lines[index + 1]) else None
+            index += 2 if stop is not None else 1
+
+        if index + 1 >= len(lines) or not _is_dot_rating(lines[index]):
+            continue
+        chance = _rating_from_dots(lines[index])
+        risk = _rating_from_dots(lines[index + 1]) if _is_dot_rating(lines[index + 1]) else None
+        index += 2 if risk is not None else 1
+
+        cards.append(
+            RecommendationCard(
+                issue_id=issue_id,
+                page=page_number,
+                instrument_name=name,
+                instrument_type=InstrumentType.STOCK,
+                wkn=wkn,
+                current_price=current_price,
+                target=target,
+                stop=stop,
+                chance=chance,
+                risk=risk,
+                recommendation_status=recommendation_status,
+                market_cap=market_cap,
+                performance_since_recommendation=performance_since_recommendation,
+                dividend_yield=dividend_yield,
+                kuv_26e=kuv_26e,
+                kgv_26e=kgv_26e,
+                extraction_notes=("duel_table_extraction",),
+            )
+        )
+
     return tuple(cards)
+
+
+def _apply_visual_chance_risk_pairs(
+    cards: tuple[RecommendationCard, ...],
+    visual_pairs: Sequence[_VisualChanceRiskPair],
+) -> tuple[RecommendationCard, ...]:
+    if not visual_pairs:
+        return cards
+
+    pair_index = 0
+    updated_cards: list[RecommendationCard] = []
+    for card in cards:
+        if pair_index >= len(visual_pairs) or card.chance is None or card.risk is None:
+            updated_cards.append(card)
+            continue
+        pair = visual_pairs[pair_index]
+        pair_index += 1
+        if card.chance == pair.chance and card.risk == pair.risk:
+            updated_cards.append(card)
+            continue
+        notes = tuple(dict.fromkeys(card.extraction_notes + ("visual_rating_from_pdf",)))
+        updated_cards.append(replace(card, chance=pair.chance, risk=pair.risk, extraction_notes=notes))
+
+    return tuple(updated_cards)
 
 
 def _parse_labelled_card(
@@ -443,6 +581,156 @@ def _dividend_trend_after_label(lines: Sequence[str], start_index: int) -> str |
 
     entries = [f"{year}={value} EUR" for year, value in zip(years, values)]
     return "; ".join(entries)
+
+
+def _visual_chance_risk_pairs_by_page(pdf_path: Path) -> dict[int, tuple[_VisualChanceRiskPair, ...]]:
+    try:
+        import fitz  # type: ignore[import-not-found]
+        from PIL import Image
+    except ModuleNotFoundError:
+        return {}
+
+    try:
+        document = fitz.open(pdf_path)
+    except Exception:
+        return {}
+
+    result: dict[int, tuple[_VisualChanceRiskPair, ...]] = {}
+    zoom = 6
+    with document:
+        for page_index, page in enumerate(document):
+            candidate_spans: list[tuple[str, Sequence[float]]] = []
+            page_dict = page.get_text("dict")
+            for block in page_dict.get("blocks", []):
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        text = span.get("text", "")
+                        if not _is_dot_rating(text) or len(text) != 5:
+                            continue
+                        kind = _dot_rating_kind_from_span_color(span.get("color"))
+                        if kind is None:
+                            continue
+                        bbox = span.get("bbox")
+                        if not bbox:
+                            continue
+                        candidate_spans.append((kind, bbox))
+            if not candidate_spans:
+                continue
+
+            dot_ratings: list[_VisualDotRating] = []
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            image = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
+            for kind, bbox in candidate_spans:
+                rating = _visual_dot_rating_from_bbox(image, bbox, zoom=zoom)
+                if rating is None:
+                    continue
+                x0, y0, x1, y1 = bbox
+                dot_ratings.append(
+                    _VisualDotRating(
+                        page_number=page_index + 1,
+                        y_midpoint=(float(y0) + float(y1)) / 2,
+                        x_midpoint=(float(x0) + float(x1)) / 2,
+                        kind=kind,
+                        rating=rating,
+                    )
+                )
+            pairs = _pair_visual_dot_ratings(dot_ratings)
+            if pairs:
+                result[page_index + 1] = pairs
+
+    return result
+
+
+def _dot_rating_kind_from_span_color(color: object) -> str | None:
+    if not isinstance(color, int):
+        return None
+    red = (color >> 16) & 255
+    green = (color >> 8) & 255
+    blue = color & 255
+    if green > red and green > blue:
+        return "chance"
+    if red > green and red > blue:
+        return "risk"
+    return None
+
+
+def _visual_dot_rating_from_bbox(image, bbox: Sequence[float], *, zoom: int) -> int | None:
+    x0, y0, x1, y1 = [int(value * zoom) for value in bbox]
+    if x1 <= x0 or y1 <= y0:
+        return None
+    crop = image.crop((x0, y0, x1, y1))
+    width, height = crop.size
+    if width <= 0 or height <= 0:
+        return None
+
+    segment_counts: list[int] = []
+    for index in range(5):
+        segment = crop.crop(
+            (
+                int(index * width / 5),
+                0,
+                int((index + 1) * width / 5),
+                height,
+            )
+        )
+        colors = segment.getcolors(maxcolors=1000000) or []
+        colored_pixels = 0
+        for count, (red, green, blue) in colors:
+            if max(red, green, blue) - min(red, green, blue) > 30 and min(red, green, blue) < 245:
+                colored_pixels += count
+        segment_counts.append(colored_pixels)
+
+    max_count = max(segment_counts, default=0)
+    if max_count <= 0:
+        return None
+    threshold = max_count * 0.5
+    return sum(1 for count in segment_counts if count >= threshold) or None
+
+
+def _pair_visual_dot_ratings(
+    dot_ratings: Sequence[_VisualDotRating],
+) -> tuple[_VisualChanceRiskPair, ...]:
+    chances = sorted(
+        (rating for rating in dot_ratings if rating.kind == "chance"),
+        key=lambda rating: (rating.y_midpoint, rating.x_midpoint),
+    )
+    risks = sorted(
+        (rating for rating in dot_ratings if rating.kind == "risk"),
+        key=lambda rating: (rating.y_midpoint, rating.x_midpoint),
+    )
+    unused_risks = list(risks)
+    pairs: list[_VisualChanceRiskPair] = []
+    for chance in chances:
+        nearest_index: int | None = None
+        nearest_distance = 999.0
+        for index, risk in enumerate(unused_risks):
+            distance = abs(chance.y_midpoint - risk.y_midpoint)
+            if distance < nearest_distance:
+                nearest_distance = distance
+                nearest_index = index
+        if nearest_index is None or nearest_distance > 8:
+            continue
+        risk = unused_risks.pop(nearest_index)
+        pairs.append(_VisualChanceRiskPair(chance=chance.rating, risk=risk.rating))
+    return tuple(pairs)
+
+
+def _market_cap_from_billions_value(value: str) -> str | None:
+    if DECIMAL_VALUE_RE.match(value):
+        return f"{value} Mrd. EUR"
+    return None
+
+
+def _percentage_from_table_value(value: str) -> str | None:
+    if value == "–":
+        return None
+    if DECIMAL_VALUE_RE.match(value):
+        return f"{value} %"
+    return value if PERCENT_RE.match(value) else None
+
+
+def _dash_to_empty(value: str) -> str | None:
+    return None if value == "–" else value
 
 
 def _rating_from_dots(value: str | None) -> int | None:

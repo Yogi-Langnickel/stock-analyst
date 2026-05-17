@@ -1,6 +1,9 @@
 import unittest
 
-from stock_analyst.recommendation_cards import extract_recommendation_cards_from_lines
+from stock_analyst.recommendation_cards import (
+    _VisualChanceRiskPair,
+    extract_recommendation_cards_from_lines,
+)
 from stock_analyst.schemas import InstrumentType
 
 
@@ -149,6 +152,101 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(card.kuv_26e, "7,1")
         self.assertEqual(card.kgv_26e, "20")
         self.assertEqual(card.next_report_date, "29.01.26 Quartalszahlen")
+
+    def test_visual_chance_risk_pairs_override_embedded_bullet_count(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Aktie",
+                "Armour Residential",
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "Akt. Kurs",
+                "15,51 €",
+                "WKN",
+                "A3EUUD",
+            ),
+            issue_id="2026-W03",
+            page_number=32,
+            visual_chance_risk_pairs=(_VisualChanceRiskPair(chance=4, risk=3),),
+        )
+
+        self.assertEqual(cards[0].chance, 4)
+        self.assertEqual(cards[0].risk, 3)
+        self.assertIn("visual_rating_from_pdf", cards[0].extraction_notes)
+
+    def test_extracts_duel_table_stock_rows(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Unternehmen",
+                "WKN",
+                "Aktueller",
+                "Kurs",
+                "Marktkap.",
+                "in Mrd. €",
+                "DR*",
+                "in %",
+                "KUV",
+                "2026e",
+                "KGV",
+                "2026e",
+                "Perf. seit",
+                "Erstempf.",
+                "Empf.-",
+                "Ausgabe",
+                "Ziel",
+                "Stopp",
+                "Chance",
+                "Risiko",
+                "Archer Aviation",
+                "A3C3BQ",
+                "8,82 $",
+                "5,6",
+                "0,0",
+                "100,2",
+                "–",
+                "Neuempfehlung",
+                "14,00 $",
+                "6,50 $",
+                "•••••",
+                "•••••",
+                "EHang Holdings",
+                "A2PWWB",
+                "14,34 $",
+                "1,0",
+                "0,0",
+                "8,2",
+                "156",
+                "Kein Kauf",
+                "•••••",
+                "•••••",
+            ),
+            issue_id="2026-W03",
+            page_number=51,
+            visual_chance_risk_pairs=(
+                _VisualChanceRiskPair(chance=5, risk=4),
+                _VisualChanceRiskPair(chance=5, risk=5),
+            ),
+        )
+
+        self.assertEqual([card.instrument_name for card in cards], ["Archer Aviation", "EHang Holdings"])
+        archer, ehang = cards
+        self.assertEqual(archer.wkn, "A3C3BQ")
+        self.assertEqual(archer.current_price, "8,82 USD")
+        self.assertEqual(archer.market_cap, "5,6 Mrd. EUR")
+        self.assertEqual(archer.dividend_yield, "0,0 %")
+        self.assertEqual(archer.kuv_26e, "100,2")
+        self.assertIsNone(archer.kgv_26e)
+        self.assertEqual(archer.target, "14,00 USD")
+        self.assertEqual(archer.stop, "6,50 USD")
+        self.assertEqual(archer.chance, 5)
+        self.assertEqual(archer.risk, 4)
+        self.assertEqual(archer.recommendation_status, "new_recommendation")
+        self.assertEqual(ehang.recommendation_status, "no_buy")
+        self.assertEqual(ehang.market_cap, "1,0 Mrd. EUR")
+        self.assertEqual(ehang.kuv_26e, "8,2")
+        self.assertEqual(ehang.kgv_26e, "156")
 
     def test_extracts_follow_up_when_labels_are_grouped_before_values(self) -> None:
         cards = extract_recommendation_cards_from_lines(

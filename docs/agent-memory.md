@@ -62,8 +62,9 @@ Created: 2026-05-15
   issue/event-specific history rows.
 - Stock rows use English sheet labels. `Dividendenrendite` maps to
   `Dividend Yield`, `KUV 26e` maps to `P/S Ratio 26e`, `KGV 26e` maps to
-  `P/E Ratio 26e`, and the printed chance/risk dot ratings map to
-  `Chance/Risk`. `Kein Kauf` maps to `recommendation_status=no_buy`.
+  `P/E Ratio 26e`, `Marktkap.` / `Marktkapitalisierung` maps to `Market Cap`,
+  and the printed chance/risk dot ratings map to `Chance/Risk`. `Kein Kauf`
+  maps to `recommendation_status=no_buy`.
 - Future currency display should preserve printed source prices and add a
   dashboard/display toggle for `EUR`, `USD`, and `AUD`. Converted values must
   be derived enrichment fields with FX date/source metadata, not replacements

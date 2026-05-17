@@ -110,6 +110,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Current Price*",
             "Price at Recommendation",
             "Dividend Yield",
+            "Market Cap",
             "Chance/Risk",
             "P/S Ratio 26e",
             "P/E Ratio 26e",

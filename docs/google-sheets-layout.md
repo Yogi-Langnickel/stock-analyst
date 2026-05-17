@@ -42,8 +42,8 @@ issues have been extracted and the repeated sections are clearer.
    recommendation state, and stock-specific enrichment such as insider buying
    or selling. The stock table header starts on row 3 with `Company`, `WKN`,
    `Current Price*`, `Price at Recommendation`, `Dividend Yield`,
-   `Chance/Risk`, `P/S Ratio 26e`, `P/E Ratio 26e`, `Target`, `Stop`,
-   `Recommendation`, `issue`, `page`, and `date updated`. The row-level
+   `Market Cap`, `Chance/Risk`, `P/S Ratio 26e`, `P/E Ratio 26e`, `Target`,
+   `Stop`, `Recommendation`, `issue`, `page`, and `date updated`. The row-level
    `date updated` value is required as the last field: weekly imports
    initialize it from the import/issue date when available, otherwise from the
    command's current UTC date, and later reviewed enrichment or newer issue
@@ -134,7 +134,7 @@ the live Sheet; those should be added only after this layout is accepted.
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `Navigation Dashboard` | `layout_only` | 1 row, 0 cols | `A1` | Workbook links and processing status | Spreadsheet-native links to the main tabs, last issue processed, parser-backed/planned legend. |
-| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Explicit stock mentions only. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value; includes printed P/S ratio, P/E ratio, and Chance/Risk where available; `date updated` is the last row field. |
+| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Explicit stock mentions only. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value; includes printed market cap, P/S ratio, P/E ratio, and Chance/Risk where available; `date updated` is the last row field. |
 | `ETF` | `planned` | 2 rows, 2 cols | `A2` | Row 1 fund context | Fund holdings, fee, WKN, distribution/yield, and index-exposure context once parser-backed; `date updated` is the last row field. |
 | `Commodities` | `planned` | 2 rows, 1 col | `A2` | Row 1 commodity context | Spot/futures context, macro note, related instruments; `date updated` is the last row field. |
 | `Options` | `planned` | 2 rows, 1 col | `A2` | Row 1 risk/stale-data notes | Dashboard for option summaries; detailed derivative cards currently emit to `Derivative Tips`; `date updated` is the last row field. |

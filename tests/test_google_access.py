@@ -323,13 +323,14 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertNotIn({"range": "'Stocks'!B1", "values": [[""]]}, values_body["data"])
         self.assertIn(
             {
-                "range": "'Stocks'!A3:N3",
+                "range": "'Stocks'!A3:O3",
                 "values": [[
                     "Company",
                     "WKN",
                     "Current Price*",
                     "Price at Recommendation",
                     "Dividend Yield",
+                    "Market Cap",
                     "Chance/Risk",
                     "P/S Ratio 26e",
                     "P/E Ratio 26e",
@@ -439,7 +440,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["headersRewritten"])
         self.assertEqual(result["clearedTabCount"], len(result["clearedRanges"]))
-        self.assertIn("'Stocks'!A4:N", clear_ranges)
+        self.assertIn("'Stocks'!A4:O", clear_ranges)
         self.assertIn("'Navigation Dashboard'!A2:D", clear_ranges)
         self.assertGreater(len(values_resource.batch_update_requests), 0)
 
@@ -464,13 +465,14 @@ class GoogleAccessTest(unittest.TestCase):
                 }
             )
             sheets.spreadsheets_resource.values_resource.values_by_range[
-                "'Stocks'!A4:N"
+                "'Stocks'!A4:O"
             ] = [
                 [
                     "Old Same Issue",
                     "OLD",
                     "",
                     "1 EUR",
+                    "",
                     "",
                     "",
                     "",
@@ -494,6 +496,7 @@ class GoogleAccessTest(unittest.TestCase):
                     "",
                     "",
                     "",
+                    "",
                     "2026-W02",
                     "1",
                     "2026-05-10",
@@ -509,6 +512,7 @@ class GoogleAccessTest(unittest.TestCase):
                             "A0MRD4",
                             "",
                             "3,33 EUR",
+                            "",
                             "",
                             "",
                             "",
@@ -547,7 +551,7 @@ class GoogleAccessTest(unittest.TestCase):
 
         values_resource = sheets.spreadsheets_resource.values_resource
         data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
-        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:N5")
+        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:O5")
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["enrichmentProviderCalls"], 0)
@@ -556,7 +560,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn("Dividend Focus", result["clearedTabs"])
         self.assertEqual(stocks_write["values"][0][0], "Keep Different Issue")
         self.assertEqual(stocks_write["values"][1][0], "Banco Sabadell")
-        self.assertIn("'Stocks'!A4:N", [request["range"] for request in values_resource.clear_requests])
+        self.assertIn("'Stocks'!A4:O", [request["range"] for request in values_resource.clear_requests])
 
 
 if __name__ == "__main__":

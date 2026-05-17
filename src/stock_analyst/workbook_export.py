@@ -34,6 +34,7 @@ from stock_analyst.intake import guess_issue_date
 from stock_analyst.recommendation_cards import (
     RecommendationCard,
     RecommendationCardExtraction,
+    extract_recommendation_cards_from_pdf,
     extract_recommendation_cards_from_lines,
 )
 from stock_analyst.schemas import InstrumentType, ReviewStatus
@@ -140,16 +141,27 @@ def build_workbook_export_plan_from_pdf(
         current_utc_date=current_utc_date,
     )
     pages = tuple((page.page_number, page.text.splitlines()) for page in extraction.pages)
-    cards: list[RecommendationCard] = []
+    cards: list[RecommendationCard] = (
+        list(
+            extract_recommendation_cards_from_pdf(
+                pdf_path,
+                issue_id=resolved_issue_id,
+                min_embedded_chars=min_embedded_chars,
+            ).cards
+        )
+        if extractor is None
+        else []
+    )
     sections: list[MagazineSectionCandidate] = []
     for page_number, lines in pages:
-        cards.extend(
-            extract_recommendation_cards_from_lines(
-                lines,
-                issue_id=resolved_issue_id,
-                page_number=page_number,
+        if extractor is not None:
+            cards.extend(
+                extract_recommendation_cards_from_lines(
+                    lines,
+                    issue_id=resolved_issue_id,
+                    page_number=page_number,
+                )
             )
-        )
         sections.extend(
             extract_section_candidates_from_lines(
                 lines,
@@ -288,6 +300,7 @@ def _recommendation_card_row(
             "",
             card.current_price or "",
             dividend_yield,
+            card.market_cap or "",
             _chance_risk(card.chance, card.risk),
             card.kuv_26e or "",
             card.kgv_26e or "",
