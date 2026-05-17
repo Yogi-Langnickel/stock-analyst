@@ -288,6 +288,8 @@ def _recommendation_card_row(
             "",
             card.current_price or "",
             dividend_yield,
+            card.kuv_26e or "",
+            card.kgv_26e or "",
             card.target or "",
             card.stop or "",
             card.recommendation_status or "",

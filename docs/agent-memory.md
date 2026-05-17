@@ -59,6 +59,12 @@ Created: 2026-05-15
   WKN/ISIN; a new call or put for the same underlying is a new row when the
   derivative WKN/ISIN differs. Depot snapshots and transactions remain
   issue/event-specific history rows.
+- Stock rows include printed valuation fields `KUV 26e` and `KGV 26e` where
+  the card exposes them. `Kein Kauf` maps to `recommendation_status=no_buy`.
+- Future currency display should preserve printed source prices and add a
+  dashboard/display toggle for `EUR`, `USD`, and `AUD`. Converted values must
+  be derived enrichment fields with FX date/source metadata, not replacements
+  for magazine values.
 - A page-by-page extraction map would help define which pages/sections populate
   which tabs and fields. Treat it as parser training/review guidance, not
   manual data entry.

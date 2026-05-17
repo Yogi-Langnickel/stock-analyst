@@ -110,6 +110,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Current Price*",
             "Price at Recommendation",
             "Dividends",
+            "KUV 26e",
+            "KGV 26e",
             "Target",
             "Stop",
             "Recommendation",

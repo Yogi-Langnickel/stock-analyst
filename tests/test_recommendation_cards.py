@@ -109,6 +109,47 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(card.recommended_issue, "52/2025 17.12.25")
         self.assertEqual(card.next_report_date, "18.02.26 Quartalszahlen")
 
+    def test_extracts_no_buy_recommendation_and_valuation_fields(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Aktie",
+                "Meta",
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "Akt. Kurs",
+                "561,60 €",
+                "WKN",
+                "A1JWVX",
+                "Markt-",
+                "kapitalisierung",
+                "1,42 Bio. €",
+                "Dividendenrendite",
+                "0,3 %",
+                "KUV",
+                "26e",
+                "7,1",
+                "KGV",
+                "26e",
+                "20",
+                "Kein Kauf",
+                "Nächster",
+                "Termin",
+                "29.01.26",
+                "Quartalszahlen",
+            ),
+            issue_id="2026-W03",
+            page_number=54,
+        )
+
+        card = cards[0]
+        self.assertEqual(card.instrument_name, "Meta")
+        self.assertEqual(card.recommendation_status, "no_buy")
+        self.assertEqual(card.kuv_26e, "7,1")
+        self.assertEqual(card.kgv_26e, "20")
+        self.assertEqual(card.next_report_date, "29.01.26 Quartalszahlen")
+
     def test_extracts_follow_up_when_labels_are_grouped_before_values(self) -> None:
         cards = extract_recommendation_cards_from_lines(
             (

@@ -249,6 +249,8 @@ def _parse_labelled_card(
     if instrument_type != InstrumentType.DERIVATIVE and _looks_like_derivative(instrument_name):
         instrument_type = InstrumentType.DERIVATIVE
     recommendation_status = "new_recommendation" if "new_recommendation" in fields else None
+    if "no_buy" in fields:
+        recommendation_status = "no_buy"
     if "recommended_issue" in fields or "performance_since_recommendation" in fields:
         recommendation_status = recommendation_status or "follow_up"
 
@@ -332,6 +334,11 @@ def _collect_fields(lines: Sequence[str], start_index: int) -> tuple[dict[str, s
             dividend_trend = _dividend_trend_after_label(lines, index + consumed)
             if dividend_trend is not None:
                 fields["dividend_per_share_trend"] = dividend_trend
+            index += consumed
+            continue
+
+        if combined.lower() == "kein kauf":
+            fields["no_buy"] = "Kein Kauf"
             index += consumed
             continue
 

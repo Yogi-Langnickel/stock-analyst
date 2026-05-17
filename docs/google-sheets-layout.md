@@ -41,12 +41,12 @@ issues have been extracted and the repeated sections are clearer.
    and Dow Jones, small trend charts, key article bullets, reviewed
    recommendation state, and stock-specific enrichment such as insider buying
    or selling. The stock table header starts on row 3 with `Company`, `WKN`,
-   `Current Price*`, `Price at Recommendation`, `Dividends`, `Target`, `Stop`,
-   `Recommendation`, `issue`, `page`, and `date updated`. The row-level
-   `date updated` value is required as the last field: weekly imports
-   initialize it from the import/issue date when available, otherwise from the
-   command's current UTC date, and later reviewed enrichment or newer issue
-   mentions update it.
+   `Current Price*`, `Price at Recommendation`, `Dividends`, `KUV 26e`,
+   `KGV 26e`, `Target`, `Stop`, `Recommendation`, `issue`, `page`, and
+   `date updated`. The row-level `date updated` value is required as the last
+   field: weekly imports initialize it from the import/issue date when
+   available, otherwise from the command's current UTC date, and later reviewed
+   enrichment or newer issue mentions update it.
 
 3. `ETF`
    ETF-related recommendations and fund context such as holdings, distributions,
@@ -133,7 +133,7 @@ the live Sheet; those should be added only after this layout is accepted.
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `Navigation Dashboard` | `layout_only` | 1 row, 0 cols | `A1` | Workbook links and processing status | Spreadsheet-native links to the main tabs, last issue processed, parser-backed/planned legend. |
-| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Explicit stock mentions only. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value; `date updated` is the last row field. |
+| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Explicit stock mentions only. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value; includes printed KUV/KGV where available; `date updated` is the last row field. |
 | `ETF` | `planned` | 2 rows, 2 cols | `A2` | Row 1 fund context | Fund holdings, fee, WKN, distribution/yield, and index-exposure context once parser-backed; `date updated` is the last row field. |
 | `Commodities` | `planned` | 2 rows, 1 col | `A2` | Row 1 commodity context | Spot/futures context, macro note, related instruments; `date updated` is the last row field. |
 | `Options` | `planned` | 2 rows, 1 col | `A2` | Row 1 risk/stale-data notes | Dashboard for option summaries; detailed derivative cards currently emit to `Derivative Tips`; `date updated` is the last row field. |
@@ -174,6 +174,27 @@ daily from approved sources:
 Enrichment must remain context only. It cannot change magazine-extracted
 recommendations, targets, stops, WKNs, prices, or recommendation status without
 manual review.
+
+## Currency Display
+
+Preserve every magazine-source price in its printed currency. Do not overwrite
+`Price at Recommendation`, `Target`, `Stop`, derivative strike/base values, or
+publisher portfolio values during currency conversion.
+
+Add a display-currency control to the dashboard layer once daily enrichment is
+active:
+
+- Allowed display currencies for now: `EUR`, `USD`, `AUD`.
+- Default display currency: `EUR`.
+- The toggle should affect derived display columns/cards only, not source
+  fields.
+- FX rates should be sourced from the daily enrichment pipeline, cached with
+  provider/date metadata, and refreshed no more than once per day.
+- Converted values should carry `fx rate date`, `source currency`, and
+  `display currency` metadata so stale conversions are visible.
+
+Until the enrichment pipeline writes FX rates, keep converted display fields
+blank rather than estimating rates manually.
 
 ## Embed With Stock Rows
 

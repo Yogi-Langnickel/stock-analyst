@@ -322,13 +322,15 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertNotIn({"range": "'Stocks'!B1", "values": [[""]]}, values_body["data"])
         self.assertIn(
             {
-                "range": "'Stocks'!A3:K3",
+                "range": "'Stocks'!A3:M3",
                 "values": [[
                     "Company",
                     "WKN",
                     "Current Price*",
                     "Price at Recommendation",
                     "Dividends",
+                    "KUV 26e",
+                    "KGV 26e",
                     "Target",
                     "Stop",
                     "Recommendation",
@@ -427,13 +429,15 @@ class GoogleAccessTest(unittest.TestCase):
                 }
             )
             sheets.spreadsheets_resource.values_resource.values_by_range[
-                "'Stocks'!A4:K"
+                "'Stocks'!A4:M"
             ] = [
                 [
                     "Old Same Issue",
                     "OLD",
                     "",
                     "1 EUR",
+                    "",
+                    "",
                     "",
                     "",
                     "",
@@ -447,6 +451,8 @@ class GoogleAccessTest(unittest.TestCase):
                     "KEEP",
                     "",
                     "2 EUR",
+                    "",
+                    "",
                     "",
                     "",
                     "",
@@ -466,6 +472,8 @@ class GoogleAccessTest(unittest.TestCase):
                             "A0MRD4",
                             "",
                             "3,33 EUR",
+                            "",
+                            "",
                             "",
                             "4,30 EUR",
                             "2,70 EUR",
@@ -501,7 +509,7 @@ class GoogleAccessTest(unittest.TestCase):
 
         values_resource = sheets.spreadsheets_resource.values_resource
         data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
-        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:K5")
+        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:M5")
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["enrichmentProviderCalls"], 0)
@@ -510,7 +518,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn("Dividend Focus", result["clearedTabs"])
         self.assertEqual(stocks_write["values"][0][0], "Keep Different Issue")
         self.assertEqual(stocks_write["values"][1][0], "Banco Sabadell")
-        self.assertIn("'Stocks'!A4:K", [request["range"] for request in values_resource.clear_requests])
+        self.assertIn("'Stocks'!A4:M", [request["range"] for request in values_resource.clear_requests])
 
 
 if __name__ == "__main__":
