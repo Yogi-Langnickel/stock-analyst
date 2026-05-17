@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,11 +18,18 @@ from stock_analyst.workbook_export import (
 )
 
 
+FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "workbook_export"
+
+
 def headers_for(tab: str) -> tuple[str, ...]:
     for spec in DEFAULT_SHEET_TABS:
         if spec.title == tab:
             return spec.headers
     raise AssertionError(f"unknown tab: {tab}")
+
+
+def load_workbook_fixture(name: str) -> dict[str, object]:
+    return json.loads((FIXTURE_ROOT / name).read_text(encoding="utf-8"))
 
 
 class WorkbookExportPlanTest(unittest.TestCase):
@@ -220,6 +228,68 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][4], "Baidu Call")
         self.assertNotIn("Baidu Call", row["sourceId"])
 
+    def test_derivative_tip_fixtures_cover_option_and_discount_call_shapes(self) -> None:
+        fixture = load_workbook_fixture("da_2026_03_other_tabs.json")
+        expected_rows = [
+            row for row in fixture["rows"]
+            if row["tab"] == "Derivative Tips"
+        ]
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            recommendation_cards=(
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=37,
+                    instrument_name="Baidu Call",
+                    instrument_type=InstrumentType.DERIVATIVE,
+                    wkn="MM7PJ4",
+                    current_price="2,15 EUR",
+                    target="4,00 EUR",
+                    stop="1,30 EUR",
+                    chance=None,
+                    risk=None,
+                    recommendation_status=None,
+                    underlying_price="146,42 USD",
+                    base_price="150,00 USD",
+                    omega_hebel="3,1",
+                    runtime="18.09.26 (8,5 Monate)",
+                ),
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=78,
+                    instrument_name="Gold Discount-Call",
+                    instrument_type=InstrumentType.DERIVATIVE,
+                    wkn="MM4M60",
+                    current_price=None,
+                    target="13,50 EUR",
+                    stop="6,50 EUR",
+                    chance=None,
+                    risk=None,
+                    recommendation_status=None,
+                    underlying_price="4.458,58 USD",
+                    base_price="4.350 USD",
+                    omega_hebel="",
+                    runtime="20.03.2026",
+                ),
+            ),
+        )
+
+        actual_rows = [
+            {
+                "tab": row["tab"],
+                "rowKind": row["rowKind"],
+                "page": row["page"],
+                "values": row["values"],
+            }
+            for row in plan.to_dict()["rows"]
+        ]
+
+        self.assertEqual(actual_rows, expected_rows)
+        for row in actual_rows:
+            self.assertEqual(len(row["values"]), len(headers_for("Derivative Tips")))
+            self.assertEqual(row["values"][-1], ReviewStatus.NEEDS_REVIEW.value)
+
     def test_routes_dividend_rows_to_dividend_focus(self) -> None:
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
@@ -253,6 +323,66 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][5], "18,6 %")
         self.assertEqual(row["reviewStatus"], ReviewStatus.NEEDS_REVIEW.value)
         self.assertEqual(headers_for("Dividend Focus")[4], "Payout count")
+
+    def test_dividend_focus_fixtures_cover_high_yield_decision_fields(self) -> None:
+        fixture = load_workbook_fixture("da_2026_03_other_tabs.json")
+        expected_rows = [
+            row for row in fixture["rows"]
+            if row["tab"] == "Dividend Focus"
+        ]
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            dividend_strategy=(
+                DividendStrategyRow(
+                    issue_id="2026-W03",
+                    page=18,
+                    month="März",
+                    company="Banco Sabadell",
+                    wkn="A0MRD4",
+                    current_price="3,33 EUR",
+                    market_cap_billions_eur="16,8",
+                    dividend_yield="18,6 %",
+                    kgv_2026e="10",
+                    payout_count="",
+                    next_cum_day="",
+                    next_pay_day="",
+                    target="4,30 EUR",
+                    stop="2,70 EUR",
+                ),
+                DividendStrategyRow(
+                    issue_id="2026-W03",
+                    page=18,
+                    month="Mai",
+                    company="RTL Group",
+                    wkn="861149",
+                    current_price="34,80 EUR",
+                    market_cap_billions_eur=None,
+                    dividend_yield="20,1 %",
+                    kgv_2026e=None,
+                    payout_count="",
+                    next_cum_day="",
+                    next_pay_day="",
+                    target="42,00 EUR",
+                    stop="25,00 EUR",
+                ),
+            ),
+        )
+
+        actual_rows = [
+            {
+                "tab": row["tab"],
+                "rowKind": row["rowKind"],
+                "page": row["page"],
+                "values": row["values"],
+            }
+            for row in plan.to_dict()["rows"]
+        ]
+
+        self.assertEqual(actual_rows, expected_rows)
+        for row in actual_rows:
+            self.assertEqual(len(row["values"]), len(headers_for("Dividend Focus")))
+            self.assertIn("%", row["values"][5])
 
     def test_workbook_plan_downgrades_preapproved_inputs_to_needs_review(self) -> None:
         plan = build_workbook_export_plan(
@@ -346,6 +476,70 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][3], "derivative_tips_overview")
         self.assertEqual(row["values"][4], "warning")
         self.assertIn("suggested_sheet=Derivative Tips", row["warnings"])
+
+    def test_extraction_audit_fixtures_cover_high_value_table_surfaces(self) -> None:
+        fixture = load_workbook_fixture("da_2026_03_other_tabs.json")
+        expected_rows = [
+            row for row in fixture["rows"]
+            if row["tab"] == "Extraction Audit"
+        ]
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            section_inventory=(
+                MagazineSectionCandidate(
+                    issue_id="2026-W03",
+                    page=62,
+                    section_kind=MagazineSectionKind.DERIVATIVE_TIPS_OVERVIEW,
+                    section_title="Derivate tips overview",
+                    suggested_sheet="Derivative Tips",
+                    priority="high",
+                    reason="Derivative overview table with WKN, type, strike/cap, runtime, performance, target, and stop.",
+                    wkns=("MM7PJ4",),
+                ),
+                MagazineSectionCandidate(
+                    issue_id="2026-W03",
+                    page=66,
+                    section_kind=MagazineSectionKind.AKTIONAER_DEPOT_TRANSACTIONS,
+                    section_title="Durchgeführte Transaktionen",
+                    suggested_sheet="Depot Transactions",
+                    priority="high",
+                    reason="Publisher model-depot transaction table, including no-transaction weeks.",
+                    wkns=(),
+                ),
+                MagazineSectionCandidate(
+                    issue_id="2026-W03",
+                    page=80,
+                    section_kind=MagazineSectionKind.CHART_CHECK,
+                    section_title="Chart Check",
+                    suggested_sheet="Chart Check",
+                    priority="medium",
+                    reason="Chart-check section with multiple stocks, technical context, and recommendation metadata.",
+                    wkns=("A0HL8N",),
+                ),
+            ),
+        )
+
+        actual_rows = [
+            {
+                "tab": row["tab"],
+                "rowKind": row["rowKind"],
+                "page": row["page"],
+                "values": row["values"],
+                "warnings": row["warnings"],
+            }
+            for row in plan.to_dict()["rows"]
+        ]
+
+        self.assertEqual(actual_rows, expected_rows)
+        self.assertEqual(
+            {row["values"][6] for row in actual_rows},
+            {
+                "review_for_Derivative Tips",
+                "review_for_Depot Transactions",
+                "review_for_Chart Check",
+            },
+        )
 
     def test_section_inventory_does_not_fan_out_index_or_table_wkns_to_stock_rows(self) -> None:
         plan = build_workbook_export_plan(

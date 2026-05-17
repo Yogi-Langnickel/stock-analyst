@@ -1,0 +1,142 @@
+{
+  "issueId": "2026-W03",
+  "source": "DA_2026_03 local dry-run spot checks",
+  "rows": [
+    {
+      "tab": "Derivative Tips",
+      "rowKind": "derivative_card",
+      "page": 37,
+      "values": [
+        "derivative:2026-W03:p37:MM7PJ4:db1652cb91",
+        "2026-W03",
+        "37",
+        "",
+        "Baidu Call",
+        "MM7PJ4",
+        "146,42 USD",
+        "150,00 USD",
+        "3,1",
+        "18.09.26 (8,5 Monate)",
+        "4,00 EUR",
+        "1,30 EUR",
+        "needs_review"
+      ]
+    },
+    {
+      "tab": "Derivative Tips",
+      "rowKind": "derivative_card",
+      "page": 78,
+      "values": [
+        "derivative:2026-W03:p78:MM4M60:14b8bbd9e9",
+        "2026-W03",
+        "78",
+        "",
+        "Gold Discount-Call",
+        "MM4M60",
+        "4.458,58 USD",
+        "4.350 USD",
+        "",
+        "20.03.2026",
+        "13,50 EUR",
+        "6,50 EUR",
+        "needs_review"
+      ]
+    },
+    {
+      "tab": "Dividend Focus",
+      "rowKind": "dividend_strategy",
+      "page": 18,
+      "values": [
+        "2026-W03",
+        "18",
+        "Banco Sabadell",
+        "A0MRD4",
+        "",
+        "18,6 %",
+        "März",
+        "",
+        "needs_review"
+      ]
+    },
+    {
+      "tab": "Dividend Focus",
+      "rowKind": "dividend_strategy",
+      "page": 18,
+      "values": [
+        "2026-W03",
+        "18",
+        "RTL Group",
+        "861149",
+        "",
+        "20,1 %",
+        "Mai",
+        "",
+        "needs_review"
+      ]
+    },
+    {
+      "tab": "Extraction Audit",
+      "rowKind": "section_inventory",
+      "page": 62,
+      "values": [
+        "local-dry-run",
+        "2026-W03",
+        "62",
+        "derivative_tips_overview",
+        "warning",
+        "Derivative overview table with WKN, type, strike/cap, runtime, performance, target, and stop.",
+        "review_for_Derivative Tips",
+        ""
+      ],
+      "warnings": [
+        "manual_review_required_before_family_visible_export",
+        "suggested_sheet=Derivative Tips"
+      ]
+    },
+    {
+      "tab": "Extraction Audit",
+      "rowKind": "section_inventory",
+      "page": 66,
+      "values": [
+        "local-dry-run",
+        "2026-W03",
+        "66",
+        "aktionaer_depot_transactions",
+        "warning",
+        "Publisher model-depot transaction table, including no-transaction weeks.",
+        "review_for_Depot Transactions",
+        ""
+      ],
+      "warnings": [
+        "manual_review_required_before_family_visible_export",
+        "suggested_sheet=Depot Transactions"
+      ]
+    },
+    {
+      "tab": "Extraction Audit",
+      "rowKind": "section_inventory",
+      "page": 80,
+      "values": [
+        "local-dry-run",
+        "2026-W03",
+        "80",
+        "chart_check",
+        "info",
+        "Chart-check section with multiple stocks, technical context, and recommendation metadata.",
+        "review_for_Chart Check",
+        ""
+      ],
+      "warnings": [
+        "manual_review_required_before_family_visible_export",
+        "suggested_sheet=Chart Check"
+      ]
+    }
+  ],
+  "plannedButNotYetParsedAsRows": [
+    "AKTIONAER Depot",
+    "Depot Transactions",
+    "Chart Check",
+    "Stock Quickcheck",
+    "Statistics Context"
+  ]
+}
