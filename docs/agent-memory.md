@@ -37,15 +37,27 @@ Created: 2026-05-15
   quick-check tables, statistics context, and low-priority back matter with
   suggested Google Sheet destinations.
 - A local workbook export-plan command can route draft recommendation cards,
-  derivative cards, dividend strategy rows, and section-inventory audit hints
-  into Google Sheet tab row DTOs without writing to Sheets. Every planned row
-  remains `needs_review`, non-exportable, and marked manual-review-required.
+  derivative cards, derivative overview rows, dividend strategy rows, AKTIONAER
+  depot positions, depot transaction/no-transaction rows, and section-inventory
+  audit hints into Google Sheet tab row DTOs without writing to Sheets. Every
+  planned row remains `needs_review`, non-exportable, and marked
+  manual-review-required.
 - Instrument dry-run rows must populate row-level `date updated` as the last
   field. Stocks initialize it from an explicit import/issue date when
   available, otherwise from the command's current UTC date. Section inventories,
   index context, statistics, quick-check tables, and broad constituent lists
   must not fan out into `Stocks`; only explicitly mentioned stock rows go
   there.
+- Workbook identity rule: once a stock, ETF, commodity, crypto, or forex
+  instrument exists, later magazine mentions should update the existing
+  instrument row rather than append duplicates. Options/derivatives are
+  different: update only the same derivative/security, normally by derivative
+  WKN/ISIN; a new call or put for the same underlying is a new row when the
+  derivative WKN/ISIN differs. Depot snapshots and transactions remain
+  issue/event-specific history rows.
+- A page-by-page extraction map would help define which pages/sections populate
+  which tabs and fields. Treat it as parser training/review guidance, not
+  manual data entry.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
 - Live enrichment must wait until magazine extraction has populated workbook

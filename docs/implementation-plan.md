@@ -308,10 +308,24 @@ Acceptance:
   credentials, network, or export files. Planned rows are non-exportable and
   require manual review. Source block references are currently
   `manual_review_pending` placeholders until extraction block IDs exist.
+- Workbook export now includes parser-backed rows for derivative overview
+  tables, AKTIONAER depot position snapshots, and explicit depot
+  no-transaction weeks, in addition to recommendation cards and dividend
+  strategy rows.
 - Instrument dry-run rows must populate row-level `date updated` as the last
   field. Stock rows initialize it from an explicit import/issue date when
   available, otherwise from the command's current UTC date, and later reviewed
   enrichment or newer issue mentions may update it.
+- Canonical instrument tabs should become update-oriented: repeated mentions of
+  the same stock, ETF, commodity, crypto, or forex instrument update the
+  existing row instead of appending duplicates. Options/derivatives are
+  identity-sensitive: only update when it is the same derivative/security,
+  normally by derivative WKN/ISIN. A new call or put for the same underlying
+  stock is a new row when the derivative WKN/ISIN differs.
+- Add a page-by-page extraction map before broad historical import. The map
+  should define source pages/section names, destination tabs, row identity,
+  extracted fields, ignored fields, and review notes so parser work can scale
+  across issue variants without manual row entry.
 - Broad index constituents, statistics tables, quick-check rows, chart-check
   tables, or other section inventories must not fan out into `Stocks` rows.
   Only explicitly mentioned stock recommendation cards or reviewed explicit

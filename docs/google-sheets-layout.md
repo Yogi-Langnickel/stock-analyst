@@ -59,9 +59,10 @@ issues have been extracted and the repeated sections are clearer.
    last field.
 
 5. `Options`
-   Option and derivative recommendations with underlying, base value, strike or
-   base price, Omega/Hebel, runtime, target, stop, and risk flags. The row-level
-   `date updated` field is the last field.
+   Asset-class dashboard for option summaries and risk review. Detailed option
+   and derivative rows emit to `Derivative Tips` so options, calls, puts,
+   discount calls, turbo calls, and certificates use one review queue. The
+   row-level `date updated` field is the last field.
 
 6. `Crypto`
    Crypto recommendations and digital-asset context such as exchange/liquidity,
@@ -88,9 +89,10 @@ issues have been extracted and the repeated sections are clearer.
    `Reviewed Magazine Mentions` through stable source IDs.
 
 12. `Derivative Tips`
-   Dedicated derivative table. Include underlying, derivative WKN/ISIN, type,
-   base price, strike/cap, leverage/Omega, runtime, chance/risk, target, stop,
-   recommendation, and source page.
+   Dedicated detailed options/derivatives table. Include issue/page,
+   underlying, derivative/product name, direction, WKN/ISIN, issuer, ratio,
+   base value, strike/cap, leverage/Omega, runtime, entry/current price,
+   performance, target, stop, recommendation, and source page.
 
 13. `AKTIONAER Depot`
    Dedicated magazine model-depot snapshot. One row per issue/position. Treat
@@ -141,9 +143,9 @@ the live Sheet; those should be added only after this layout is accepted.
 | `Review Queue` | `planned` | 1 row, 1 col | `A1` | Header row | Reviewer-only triage; no family-facing export should read directly from this tab. |
 | `Reviewed Magazine Mentions` | `planned` | 1 row, 1 col | `A1` | Header row | Approved source-linked rows only after manual review. |
 | `Recommendation Cards` | `planned` | 1 row, 1 col | `A1` | Header row | Raw labelled card traceability; stock/derivative cards currently route to `Stocks` or `Derivative Tips`. |
-| `Derivative Tips` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Option/card rows with WKN, base value, base price, Omega/Hebel, runtime, target, stop. |
-| `AKTIONAER Depot` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Section inventory detects this surface; dedicated row emitter is not implemented yet. |
-| `Depot Transactions` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Section inventory detects transaction tables and no-transaction weeks; dedicated row emitter is not implemented yet. |
+| `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Source ID stays in row metadata; visible provenance is issue/page. |
+| `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot. |
+| `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks. |
 | `Chart Check` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Section inventory detects pages; reviewed signals should later link back to stock WKNs. |
 | `Stock Quickcheck` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here; surface only reviewed summary in `Stocks`. |
 | `Statistics Context` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Context only. It must never create recommendation rows by itself. |
@@ -187,6 +189,52 @@ content: derivative overview tables, model-depot positions, model-depot
 transactions, chart-check sections, quick-check tables, statistics, extraction
 audit, and multi-period dividend tables.
 
+## Page Mapping Review
+
+Yes: reviewing each magazine page and defining which data goes where is useful.
+Treat it as a parser training/review manifest, not as manual data entry. For
+each page or page range, capture:
+
+- source pages and section title
+- extraction priority
+- destination tab
+- row identity rule
+- fields to extract
+- fields to ignore
+- confidence/review notes
+
+This page map should live in versioned docs or a small YAML fixture once the
+shape stabilizes. The human review goal is to define routing and field rules;
+the parser should still populate rows automatically.
+
+## Row Identity And Update Rules
+
+Once an instrument exists in the workbook, later issue imports should update
+the existing instrument row rather than append a duplicate, unless the source
+represents a genuinely distinct instrument or event.
+
+Default identity rules:
+
+- Stocks: update by WKN when present; otherwise by reviewed normalized company
+  identity. Keep latest recommendation/source issue/page fields current, while
+  preserving source history separately once a history tab exists.
+- ETF, Commodities, Crypto, and Forex: update by primary identifier or reviewed
+  normalized instrument key. Do not append duplicates for repeated mentions.
+- Dividend Focus: keep the table/event rows because dividend rows can be
+  period-specific, but surface the most appropriate current yield back onto the
+  matching instrument row.
+- AKTIONAER Depot: keep one snapshot row per issue/position. This is a
+  publisher portfolio history, not the canonical instrument row.
+- Depot Transactions: append transaction events. Explicit no-transaction weeks
+  remain issue-specific evidence.
+- Derivative Tips: update only when it is the same derivative/security, normally
+  the same WKN/ISIN. A new call or put for the same underlying is a new row when
+  the derivative WKN/ISIN differs, even if the underlying stock is the same.
+
+For options and derivatives, the underlying alone is not a stable row identity.
+Use derivative WKN/ISIN first, then reviewed product terms only when the WKN is
+missing.
+
 ## Current Section Keys
 
 The local `section-inventory` command emits stable section keys and suggested
@@ -212,7 +260,10 @@ DTOs for the workbook tabs. It currently routes:
 
 - stock recommendation cards to `Stocks`
 - derivative cards to `Derivative Tips`
+- derivative overview table rows to `Derivative Tips`
 - dividend strategy rows to `Dividend Focus`
+- AKTIONAER depot rows to `AKTIONAER Depot`
+- depot transaction/no-transaction rows to `Depot Transactions`
 - section-inventory routing hints to `Extraction Audit`
 
 `Recommendation Cards` is retained as a planned traceability tab, but the
