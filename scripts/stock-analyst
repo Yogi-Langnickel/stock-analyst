@@ -33,6 +33,7 @@ Usage:
   scripts/stock-analyst visual-ocr-review <pdf> [--page N] [--render] [--ocr]
   scripts/stock-analyst market-data-plan [--env-file .env] [--symbol TICKER] [--symbol-file path]
   scripts/stock-analyst market-symbol-map-template --workbook-plan-file path --output path
+  scripts/stock-analyst google-sheets-clear-data [--env-file .env]
   scripts/stock-analyst google-sheets-export-plan <workbook-plan.json> [--env-file .env]
   scripts/stock-analyst python <python args...>
 
@@ -65,7 +66,7 @@ case "${COMMAND}" in
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "$@"
     ;;
-  workbook-export-plan|recommendation-cards|section-inventory|dividend-strategy|visual-ocr-review|market-data-plan|market-symbol-map-template|process-pdf|import-pdf-folder|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap|google-sheets-export-plan)
+  workbook-export-plan|recommendation-cards|section-inventory|dividend-strategy|visual-ocr-review|market-data-plan|market-symbol-map-template|process-pdf|import-pdf-folder|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap|google-sheets-clear-data|google-sheets-export-plan)
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "${COMMAND}" "$@"
     ;;

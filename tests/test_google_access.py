@@ -6,6 +6,7 @@ from stock_analyst.google_access import (
     GoogleAccessError,
     bootstrap_google_sheet,
     build_drive_pdf_metadata_result,
+    clear_google_sheet_data_rows,
     list_drive_pdf_metadata,
     load_env_file,
     load_google_access_config,
@@ -407,6 +408,39 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertEqual(result["headerRowsWritten"], 0)
         self.assertEqual(sheets.spreadsheets_resource.values_resource.batch_update_requests, [])
+
+    def test_google_sheet_clear_data_rows_preserves_headers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [{"properties": {"title": "Stocks"}}],
+                }
+            )
+
+            result = clear_google_sheet_data_rows(
+                config,
+                sheets_service_factory=lambda: sheets,
+            )
+
+        values_resource = sheets.spreadsheets_resource.values_resource
+        clear_ranges = [request["range"] for request in values_resource.clear_requests]
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["headersRewritten"])
+        self.assertEqual(result["clearedTabCount"], len(result["clearedRanges"]))
+        self.assertIn("'Stocks'!A4:M", clear_ranges)
+        self.assertIn("'Navigation Dashboard'!A2:D", clear_ranges)
+        self.assertGreater(len(values_resource.batch_update_requests), 0)
 
     def test_google_sheet_export_writes_workbook_rows_and_replaces_same_issue(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

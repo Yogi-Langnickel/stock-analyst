@@ -672,6 +672,55 @@ def bootstrap_google_sheet(
     }
 
 
+def clear_google_sheet_data_rows(
+    config: GoogleAccessConfig,
+    *,
+    sheets_service_factory=None,
+    tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
+    write_headers: bool = True,
+) -> dict[str, object]:
+    """Clear all configured workbook data rows while preserving headers.
+
+    This is a hard reset for generated/review rows. It clears only values below
+    each tab's configured header row, then optionally rewrites headers so a
+    fresh scan starts from a stable workbook structure.
+    """
+
+    if sheets_service_factory is None:
+        _drive_service_factory, sheets_service_factory = _google_service_factories(config)
+
+    sheets = sheets_service_factory()
+    bootstrap_result = bootstrap_google_sheet(
+        config,
+        sheets_service_factory=sheets_service_factory,
+        tab_specs=tab_specs,
+        write_headers=write_headers,
+    )
+    clear_ranges = _build_sheet_body_clear_ranges(tab_specs)
+    try:
+        for range_name in clear_ranges:
+            sheets.spreadsheets().values().clear(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                range=range_name,
+                body={},
+            ).execute()
+    except Exception as error:
+        raise GoogleAccessError(
+            "Google Sheets data reset failed. Verify network access, API enablement, "
+            "service-account sheet sharing, and configured spreadsheet ID."
+        ) from error
+
+    return {
+        "ok": True,
+        "externalServicesEnabled": True,
+        "spreadsheetId": config.sheets_spreadsheet_id,
+        "clearedRanges": list(clear_ranges),
+        "clearedTabCount": len(clear_ranges),
+        "headersRewritten": write_headers,
+        "bootstrap": bootstrap_result,
+    }
+
+
 def write_workbook_plan_to_google_sheet(
     config: GoogleAccessConfig,
     workbook_plan: Mapping[str, object],
@@ -919,6 +968,18 @@ def _build_sheet_header_ranges(
         for spec in tab_specs
     )
     return metadata_ranges + header_ranges
+
+
+def _build_sheet_body_clear_ranges(
+    tab_specs: tuple[GoogleSheetTabSpec, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        (
+            f"{_quote_sheet_title(spec.title)}!A{spec.header_row + 1}:"
+            f"{_column_letter(len(spec.headers))}"
+        )
+        for spec in tab_specs
+    )
 
 
 def _sheet_values_get(

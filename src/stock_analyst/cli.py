@@ -14,6 +14,7 @@ from stock_analyst.google_access import (
     GoogleAccessError,
     bootstrap_google_sheet,
     build_drive_pdf_metadata_result,
+    clear_google_sheet_data_rows,
     load_google_access_config,
     run_google_access_smoke,
     write_workbook_plan_to_google_sheet,
@@ -383,6 +384,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create missing tabs without writing header rows.",
     )
 
+    google_sheets_clear_data = subcommands.add_parser(
+        "google-sheets-clear-data",
+        help="Clear configured workbook data rows while preserving tab headers.",
+    )
+    google_sheets_clear_data.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Optional local env file with GOOGLE_* config. Do not commit it.",
+    )
+    google_sheets_clear_data.add_argument(
+        "--skip-headers",
+        action="store_true",
+        help="Clear data rows without rewriting header rows.",
+    )
+
     google_sheets_export_plan = subcommands.add_parser(
         "google-sheets-export-plan",
         help="Write reviewer-gated workbook-plan rows into the configured Sheet.",
@@ -734,6 +751,15 @@ def run_google_sheets_bootstrap_command(
     return bootstrap_google_sheet(config, write_headers=write_headers)
 
 
+def run_google_sheets_clear_data_command(
+    *,
+    env_file: Path | None = None,
+    write_headers: bool = True,
+) -> dict[str, object]:
+    config = load_google_access_config(env_file=env_file)
+    return clear_google_sheet_data_rows(config, write_headers=write_headers)
+
+
 def run_google_sheets_export_plan_command(
     workbook_plan_file: Path,
     *,
@@ -905,6 +931,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "google-sheets-bootstrap":
             result = run_google_sheets_bootstrap_command(
+                env_file=args.env_file,
+                write_headers=not args.skip_headers,
+            )
+        elif args.command == "google-sheets-clear-data":
+            result = run_google_sheets_clear_data_command(
                 env_file=args.env_file,
                 write_headers=not args.skip_headers,
             )
