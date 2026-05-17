@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from stock_analyst.dividend_strategy import build_dividend_strategy_from_pdf
@@ -421,10 +422,12 @@ def run_workbook_export_plan(
     issue_id: str | None = None,
     min_embedded_chars: int = 40,
 ) -> dict[str, object]:
+    current_utc_date = datetime.now(timezone.utc).date()
     plan = build_workbook_export_plan_from_pdf(
         pdf_path,
         issue_id=issue_id,
         min_embedded_chars=min_embedded_chars,
+        current_utc_date=current_utc_date,
     )
     return plan.to_dict()
 

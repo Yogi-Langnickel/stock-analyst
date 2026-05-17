@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -20,6 +21,7 @@ from stock_analyst.dividend_strategy import (
 )
 from stock_analyst.extraction import RawTextExtractor, extract_pdf_text
 from stock_analyst.google_access import DEFAULT_SHEET_TABS
+from stock_analyst.intake import guess_issue_date
 from stock_analyst.recommendation_cards import (
     RecommendationCard,
     RecommendationCardExtraction,
@@ -107,6 +109,8 @@ def build_workbook_export_plan_from_pdf(
     issue_id: str | None = None,
     extractor: RawTextExtractor | None = None,
     min_embedded_chars: int = 40,
+    import_date: date | str | None = None,
+    current_utc_date: date | str | None = None,
 ) -> WorkbookExportPlan:
     """Build a dry-run workbook row plan from local embedded PDF text."""
 
@@ -116,6 +120,11 @@ def build_workbook_export_plan_from_pdf(
         min_embedded_chars=min_embedded_chars,
     )
     resolved_issue_id = issue_id or _issue_id_from_filename(pdf_path)
+    stock_update_date = _resolve_stock_update_date(
+        issue_date=guess_issue_date(pdf_path.name),
+        import_date=import_date,
+        current_utc_date=current_utc_date,
+    )
     pages = tuple((page.page_number, page.text.splitlines()) for page in extraction.pages)
     cards: list[RecommendationCard] = []
     sections: list[MagazineSectionCandidate] = []
@@ -144,6 +153,7 @@ def build_workbook_export_plan_from_pdf(
         recommendation_cards=tuple(cards),
         dividend_strategy=dividends,
         section_inventory=tuple(sections),
+        stock_update_date=stock_update_date,
     )
 
 
@@ -154,11 +164,16 @@ def build_workbook_export_plan(
     recommendation_cards: RecommendationCardExtraction | Sequence[RecommendationCard] = (),
     dividend_strategy: DividendStrategyExtraction | Sequence[DividendStrategyRow] = (),
     section_inventory: MagazineSectionInventory | Sequence[MagazineSectionCandidate] = (),
+    stock_update_date: date | str | None = None,
 ) -> WorkbookExportPlan:
     """Convert local extraction outputs into reviewer-gated workbook rows."""
 
+    resolved_stock_update_date = _date_cell_value(stock_update_date) or _current_utc_date()
     rows = tuple(
-        _card_rows(_cards_from(recommendation_cards))
+        _card_rows(
+            _cards_from(recommendation_cards),
+            stock_update_date=resolved_stock_update_date,
+        )
         + _dividend_rows(_dividend_rows_from(dividend_strategy))
         + _section_audit_rows(_sections_from(section_inventory))
     )
@@ -171,17 +186,25 @@ def build_workbook_export_plan(
     )
 
 
-def _card_rows(cards: Sequence[RecommendationCard]) -> list[WorkbookDraftRow]:
+def _card_rows(
+    cards: Sequence[RecommendationCard],
+    *,
+    stock_update_date: str,
+) -> list[WorkbookDraftRow]:
     rows: list[WorkbookDraftRow] = []
     for card in cards:
         if card.instrument_type == InstrumentType.DERIVATIVE:
             rows.append(_derivative_card_row(card))
         else:
-            rows.append(_recommendation_card_row(card))
+            rows.append(_recommendation_card_row(card, stock_update_date=stock_update_date))
     return rows
 
 
-def _recommendation_card_row(card: RecommendationCard) -> WorkbookDraftRow:
+def _recommendation_card_row(
+    card: RecommendationCard,
+    *,
+    stock_update_date: str,
+) -> WorkbookDraftRow:
     dividend = _join_non_empty((card.dividend_yield, card.dividend_per_share_trend))
     return WorkbookDraftRow(
         tab="Stocks",
@@ -200,7 +223,7 @@ def _recommendation_card_row(card: RecommendationCard) -> WorkbookDraftRow:
             card.target or "",
             card.stop or "",
             card.recommendation_status or "",
-            "",
+            stock_update_date,
             card.issue_id,
             str(card.page),
         ),
@@ -376,6 +399,32 @@ def _chance_risk(chance: int | None, risk: int | None) -> str:
 
 def _join_non_empty(values: Sequence[str | None]) -> str:
     return "; ".join(value for value in values if value)
+
+
+def _resolve_stock_update_date(
+    *,
+    issue_date: str | None,
+    import_date: date | str | None,
+    current_utc_date: date | str | None,
+) -> str:
+    return (
+        _date_cell_value(import_date)
+        or _date_cell_value(issue_date)
+        or _date_cell_value(current_utc_date)
+        or _current_utc_date()
+    )
+
+
+def _date_cell_value(value: date | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, date):
+        return value.isoformat()
+    return value.strip()
+
+
+def _current_utc_date() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _severity_for_priority(priority: str) -> str:

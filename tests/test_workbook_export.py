@@ -76,10 +76,48 @@ class WorkbookExportPlanTest(unittest.TestCase):
             {"Extraction Audit": 1, "Stocks": 1},
         )
 
+    def test_pdf_plan_uses_filename_issue_date_for_stock_update_date(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(
+                        page_number=1,
+                        text="\n".join(
+                            (
+                                "Aktie",
+                                "Banco Sabadell",
+                                "Akt. Kurs",
+                                "3,33 €",
+                                "WKN",
+                                "A0MRD4",
+                                "Ziel",
+                                "4,30 €",
+                            )
+                        ),
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "aktionaer-2026-05-14.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+
+            plan = build_workbook_export_plan_from_pdf(
+                pdf,
+                extractor=StubExtractor(),
+                current_utc_date="2026-05-17",
+            )
+
+        stock_row = next(row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks")
+
+        self.assertEqual(stock_row["values"][8], "2026-05-14")
+
     def test_routes_stock_card_to_stocks_sheet_row(self) -> None:
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
             issue_id="2026-W03",
+            stock_update_date="2026-05-17",
             recommendation_cards=(
                 RecommendationCard(
                     issue_id="2026-W03",
@@ -128,10 +166,26 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][5], "4,30 EUR")
         self.assertEqual(row["values"][6], "2,70 EUR")
         self.assertEqual(row["values"][7], "new_recommendation")
-        self.assertEqual(row["values"][8], "")
+        self.assertEqual(row["values"][8], "2026-05-17")
         self.assertEqual(row["values"][9], "2026-W03")
         self.assertEqual(row["values"][10], "22")
         self.assertIn("manual_review_required", row["warnings"][0])
+
+    def test_stock_update_date_prefers_explicit_import_date(self) -> None:
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "aktionaer-2026-05-14.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+
+            plan = build_workbook_export_plan_from_pdf(
+                pdf,
+                extractor=_SingleStockExtractor(),
+                import_date="2026-05-16",
+                current_utc_date="2026-05-17",
+            )
+
+        stock_row = next(row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks")
+
+        self.assertEqual(stock_row["values"][8], "2026-05-16")
 
     def test_routes_derivative_cards_without_putting_name_in_source_id(self) -> None:
         plan = build_workbook_export_plan(
@@ -292,6 +346,53 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][3], "derivative_tips_overview")
         self.assertEqual(row["values"][4], "warning")
         self.assertIn("suggested_sheet=Derivative Tips", row["warnings"])
+
+    def test_section_inventory_does_not_fan_out_index_or_table_wkns_to_stock_rows(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            stock_update_date="2026-05-17",
+            section_inventory=(
+                MagazineSectionCandidate(
+                    issue_id="2026-W03",
+                    page=86,
+                    section_kind=MagazineSectionKind.QUICK_CHECK,
+                    section_title="Aktien im Quick-Check",
+                    suggested_sheet="Stock Quickcheck",
+                    priority="medium",
+                    reason="Broad table context with WKNs only.",
+                    wkns=("A0HL8N", "A1EWWW", "A2QP7J"),
+                ),
+            ),
+        )
+
+        result = plan.to_dict()
+
+        self.assertEqual(result["rowsByTab"], {"Extraction Audit": 1})
+        self.assertTrue(all(row["tab"] != "Stocks" for row in result["rows"]))
+
+
+class _SingleStockExtractor:
+    extractor_name = "stub"
+
+    def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+        return (
+            RawPageText(
+                page_number=1,
+                text="\n".join(
+                    (
+                        "Aktie",
+                        "Banco Sabadell",
+                        "Akt. Kurs",
+                        "3,33 €",
+                        "WKN",
+                        "A0MRD4",
+                        "Ziel",
+                        "4,30 €",
+                    )
+                ),
+            ),
+        )
 
 
 if __name__ == "__main__":

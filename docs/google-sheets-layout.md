@@ -42,7 +42,10 @@ issues have been extracted and the repeated sections are clearer.
    contains the latest tab update timestamp. The stock table header starts on
    row 3 with `Company`, `WKN`, `Current Price*`, `Price at Recommendation`,
    `Dividends`, `Target`, `Stop`, `Recommendation`, `date updated`, `issue`,
-   and `page`.
+   and `page`. The row-level `date updated` value is required: weekly imports
+   initialize it from the import/issue date when available, otherwise from the
+   command's current UTC date, and later reviewed enrichment or newer issue
+   mentions update it.
 
 3. `Commodities`
    Commodity-related recommendations, article bullets, price/context snapshots,
@@ -167,6 +170,11 @@ DTOs for the workbook tabs. It currently routes:
 The command does not call Google Sheets and does not write export files. Planned
 rows are draft reviewer infrastructure only: `exportable=false`,
 `requiresManualReview=true`, and `approvedRows=0`.
+
+Broad index, statistics, quick-check, chart-check, or constituent-table context
+must not fan out into individual `Stocks` rows. Only explicitly mentioned stock
+recommendation cards or reviewed explicit stock mentions may create rows in the
+`Stocks` tab.
 
 ## Reviewer Rule
 

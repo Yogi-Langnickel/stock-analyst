@@ -102,6 +102,12 @@ scripts/stock-analyst recommendation-cards ./data/private/issues/DA_2026_03.pdf
 scripts/stock-analyst workbook-export-plan ./data/private/issues/DA_2026_03.pdf
 ```
 
+`workbook-export-plan` is still a dry run. Stock rows include a row-level
+`date updated` value initialized from the import/issue date when available, or
+from the command's current UTC date. Broad index or constituent-table context is
+kept as review/audit context and does not create stock rows unless a stock is
+explicitly mentioned as a recommendation row.
+
 Inventory important magazine sections and table surfaces, including dividend
 strategy tables, derivative overview tables, AKTIONAER depot snapshots,
 transaction tables, chart-check pages, quick-check tables, statistics, and
