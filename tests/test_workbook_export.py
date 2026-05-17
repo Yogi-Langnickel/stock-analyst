@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from stock_analyst.chart_check import ChartCheckRow
 from stock_analyst.dividend_strategy import DividendStrategyRow
 from stock_analyst.depot_tables import DepotPositionRow, DepotTransactionRow
 from stock_analyst.derivative_tables import DerivativeOverviewRow
@@ -800,6 +801,32 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertIn("recommended=34,80 EUR", row["values"][5])
         self.assertIn("Aufwärtstrend", row["values"][6])
         self.assertEqual(len(row["values"]), len(headers_for("Stock Quickcheck")))
+
+    def test_routes_chart_check_rows_to_dedicated_tab(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            chart_check_rows=(
+                ChartCheckRow(
+                    issue_id="2026-W03",
+                    page=80,
+                    instrument="Airbus",
+                    wkn="938914",
+                    sector="Luft- und Raumfahrt (NLD)",
+                    signal="Luft- und Raumfahrt (NLD); Der Trend zeigt nach oben.",
+                ),
+            ),
+        )
+
+        row = plan.to_dict()["rows"][0]
+
+        self.assertEqual(row["tab"], "Chart Check")
+        self.assertEqual(row["rowKind"], "chart_check")
+        self.assertEqual(row["values"][2], "Airbus")
+        self.assertEqual(row["values"][3], "938914")
+        self.assertIn("Trend zeigt nach oben", row["values"][4])
+        self.assertEqual(row["values"][5], "needs_review")
+        self.assertEqual(len(row["values"]), len(headers_for("Chart Check")))
 
 
 class _SingleStockExtractor:

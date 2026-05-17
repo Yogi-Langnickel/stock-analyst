@@ -413,10 +413,10 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         "Chart-check section extraction.",
         frozen_columns=3,
         layout_notes=(
-            "Currently audit-hinted, not row-emitted.",
+            "Parser-backed for Chart-Check instrument rows and publisher bullet summaries.",
             "Attach reviewed chart signals back to matching stock rows by WKN.",
         ),
-        parser_status="audit_hint",
+        parser_status="parser_backed",
     ),
     GoogleSheetTabSpec(
         "Stock Quickcheck",

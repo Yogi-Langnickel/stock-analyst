@@ -44,6 +44,10 @@ Created: 2026-05-15
 - `Aktien im Quick-Check` rows are parser-backed into `Stock Quickcheck`.
   They remain review-only context and must not fan out into `Stocks` until a
   reviewed attach/update rule exists.
+- `Chart-Check` pages are parser-backed into `Chart Check` as explicit
+  instrument/WKN rows with the publisher bullet summary. They remain
+  review-only context and must not update `Stocks` until a reviewed attach rule
+  exists.
 - A local workbook export-plan command can route draft recommendation cards,
   derivative cards, derivative overview rows, dividend strategy rows, AKTIONAER
   depot positions, depot transaction/no-transaction rows, and section-inventory

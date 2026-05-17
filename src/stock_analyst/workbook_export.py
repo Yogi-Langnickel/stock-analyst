@@ -14,6 +14,10 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from stock_analyst.chart_check import (
+    ChartCheckRow,
+    extract_chart_check_rows_from_page_lines,
+)
 from stock_analyst.dividend_strategy import (
     DividendStrategyExtraction,
     DividendStrategyRow,
@@ -185,6 +189,10 @@ def build_workbook_export_plan_from_pdf(
         pages,
         issue_id=resolved_issue_id,
     )
+    chart_check_rows = extract_chart_check_rows_from_page_lines(
+        pages,
+        issue_id=resolved_issue_id,
+    )
     quickcheck_rows = extract_quickcheck_rows_from_page_lines(
         pages,
         issue_id=resolved_issue_id,
@@ -197,6 +205,7 @@ def build_workbook_export_plan_from_pdf(
         derivative_overview=derivative_overview_rows,
         depot_positions=depot_positions,
         depot_transactions=depot_transactions,
+        chart_check_rows=chart_check_rows,
         quickcheck_rows=quickcheck_rows,
         section_inventory=tuple(sections),
         stock_update_date=stock_update_date,
@@ -212,6 +221,7 @@ def build_workbook_export_plan(
     derivative_overview: Sequence[DerivativeOverviewRow] = (),
     depot_positions: Sequence[DepotPositionRow] = (),
     depot_transactions: Sequence[DepotTransactionRow] = (),
+    chart_check_rows: Sequence[ChartCheckRow] = (),
     quickcheck_rows: Sequence[QuickcheckRow] = (),
     section_inventory: MagazineSectionInventory | Sequence[MagazineSectionCandidate] = (),
     stock_update_date: date | str | None = None,
@@ -246,6 +256,7 @@ def build_workbook_export_plan(
             depot_transactions,
             instrument_update_date=resolved_stock_update_date,
         )
+        + _chart_check_rows(chart_check_rows)
         + _quickcheck_rows(quickcheck_rows)
         + _section_audit_rows(_sections_from(section_inventory))
     )
@@ -690,6 +701,35 @@ def _quickcheck_rows(rows: Sequence[QuickcheckRow]) -> list[WorkbookDraftRow]:
                     row.performance_since_recommendation,
                     signal,
                     row.comment,
+                    row.review_status.value,
+                ),
+            )
+        )
+    return draft_rows
+
+
+def _chart_check_rows(rows: Sequence[ChartCheckRow]) -> list[WorkbookDraftRow]:
+    draft_rows: list[WorkbookDraftRow] = []
+    for row in rows:
+        source_id = _source_id("chart-check", row.issue_id, row.page, row.wkn)
+        draft_rows.append(
+            WorkbookDraftRow(
+                tab="Chart Check",
+                row_kind="chart_check",
+                source_id=source_id,
+                issue_id=row.issue_id,
+                page=row.page,
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="manual_review_pending",
+                values=(
+                    row.issue_id,
+                    str(row.page),
+                    row.instrument,
+                    row.wkn,
+                    row.signal,
+                    row.trend,
+                    row.support,
+                    row.resistance,
                     row.review_status.value,
                 ),
             )

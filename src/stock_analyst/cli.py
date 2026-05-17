@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 
+from stock_analyst.chart_check import extract_chart_check_rows_from_page_lines
 from stock_analyst.dividend_strategy import build_dividend_strategy_from_pdf
 from stock_analyst.google_access import (
     GoogleAccessError,
@@ -208,6 +209,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
     )
     quick_check.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    chart_check = subcommands.add_parser(
+        "chart-check",
+        help="Extract local draft Chart-Check rows from embedded PDF text.",
+    )
+    chart_check.add_argument("pdf", type=Path)
+    chart_check.add_argument(
+        "--issue-id",
+        default=None,
+        help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
+    )
+    chart_check.add_argument(
         "--min-embedded-chars",
         type=int,
         default=40,
@@ -634,6 +652,30 @@ def run_quick_check(
     }
 
 
+def run_chart_check(
+    pdf_path: Path,
+    *,
+    issue_id: str | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    from stock_analyst.extraction import extract_pdf_text
+    from stock_analyst.workbook_export import _issue_id_from_filename
+
+    extraction = extract_pdf_text(pdf_path, min_embedded_chars=min_embedded_chars)
+    resolved_issue_id = issue_id or _issue_id_from_filename(pdf_path)
+    rows = extract_chart_check_rows_from_page_lines(
+        tuple((page.page_number, page.text.splitlines()) for page in extraction.pages),
+        issue_id=resolved_issue_id,
+    )
+    return {
+        "issueId": resolved_issue_id,
+        "pdfPath": str(pdf_path),
+        "pageCount": extraction.page_count,
+        "externalServicesEnabled": False,
+        "rows": [row.to_dict() for row in rows],
+    }
+
+
 def run_workbook_export_plan(
     pdf_path: Path,
     *,
@@ -932,6 +974,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "quick-check":
             result = run_quick_check(
+                args.pdf,
+                issue_id=args.issue_id,
+                min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "chart-check":
+            result = run_chart_check(
                 args.pdf,
                 issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,
