@@ -40,6 +40,11 @@ SUMMARY_FILE="${RUN_DIR}/${STAMP}.summary.json"
 
   printf '\n'
   if [[ -f "${ENV_FILE}" && -n "${WORKBOOK_PLAN_FILE}" && -f "${WORKBOOK_PLAN_FILE}" ]]; then
+    "${ROOT_DIR}/scripts/stock-analyst" market-symbol-map-template \
+      --workbook-plan-file "${WORKBOOK_PLAN_FILE}" \
+      --output "${SYMBOL_MAP_FILE}"
+
+    printf '\n'
     if [[ -f "${SYMBOL_MAP_FILE}" ]]; then
       "${ROOT_DIR}/scripts/stock-analyst" market-data-plan \
         --env-file "${ENV_FILE}" \

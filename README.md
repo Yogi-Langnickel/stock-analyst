@@ -165,12 +165,16 @@ from magazine-backed workbook rows and a private provider-symbol map:
 
 ```sh
 scripts/stock-analyst workbook-export-plan ./data/private/issues/DA_2026_03.pdf > ./data/private/workbook-plan.json
+scripts/stock-analyst market-symbol-map-template --workbook-plan-file ./data/private/workbook-plan.json --output ./data/private/market-symbol-map.csv
 scripts/stock-analyst market-data-plan --env-file .env --workbook-plan-file ./data/private/workbook-plan.json --symbol-map-file ./data/private/market-symbol-map.csv
 ```
 
 Do not use enrichment provider API calls before magazine rows have been
 populated into the workbook flow. Manual `--symbol` and `--symbol-file` inputs
 are development-only and are not an approved source for live enrichment.
+`market-symbol-map-template` is safe to run repeatedly: it uses only local
+workbook-plan data, preserves existing symbols in the private CSV, and adds new
+magazine instruments with `needs_symbol_lookup`.
 
 Run the local scheduled task manually. It imports new local PDFs, refreshes the
 local extraction quality report, and only plans market-data enrichment when

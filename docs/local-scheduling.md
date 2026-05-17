@@ -49,6 +49,18 @@ source_id,wkn,name,symbol
 Do not use free-form symbol files for live enrichment. Enrichment must be scoped
 to instruments already populated from the magazine into the workbook flow.
 
+Refresh the private mapping workfile from a workbook plan:
+
+```sh
+scripts/stock-analyst market-symbol-map-template \
+  --workbook-plan-file ./data/private/workbook-plan.json \
+  --output ./data/private/market-symbol-map.csv
+```
+
+This does not call provider APIs. It preserves existing nonblank `symbol` values
+and adds newly seen magazine instruments as `needs_symbol_lookup`, ready for the
+future automated provider-symbol lookup pass.
+
 ## Provider Budgets
 
 The local runner calls `market-data-plan`, not a live adapter. It only plans

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 
 from stock_analyst.dividend_strategy import build_dividend_strategy_from_pdf
@@ -27,6 +29,7 @@ from stock_analyst.market_data import (
     DEFAULT_PROVIDER_ENDPOINTS,
     MarketDataEnrichmentPlan,
     MarketDataPlanningConfig,
+    build_market_data_symbol_map_template_csv,
     load_market_data_budget_state,
     load_market_data_symbol_map_file,
     load_market_data_symbol_file,
@@ -259,6 +262,23 @@ def build_parser() -> argparse.ArgumentParser:
             "Dry-run endpoint to plan. Defaults depend on "
             "STOCK_ANALYST_MARKET_DATA_PROVIDER."
         ),
+    )
+
+    market_symbol_map_template = subcommands.add_parser(
+        "market-symbol-map-template",
+        help="Create or refresh a private provider-symbol mapping CSV from workbook rows.",
+    )
+    market_symbol_map_template.add_argument(
+        "--workbook-plan-file",
+        type=Path,
+        required=True,
+        help="JSON workbook-export-plan produced from magazine extraction.",
+    )
+    market_symbol_map_template.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Private CSV path to write. Existing symbols are preserved.",
     )
 
     google_access_smoke = subcommands.add_parser(
@@ -560,6 +580,34 @@ def run_market_data_plan_command(
     )
 
 
+def run_market_symbol_map_template_command(
+    *,
+    workbook_plan_file: Path,
+    output: Path,
+) -> dict[str, object]:
+    payload = json.loads(workbook_plan_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"workbook plan file is not a JSON object: {workbook_plan_file}")
+    existing_csv_text = output.read_text(encoding="utf-8") if output.exists() else ""
+    csv_text = build_market_data_symbol_map_template_csv(
+        payload,
+        existing_csv_text=existing_csv_text,
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(csv_text, encoding="utf-8")
+    rows = list(csv.DictReader(StringIO(csv_text)))
+    mapped_count = len([row for row in rows if (row.get("symbol") or "").strip()])
+    return {
+        "output": str(output),
+        "rowCount": len(rows),
+        "mappedCount": mapped_count,
+        "needsLookupCount": len(rows) - mapped_count,
+        "externalServicesEnabled": False,
+        "networkAccess": False,
+        "preservedExistingSymbols": True,
+    }
+
+
 def run_google_access_smoke_command(
     *,
     env_file: Path | None = None,
@@ -716,6 +764,11 @@ def main(argv: list[str] | None = None) -> int:
                 workbook_plan_file=args.workbook_plan_file,
                 symbol_map_file=args.symbol_map_file,
                 endpoints=tuple(args.endpoint) if args.endpoint else None,
+            )
+        elif args.command == "market-symbol-map-template":
+            result = run_market_symbol_map_template_command(
+                workbook_plan_file=args.workbook_plan_file,
+                output=args.output,
             )
         elif args.command == "google-access-smoke":
             result = run_google_access_smoke_command(env_file=args.env_file)

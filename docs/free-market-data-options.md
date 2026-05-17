@@ -135,15 +135,19 @@ because adapters, cache policy, throttling, and terms checks are not complete.
 4. Derive provider symbols from workbook rows via `--workbook-plan-file` and a
    private `--symbol-map-file`. Manual `--symbol` and `--symbol-file` planning
    are development-only and must not be used for live enrichment.
-5. Attach enrichment output as source metadata with provider, observed date,
+5. Generate and refresh the private symbol map with
+   `market-symbol-map-template` so the machine copies source IDs, WKNs, and
+   names from magazine rows. Blank `symbol` values mean automated provider
+   lookup still needs to propose a ticker; they do not block template refresh.
+6. Attach enrichment output as source metadata with provider, observed date,
    and status.
-6. Cache metadata must carry freshness and compliance review fields before any
+7. Cache metadata must carry freshness and compliance review fields before any
    live adapter is enabled: `retrieved_at`, `observed_on` when the provider
    supplies one, `ttl_seconds`, `expires_at`, `source_url_hash` instead of raw
    URLs, `terms_checked_at`, and a terms version or review note.
-7. Mark unavailable or ambiguous market rows as `needs_review`; never infer a
+8. Mark unavailable or ambiguous market rows as `needs_review`; never infer a
    missing price, stop loss, target, ticker, ISIN, WKN, or recommendation.
-8. Add provider terms/rate-limit notes before enabling network calls.
+9. Add provider terms/rate-limit notes before enabling network calls.
 
 ## Enrichment Signal Plan
 
@@ -225,6 +229,12 @@ recommendations, target prices, stop prices, or WKN/source fields.
   enrichment-planning source. It reads magazine-backed workbook rows and only
   plans provider requests for rows with a matching entry in a private
   `--symbol-map-file` CSV containing `source_id,wkn,name,symbol`.
+- `scripts/stock-analyst market-symbol-map-template --workbook-plan-file
+  ./data/private/workbook-plan.json --output
+  ./data/private/market-symbol-map.csv` creates or refreshes the private symbol
+  map from magazine-backed rows. Existing nonblank `symbol` values are
+  preserved; new rows are marked `needs_symbol_lookup`. This command uses no
+  network calls.
 - `scripts/stock-analyst-local-run` can run PDF import, extraction quality
   reporting, and workbook-backed market-data dry-run planning from the local
   machine without enabling live market-data network access. It no longer uses a

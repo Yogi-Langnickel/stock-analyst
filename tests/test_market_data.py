@@ -1,14 +1,17 @@
+import csv
 import json
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from io import StringIO
 from pathlib import Path
 
 from stock_analyst.market_data import (
     MarketDataBudgetState,
     available_provider_metadata,
     build_market_data_cache_metadata,
+    build_market_data_symbol_map_template_csv,
     describe_market_data_request,
     load_market_data_budget_state,
     load_market_data_planning_config,
@@ -26,7 +29,7 @@ from stock_analyst.market_data import (
     write_market_data_cache_record,
     parse_stooq_daily_csv,
 )
-from stock_analyst.cli import run_market_data_plan_command
+from stock_analyst.cli import run_market_data_plan_command, run_market_symbol_map_template_command
 
 
 class MarketDataTest(unittest.TestCase):
@@ -225,6 +228,110 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(symbol_map["source_id:stock:2026-W03:p22:A0MRD4:abc"], "SAB.MC")
         self.assertEqual(symbol_map["wkn:A0MRD4"], "SAB.MC")
         self.assertEqual(symbol_map["name:banco sabadell"], "SAB.MC")
+
+    def test_market_data_symbol_map_file_ignores_unmapped_template_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            symbol_map_file = Path(temp_dir) / "market-symbol-map.csv"
+            symbol_map_file.write_text(
+                "\n".join(
+                    (
+                        "source_id,wkn,name,symbol,status",
+                        "stock:2026-W03:p22:A0MRD4:abc,A0MRD4,Banco Sabadell,,needs_symbol_lookup",
+                        "stock:2026-W03:p42:A1CX3T:def,A1CX3T,Tesla,TSLA,mapped",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            symbol_map = load_market_data_symbol_map_file(symbol_map_file)
+
+        self.assertNotIn("wkn:A0MRD4", symbol_map)
+        self.assertEqual(symbol_map["wkn:A1CX3T"], "TSLA")
+
+    def test_build_market_data_symbol_map_template_preserves_existing_symbols(self) -> None:
+        payload = {
+            "rows": [
+                {
+                    "tab": "Stocks",
+                    "rowKind": "stock_recommendation",
+                    "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
+                    "issueId": "2026-W03",
+                    "page": 22,
+                    "values": [
+                        "Banco Sabadell",
+                        "A0MRD4",
+                        "",
+                        "3,33 EUR",
+                        "",
+                        "4,30 EUR",
+                        "2,70 EUR",
+                        "new_recommendation",
+                        "2026-W03",
+                        "22",
+                        "2026-05-17",
+                    ],
+                },
+                {
+                    "tab": "Dividend Focus",
+                    "rowKind": "dividend_strategy",
+                    "sourceId": "dividend:2026-W03:p18:A0MRD4:def",
+                    "issueId": "2026-W03",
+                    "page": 18,
+                    "values": [
+                        "2026-W03",
+                        "18",
+                        "Banco Sabadell",
+                        "A0MRD4",
+                        "",
+                        "18,6 %",
+                        "Maerz",
+                        "",
+                        "needs_review",
+                        "2026-05-17",
+                    ],
+                },
+                {
+                    "tab": "Stocks",
+                    "rowKind": "stock_recommendation",
+                    "sourceId": "stock:2026-W03:p42:A1CX3T:ghi",
+                    "issueId": "2026-W03",
+                    "page": 42,
+                    "values": [
+                        "Tesla",
+                        "A1CX3T",
+                        "",
+                        "381,15 EUR",
+                        "0,0 %",
+                        "480,00 EUR",
+                        "295,00 EUR",
+                        "follow_up",
+                        "2026-W03",
+                        "42",
+                        "2026-05-17",
+                    ],
+                },
+            ]
+        }
+        existing = "\n".join(
+            (
+                "source_id,wkn,name,symbol,status",
+                ",A0MRD4,Banco Sabadell,SAB.MC,mapped",
+            )
+        )
+
+        csv_text = build_market_data_symbol_map_template_csv(
+            payload,
+            existing_csv_text=existing,
+        )
+        rows = list(csv.DictReader(StringIO(csv_text)))
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["wkn"], "A0MRD4")
+        self.assertEqual(rows[0]["symbol"], "SAB.MC")
+        self.assertEqual(rows[0]["status"], "mapped")
+        self.assertEqual(rows[1]["wkn"], "A1CX3T")
+        self.assertEqual(rows[1]["symbol"], "")
+        self.assertEqual(rows[1]["status"], "needs_symbol_lookup")
 
     def test_workbook_plan_candidates_require_symbol_mapping(self) -> None:
         payload = {
@@ -828,6 +935,54 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(result["plannedCallCount"], 1)
         self.assertEqual(result["requests"][0]["symbol"], "SAB.MC")
         self.assertEqual(result["workbookCandidates"][1]["status"], "needs_symbol_mapping")
+
+    def test_market_symbol_map_template_command_writes_private_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook_plan = root / "workbook-plan.json"
+            output = root / "market-symbol-map.csv"
+            workbook_plan.write_text(
+                json.dumps(
+                    {
+                        "rows": [
+                            {
+                                "tab": "Stocks",
+                                "rowKind": "stock_recommendation",
+                                "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
+                                "issueId": "2026-W03",
+                                "page": 22,
+                                "values": [
+                                    "Banco Sabadell",
+                                    "A0MRD4",
+                                    "",
+                                    "3,33 EUR",
+                                    "",
+                                    "4,30 EUR",
+                                    "2,70 EUR",
+                                    "new_recommendation",
+                                    "2026-W03",
+                                    "22",
+                                    "2026-05-17",
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_market_symbol_map_template_command(
+                workbook_plan_file=workbook_plan,
+                output=output,
+            )
+            rows = list(csv.DictReader(StringIO(output.read_text(encoding="utf-8"))))
+
+        self.assertEqual(result["rowCount"], 1)
+        self.assertEqual(result["needsLookupCount"], 1)
+        self.assertFalse(result["externalServicesEnabled"])
+        self.assertFalse(result["networkAccess"])
+        self.assertEqual(rows[0]["wkn"], "A0MRD4")
+        self.assertEqual(rows[0]["symbol"], "")
 
     def test_market_data_plan_command_supports_alpha_vantage_env_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

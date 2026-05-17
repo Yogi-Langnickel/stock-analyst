@@ -95,6 +95,10 @@ Created: 2026-05-15
   ./data/private/workbook-plan.json --symbol-map-file
   ./data/private/market-symbol-map.csv`: dry-run provider enrichment planning
   from magazine-backed workbook rows with local env-file config and no network.
+- `scripts/stock-analyst market-symbol-map-template --workbook-plan-file
+  ./data/private/workbook-plan.json --output
+  ./data/private/market-symbol-map.csv`: refresh the private mapping workfile
+  from magazine rows without provider calls; existing symbols are preserved.
 - `PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests`
 - `PYTHONPATH=src python3 -m unittest discover tests`
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`

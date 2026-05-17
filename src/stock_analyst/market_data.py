@@ -333,6 +333,20 @@ class MarketDataWorkbookCandidate:
 
 
 @dataclass(frozen=True)
+class MarketDataSymbolMapTemplateRow:
+    source_id: str
+    wkn: str
+    name: str
+    symbol: str
+    status: str
+    tab: str
+    row_kind: str
+    issue: str
+    page: str
+    notes: str
+
+
+@dataclass(frozen=True)
 class MarketQuote:
     symbol: str
     source: str
@@ -875,7 +889,7 @@ def load_market_data_symbol_map_file(path: Path) -> dict[str, str]:
         }
         symbol = normalized_row.get("symbol", "")
         if not symbol:
-            raise ValueError(f"market data symbol map line {line_number} is missing symbol")
+            continue
         if any(character.isspace() for character in symbol):
             raise ValueError(
                 f"invalid market data symbol map line {line_number}: "
@@ -899,6 +913,66 @@ def load_market_data_symbol_map_file(path: Path) -> dict[str, str]:
             symbol_map[key] = normalized_symbol
 
     return symbol_map
+
+
+def build_market_data_symbol_map_template_csv(
+    payload: Mapping[str, object],
+    *,
+    existing_csv_text: str = "",
+) -> str:
+    """Build or refresh a private CSV template from workbook-backed instruments."""
+
+    existing_symbols = _existing_symbol_map_from_template_text(existing_csv_text)
+    candidates = market_data_candidates_from_workbook_plan(payload)
+    rows: list[MarketDataSymbolMapTemplateRow] = []
+    seen: set[str] = set()
+
+    for raw_row in payload.get("rows", []):
+        if not isinstance(raw_row, Mapping):
+            continue
+        tab = str(raw_row.get("tab") or "")
+        if tab not in WORKBOOK_INSTRUMENT_TABS:
+            continue
+        raw_values = raw_row.get("values")
+        if not isinstance(raw_values, list):
+            continue
+        source_id = str(raw_row.get("sourceId") or "")
+        candidate = _candidate_by_source_id(candidates, source_id)
+        if candidate is None:
+            continue
+        dedupe_key = _template_dedupe_key(candidate)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        issue = str(raw_row.get("issueId") or _row_issue_value(raw_values, tab))
+        page = str(raw_row.get("page") or _row_page_value(raw_values, tab))
+        symbol = _symbol_for_workbook_row(
+            source_id=candidate.source_id,
+            wkn=candidate.wkn,
+            name=candidate.name,
+            symbol_map=existing_symbols,
+        )
+        status = "mapped" if symbol else "needs_symbol_lookup"
+        rows.append(
+            MarketDataSymbolMapTemplateRow(
+                source_id=candidate.source_id,
+                wkn=candidate.wkn,
+                name=candidate.name,
+                symbol=symbol or "",
+                status=status,
+                tab=candidate.tab,
+                row_kind=candidate.row_kind,
+                issue=issue,
+                page=page,
+                notes=(
+                    "preserved existing symbol"
+                    if symbol
+                    else "provider symbol lookup required before enrichment"
+                ),
+            )
+        )
+
+    return _symbol_map_template_rows_to_csv(rows)
 
 
 def market_data_candidates_from_workbook_plan(
@@ -1249,9 +1323,119 @@ def _symbol_for_workbook_row(
 
 
 def _row_value(values: list[object], index: int) -> str:
+    if index < 0:
+        index = len(values) + index
+    if index < 0:
+        return ""
     if index >= len(values):
         return ""
     return str(values[index] or "").strip()
+
+
+def _existing_symbol_map_from_template_text(csv_text: str) -> dict[str, str]:
+    if not csv_text.strip():
+        return {}
+    rows = csv.DictReader(StringIO(csv_text))
+    if rows.fieldnames is None:
+        return {}
+    symbol_map: dict[str, str] = {}
+    for row in rows:
+        normalized_row = {
+            (key or "").strip().lower(): (value or "").strip()
+            for key, value in row.items()
+        }
+        symbol = normalized_row.get("symbol", "")
+        if not symbol:
+            continue
+        for key in (
+            _source_id_lookup_key(normalized_row.get("source_id", "")),
+            _wkn_lookup_key(normalized_row.get("wkn", "")),
+            _name_lookup_key(normalized_row.get("name", "")),
+        ):
+            if key:
+                symbol_map[key] = _normalize_unique_symbols((symbol,))[0]
+    return symbol_map
+
+
+def _candidate_by_source_id(
+    candidates: tuple[MarketDataWorkbookCandidate, ...],
+    source_id: str,
+) -> MarketDataWorkbookCandidate | None:
+    for candidate in candidates:
+        if candidate.source_id == source_id:
+            return candidate
+    return None
+
+
+def _template_dedupe_key(candidate: MarketDataWorkbookCandidate) -> str:
+    if candidate.wkn:
+        return _wkn_lookup_key(candidate.wkn)
+    if candidate.name:
+        return _name_lookup_key(candidate.name)
+    return _source_id_lookup_key(candidate.source_id)
+
+
+def _row_issue_value(values: list[object], tab: str) -> str:
+    if tab == "Dividend Focus":
+        return _row_value(values, 0)
+    if tab == "Derivative Tips":
+        return _row_value(values, 1)
+    if tab in {"Stocks", "Commodities", "Crypto", "Forex"}:
+        return _row_value(values, -3)
+    if tab == "ETF":
+        return _row_value(values, -4)
+    return ""
+
+
+def _row_page_value(values: list[object], tab: str) -> str:
+    if tab == "Dividend Focus":
+        return _row_value(values, 1)
+    if tab == "Derivative Tips":
+        return _row_value(values, 2)
+    if tab in {"Stocks", "Commodities", "Crypto", "Forex"}:
+        return _row_value(values, -2)
+    if tab == "ETF":
+        return _row_value(values, -3)
+    return ""
+
+
+def _symbol_map_template_rows_to_csv(
+    rows: list[MarketDataSymbolMapTemplateRow],
+) -> str:
+    output = StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=(
+            "source_id",
+            "wkn",
+            "name",
+            "symbol",
+            "status",
+            "tab",
+            "row_kind",
+            "issue",
+            "page",
+            "notes",
+        ),
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(
+            {
+                "source_id": row.source_id,
+                "wkn": row.wkn,
+                "name": row.name,
+                "symbol": row.symbol,
+                "status": row.status,
+                "tab": row.tab,
+                "row_kind": row.row_kind,
+                "issue": row.issue,
+                "page": row.page,
+                "notes": row.notes,
+            }
+        )
+    return output.getvalue()
 
 
 def _normalize_unique_endpoints(endpoints: tuple[str, ...]) -> tuple[str, ...]:
