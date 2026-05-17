@@ -240,6 +240,10 @@ def build_workbook_export_plan(
             stock_update_date=resolved_stock_update_date,
             dividend_yield_by_wkn=dividend_yield_by_wkn,
         )
+        + _quickcheck_stock_rows(
+            quickcheck_rows,
+            stock_update_date=resolved_stock_update_date,
+        )
         + _dividend_rows(
             _dividend_rows_from(dividend_strategy),
             instrument_update_date=resolved_stock_update_date,
@@ -329,6 +333,7 @@ def _recommendation_card_row(
             card.target or "",
             card.stop or "",
             card.recommendation_status or "",
+            "",
             card.issue_id,
             str(card.page),
             stock_update_date,
@@ -675,15 +680,6 @@ def _quickcheck_rows(rows: Sequence[QuickcheckRow]) -> list[WorkbookDraftRow]:
     draft_rows: list[WorkbookDraftRow] = []
     for row in rows:
         source_id = _source_id("quickcheck", row.issue_id, row.page, row.wkn)
-        signal = _join_non_empty(
-            (
-                f"current={row.current_price}",
-                f"recommended={row.recommendation_price}",
-                f"issue={row.recommended_issue}",
-                f"target={row.target}",
-                f"stop={row.stop}",
-            )
-        )
         draft_rows.append(
             WorkbookDraftRow(
                 tab="Stock Quickcheck",
@@ -698,10 +694,54 @@ def _quickcheck_rows(rows: Sequence[QuickcheckRow]) -> list[WorkbookDraftRow]:
                     str(row.page),
                     row.instrument,
                     row.wkn,
+                    row.current_price,
+                    row.recommendation_price,
+                    row.recommended_issue,
                     row.performance_since_recommendation,
-                    signal,
+                    row.target,
+                    row.stop,
                     row.comment,
                     row.review_status.value,
+                ),
+            )
+        )
+    return draft_rows
+
+
+def _quickcheck_stock_rows(
+    rows: Sequence[QuickcheckRow],
+    *,
+    stock_update_date: str,
+) -> list[WorkbookDraftRow]:
+    draft_rows: list[WorkbookDraftRow] = []
+    for row in rows:
+        source_id = _source_id("quickcheck-stock", row.issue_id, row.page, row.wkn)
+        draft_rows.append(
+            WorkbookDraftRow(
+                tab="Stocks",
+                row_kind="stock_quickcheck_summary",
+                source_id=source_id,
+                issue_id=row.issue_id,
+                page=row.page,
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="manual_review_pending",
+                values=(
+                    row.instrument,
+                    row.wkn,
+                    row.current_price,
+                    row.recommendation_price,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    row.target,
+                    row.stop,
+                    "previous_recommendation",
+                    row.comment,
+                    row.issue_id,
+                    str(row.page),
+                    stock_update_date,
                 ),
             )
         )

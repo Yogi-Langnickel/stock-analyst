@@ -326,10 +326,10 @@ Acceptance:
   should define source pages/section names, destination tabs, row identity,
   extracted fields, ignored fields, and review notes so parser work can scale
   across issue variants without manual row entry.
-- Broad index constituents, statistics tables, quick-check rows, chart-check
-  tables, or other section inventories must not fan out into `Stocks` rows.
-  Only explicitly mentioned stock recommendation cards or reviewed explicit
-  stock mentions create stock rows.
+- Broad index constituents, statistics tables, chart-check tables, or other
+  section inventories must not fan out into `Stocks` rows. Parsed Quick Check
+  rows are explicit stock mentions and should create/update stock rows while
+  keeping the dedicated `Stock Quickcheck` traceability row.
 
 - No missing value is invented.
 - Each row has issue and page references. Source block references must be added

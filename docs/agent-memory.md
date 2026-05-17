@@ -41,9 +41,9 @@ Created: 2026-05-15
   AKTIONAER depot positions, depot transactions, chart-check pages,
   quick-check tables, statistics context, and low-priority back matter with
   suggested Google Sheet destinations.
-- `Aktien im Quick-Check` rows are parser-backed into `Stock Quickcheck`.
-  They remain review-only context and must not fan out into `Stocks` until a
-  reviewed attach/update rule exists.
+- `Aktien im Quick-Check` rows are parser-backed into `Stock Quickcheck` and
+  also surface in `Stocks` as previous-recommendation stock rows with split
+  current price, price at recommendation, target, stop, and comment fields.
 - `Chart-Check` pages are parser-backed into `Chart Check` as explicit
   instrument/WKN rows with the publisher bullet summary. They remain
   review-only context and must not update `Stocks` until a reviewed attach rule
@@ -57,9 +57,9 @@ Created: 2026-05-15
 - Instrument dry-run rows must populate row-level `date updated` as the last
   field. Stocks initialize it from an explicit import/issue date when
   available, otherwise from the command's current UTC date. Section inventories,
-  index context, statistics, quick-check tables, and broad constituent lists
-  must not fan out into `Stocks`; only explicitly mentioned stock rows go
-  there.
+  index context, statistics, chart-check tables, and broad constituent lists
+  must not fan out into `Stocks`; parsed quick-check stock rows and other
+  explicitly mentioned stock rows go there.
 - Workbook identity rule: once a stock, ETF, commodity, crypto, or forex
   instrument exists, later magazine mentions should update the existing
   instrument row rather than append duplicates. Options/derivatives are

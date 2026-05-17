@@ -187,9 +187,10 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][9], "4,30 EUR")
         self.assertEqual(row["values"][10], "2,70 EUR")
         self.assertEqual(row["values"][11], "new_recommendation")
-        self.assertEqual(row["values"][12], "2026-W03")
-        self.assertEqual(row["values"][13], "22")
-        self.assertEqual(row["values"][14], "2026-05-17")
+        self.assertEqual(row["values"][12], "")
+        self.assertEqual(row["values"][13], "2026-W03")
+        self.assertEqual(row["values"][14], "22")
+        self.assertEqual(row["values"][15], "2026-05-17")
         self.assertIn("manual_review_required", row["warnings"][0])
 
     def test_stock_update_date_prefers_explicit_import_date(self) -> None:
@@ -769,10 +770,11 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(result["rowsByTab"], {"Extraction Audit": 1})
         self.assertTrue(all(row["tab"] != "Stocks" for row in result["rows"]))
 
-    def test_routes_quickcheck_rows_to_dedicated_tab(self) -> None:
+    def test_routes_quickcheck_rows_to_stock_tab_and_dedicated_tab(self) -> None:
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
             issue_id="2026-W03",
+            stock_update_date="2026-05-17",
             quickcheck_rows=(
                 QuickcheckRow(
                     issue_id="2026-W03",
@@ -790,16 +792,32 @@ class WorkbookExportPlanTest(unittest.TestCase):
             ),
         )
 
-        row = plan.to_dict()["rows"][0]
+        rows = plan.to_dict()["rows"]
+        stock_row = next(row for row in rows if row["tab"] == "Stocks")
+        row = next(row for row in rows if row["tab"] == "Stock Quickcheck")
 
+        self.assertEqual(stock_row["rowKind"], "stock_quickcheck_summary")
+        self.assertEqual(stock_row["values"][0], "2G Energy")
+        self.assertEqual(stock_row["values"][1], "A0HL8N")
+        self.assertEqual(stock_row["values"][2], "36,70 EUR")
+        self.assertEqual(stock_row["values"][3], "34,80 EUR")
+        self.assertEqual(stock_row["values"][9], "52,50 EUR")
+        self.assertEqual(stock_row["values"][10], "27,50 EUR !")
+        self.assertEqual(stock_row["values"][11], "previous_recommendation")
+        self.assertIn("Aufwärtstrend", stock_row["values"][12])
+        self.assertEqual(stock_row["values"][15], "2026-05-17")
+        self.assertEqual(len(stock_row["values"]), len(headers_for("Stocks")))
         self.assertEqual(row["tab"], "Stock Quickcheck")
         self.assertEqual(row["rowKind"], "stock_quickcheck")
         self.assertEqual(row["values"][2], "2G Energy")
         self.assertEqual(row["values"][3], "A0HL8N")
-        self.assertEqual(row["values"][4], "+5,5 %")
-        self.assertIn("target=52,50 EUR", row["values"][5])
-        self.assertIn("recommended=34,80 EUR", row["values"][5])
-        self.assertIn("Aufwärtstrend", row["values"][6])
+        self.assertEqual(row["values"][4], "36,70 EUR")
+        self.assertEqual(row["values"][5], "34,80 EUR")
+        self.assertEqual(row["values"][6], "52/25")
+        self.assertEqual(row["values"][7], "+5,5 %")
+        self.assertEqual(row["values"][8], "52,50 EUR")
+        self.assertEqual(row["values"][9], "27,50 EUR !")
+        self.assertIn("Aufwärtstrend", row["values"][10])
         self.assertEqual(len(row["values"]), len(headers_for("Stock Quickcheck")))
 
     def test_routes_chart_check_rows_to_dedicated_tab(self) -> None:

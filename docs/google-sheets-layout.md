@@ -134,7 +134,7 @@ the live Sheet; those should be added only after this layout is accepted.
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `Navigation Dashboard` | `layout_only` | 1 row, 0 cols | `A1` | Workbook links and processing status | Spreadsheet-native links to the main tabs, last issue processed, parser-backed/planned legend. |
-| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Explicit stock mentions only. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value; includes printed market cap, P/S ratio, P/E ratio, and Chance/Risk where available; `date updated` is the last row field. |
+| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Explicit stock mentions only, including Quick Check stocks. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value; includes printed market cap, P/S ratio, P/E ratio, Chance/Risk, and Comment where available; `date updated` is the last row field. |
 | `ETF` | `planned` | 2 rows, 2 cols | `A2` | Row 1 fund context | Fund holdings, fee, WKN, distribution/yield, and index-exposure context once parser-backed; `date updated` is the last row field. |
 | `Commodities` | `planned` | 2 rows, 1 col | `A2` | Row 1 commodity context | Spot/futures context, macro note, related instruments; `date updated` is the last row field. |
 | `Options` | `planned` | 2 rows, 1 col | `A2` | Row 1 risk/stale-data notes | Dashboard for option summaries; detailed derivative cards currently emit to `Derivative Tips`; `date updated` is the last row field. |
@@ -148,7 +148,7 @@ the live Sheet; those should be added only after this layout is accepted.
 | `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot. |
 | `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks. |
 | `Chart Check` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Parser-backed instrument rows and publisher bullet summaries; reviewed signals should later link back to stock WKNs. |
-| `Stock Quickcheck` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here; surface only reviewed summary in `Stocks`. |
+| `Stock Quickcheck` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here with split price/target/stop fields; also surface each row in `Stocks`. |
 | `Statistics Context` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Context only. It must never create recommendation rows by itself. |
 | `Dividend Focus` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Multi-period dividend context; concise decision fields may surface in `Stocks`. |
 | `Extraction Audit` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | First stop for parser warnings and planned-tab surfaces before row emitters exist. |
@@ -301,10 +301,10 @@ the configured Google Sheet. It bootstraps headers first, replaces existing rows
 for the same issue in affected tabs by default, preserves rows from other
 issues, and makes no enrichment provider calls.
 
-Broad index, statistics, quick-check, chart-check, or constituent-table context
-must not fan out into individual `Stocks` rows. Only explicitly mentioned stock
-recommendation cards or reviewed explicit stock mentions may create rows in the
-`Stocks` tab.
+Broad index, statistics, chart-check, or constituent-table context must not fan
+out into individual `Stocks` rows. Parsed Quick Check rows are explicit stock
+mentions and should also create/update `Stocks` rows, while the dedicated
+`Stock Quickcheck` tab remains the detailed traceability view.
 
 ## Reviewer Rule
 
