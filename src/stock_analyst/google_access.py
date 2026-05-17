@@ -84,6 +84,11 @@ class GoogleSheetTabSpec:
     purpose: str
     header_row: int = 1
     metadata_cells: tuple[tuple[str, str], ...] = ()
+    frozen_rows: int = 1
+    frozen_columns: int = 0
+    table_starts_at: str = "A1"
+    parser_status: str = "planned"
+    layout_notes: tuple[str, ...] = ()
 
 
 DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
@@ -91,6 +96,11 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         "Navigation Dashboard",
         ("Area", "Tab", "Purpose", "Status"),
         "Low-clutter entrypoint for the workbook.",
+        layout_notes=(
+            "Use spreadsheet-native links to major workbook areas.",
+            "Keep only high-level status and navigation here.",
+        ),
+        parser_status="layout_only",
     ),
     GoogleSheetTabSpec(
         "Stocks",
@@ -110,11 +120,27 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         "Equity dashboard and reviewed stock mentions.",
         header_row=3,
         metadata_cells=(("A1", "date updated"), ("B1", "")),
+        frozen_rows=3,
+        frozen_columns=2,
+        table_starts_at="A3",
+        layout_notes=(
+            "Only explicit stock mentions become rows; do not fan out index constituents.",
+            "Current Price* is daily enrichment; Price at Recommendation is the magazine source value.",
+            "Row-level date updated initializes on import and advances on enrichment or newer mention.",
+        ),
+        parser_status="parser_backed",
     ),
     GoogleSheetTabSpec(
         "Commodities",
         ("Commodity", "Instrument", "Issue", "Page", "Recommendation", "Context", "Review status"),
         "Commodity recommendations and context.",
+        frozen_rows=2,
+        frozen_columns=1,
+        table_starts_at="A2",
+        layout_notes=(
+            "Reserve row 1 for commodity spot/futures context.",
+            "Rows remain review-gated until commodity parser/export is implemented.",
+        ),
     ),
     GoogleSheetTabSpec(
         "Options",
@@ -130,21 +156,47 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Review status",
         ),
         "Option and derivative recommendations.",
+        frozen_rows=2,
+        frozen_columns=1,
+        table_starts_at="A2",
+        layout_notes=(
+            "Reserve row 1 for option risk notes and stale-data warnings.",
+            "Detailed derivative cards currently emit to Derivative Tips.",
+        ),
     ),
     GoogleSheetTabSpec(
         "Forex",
         ("Pair", "Issue", "Page", "Recommendation", "Macro context", "Review status"),
         "Currency-pair recommendations and macro context.",
+        frozen_rows=2,
+        frozen_columns=1,
+        table_starts_at="A2",
+        layout_notes=(
+            "Reserve row 1 for macro/calendar context.",
+            "Rows remain review-gated until forex parser/export is implemented.",
+        ),
     ),
     GoogleSheetTabSpec(
         "Example Portfolios",
         ("Portfolio", "Instrument", "WKN", "Position", "Stop", "Issue", "Page", "Review status"),
         "Publisher model portfolio snapshots.",
+        frozen_rows=2,
+        frozen_columns=2,
+        table_starts_at="A2",
+        layout_notes=(
+            "Use for publisher portfolio context only, not direct app advice.",
+            "Detailed AKTIONAER Depot and transaction tables stay in dedicated tabs.",
+        ),
     ),
     GoogleSheetTabSpec(
         "Review Queue",
         ("Source ID", "Issue", "Page", "Section", "Problem", "Suggested action", "Status"),
         "Reviewer-only draft extraction queue.",
+        frozen_columns=1,
+        layout_notes=(
+            "Reviewer-only queue for draft issues and parser warnings.",
+            "No family-facing export should read directly from this tab.",
+        ),
     ),
     GoogleSheetTabSpec(
         "Reviewed Magazine Mentions",
@@ -164,6 +216,11 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Approved at",
         ),
         "Approved stock-centric export rows.",
+        frozen_columns=1,
+        layout_notes=(
+            "Approved source-linked rows only after manual review.",
+            "Use neutral source wording such as printed in issue/page.",
+        ),
     ),
     GoogleSheetTabSpec(
         "Recommendation Cards",
@@ -185,6 +242,12 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Review status",
         ),
         "Structured labelled recommendation-card fields.",
+        frozen_columns=1,
+        layout_notes=(
+            "Parser-backed raw card fields for reviewer traceability.",
+            "Stock cards are also mapped into Stocks for dashboard review.",
+        ),
+        parser_status="planned",
     ),
     GoogleSheetTabSpec(
         "Derivative Tips",
@@ -204,41 +267,89 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Review status",
         ),
         "Derivative overview tables and option cards.",
+        frozen_columns=3,
+        layout_notes=(
+            "Parser-backed for derivative recommendation cards today.",
+            "Keep missing base values or targets blank rather than inferred.",
+        ),
+        parser_status="parser_backed",
     ),
     GoogleSheetTabSpec(
         "AKTIONAER Depot",
         ("Issue", "Page", "Position", "Instrument", "WKN", "Weight", "Stop", "Performance", "Review status"),
         "Publisher model-depot position snapshots.",
+        frozen_columns=3,
+        layout_notes=(
+            "Currently audit-hinted, not row-emitted.",
+            "Use one row per issue/position once parser-backed.",
+        ),
+        parser_status="audit_hint",
     ),
     GoogleSheetTabSpec(
         "Depot Transactions",
         ("Issue", "Page", "Date", "Action", "Instrument", "WKN", "Quantity", "Price", "Review status"),
         "Publisher model-depot transaction ledger.",
+        frozen_columns=3,
+        layout_notes=(
+            "Currently audit-hinted, not row-emitted.",
+            "Include explicit no-transaction weeks once parser-backed.",
+        ),
+        parser_status="audit_hint",
     ),
     GoogleSheetTabSpec(
         "Chart Check",
         ("Issue", "Page", "Instrument", "WKN", "Signal", "Trend", "Support", "Resistance", "Review status"),
         "Chart-check section extraction.",
+        frozen_columns=3,
+        layout_notes=(
+            "Currently audit-hinted, not row-emitted.",
+            "Attach reviewed chart signals back to matching stock rows by WKN.",
+        ),
+        parser_status="audit_hint",
     ),
     GoogleSheetTabSpec(
         "Stock Quickcheck",
         ("Issue", "Page", "Instrument", "WKN", "Evaluation", "Signal", "Comment", "Review status"),
         "Normalized quick-check table rows.",
+        frozen_columns=3,
+        layout_notes=(
+            "Currently audit-hinted, not row-emitted.",
+            "Keep full publisher quick-check table here; surface only reviewed summary in Stocks.",
+        ),
+        parser_status="audit_hint",
     ),
     GoogleSheetTabSpec(
         "Statistics Context",
         ("Issue", "Page", "Context type", "Name", "Value", "Period", "Source note", "Review status"),
         "Context-only market, index, sector, and stock statistics.",
+        frozen_columns=3,
+        layout_notes=(
+            "Currently audit-hinted, not row-emitted.",
+            "Never create recommendation rows from statistics alone.",
+        ),
+        parser_status="audit_hint",
     ),
     GoogleSheetTabSpec(
         "Dividend Focus",
         ("Issue", "Page", "Instrument", "WKN", "Payout count", "Yield", "Period", "Ex date", "Review status"),
         "Dividend section and multi-period dividend data.",
+        frozen_columns=3,
+        layout_notes=(
+            "Parser-backed for dividend strategy table rows today.",
+            "Keep multi-period dividend context here and concise dividend decision data in Stocks.",
+        ),
+        parser_status="parser_backed",
     ),
     GoogleSheetTabSpec(
         "Extraction Audit",
         ("Run ID", "Issue", "Page", "Section", "Severity", "Message", "Action", "Created at"),
         "Extraction warnings, skipped pages, and parser audit rows.",
+        frozen_columns=3,
+        layout_notes=(
+            "Parser-backed audit destination for section inventory today.",
+            "Use as first stop for planned tabs before row emitters exist.",
+        ),
+        parser_status="parser_backed",
     ),
 )
 
@@ -428,6 +539,11 @@ def bootstrap_google_sheet(
                     {"cell": cell, "value": value}
                     for cell, value in spec.metadata_cells
                 ],
+                "frozenRows": spec.frozen_rows,
+                "frozenColumns": spec.frozen_columns,
+                "tableStartsAt": spec.table_starts_at,
+                "parserStatus": spec.parser_status,
+                "layoutNotes": list(spec.layout_notes),
                 "purpose": spec.purpose,
             }
             for spec in tab_specs

@@ -96,6 +96,11 @@ class WorkbookExportPlan:
                         {"cell": cell, "value": value}
                         for cell, value in _metadata_cells_for_tab(title)
                     ],
+                    "frozenRows": _frozen_rows_for_tab(title),
+                    "frozenColumns": _frozen_columns_for_tab(title),
+                    "tableStartsAt": _table_starts_at_for_tab(title),
+                    "parserStatus": _parser_status_for_tab(title),
+                    "layoutNotes": list(_layout_notes_for_tab(title)),
                 }
                 for title in tabs
             ],
@@ -378,6 +383,41 @@ def _metadata_cells_for_tab(title: str) -> tuple[tuple[str, str], ...]:
     for spec in DEFAULT_SHEET_TABS:
         if spec.title == title:
             return spec.metadata_cells
+    return ()
+
+
+def _frozen_rows_for_tab(title: str) -> int:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == title:
+            return spec.frozen_rows
+    return 1
+
+
+def _frozen_columns_for_tab(title: str) -> int:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == title:
+            return spec.frozen_columns
+    return 0
+
+
+def _table_starts_at_for_tab(title: str) -> str:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == title:
+            return spec.table_starts_at
+    return "A1"
+
+
+def _parser_status_for_tab(title: str) -> str:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == title:
+            return spec.parser_status
+    return "planned"
+
+
+def _layout_notes_for_tab(title: str) -> tuple[str, ...]:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == title:
+            return spec.layout_notes
     return ()
 
 

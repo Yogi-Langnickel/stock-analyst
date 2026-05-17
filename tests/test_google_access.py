@@ -337,6 +337,14 @@ class GoogleAccessTest(unittest.TestCase):
         )
         stock_tab = next(tab for tab in result["tabs"] if tab["title"] == "Stocks")
         self.assertEqual(stock_tab["headerRow"], 3)
+        self.assertEqual(stock_tab["frozenRows"], 3)
+        self.assertEqual(stock_tab["frozenColumns"], 2)
+        self.assertEqual(stock_tab["tableStartsAt"], "A3")
+        self.assertEqual(stock_tab["parserStatus"], "parser_backed")
+        self.assertIn(
+            "Only explicit stock mentions become rows; do not fan out index constituents.",
+            stock_tab["layoutNotes"],
+        )
         self.assertEqual(
             stock_tab["metadataCells"],
             [
@@ -344,6 +352,17 @@ class GoogleAccessTest(unittest.TestCase):
                 {"cell": "B1", "value": ""},
             ],
         )
+        tab_status = {tab["title"]: tab["parserStatus"] for tab in result["tabs"]}
+        self.assertEqual(tab_status["Derivative Tips"], "parser_backed")
+        self.assertEqual(tab_status["Dividend Focus"], "parser_backed")
+        self.assertEqual(tab_status["Extraction Audit"], "parser_backed")
+        self.assertEqual(tab_status["AKTIONAER Depot"], "audit_hint")
+        self.assertEqual(tab_status["Chart Check"], "audit_hint")
+        self.assertEqual(tab_status["Navigation Dashboard"], "layout_only")
+        for tab in result["tabs"]:
+            self.assertGreaterEqual(tab["frozenRows"], 1)
+            self.assertIn("layoutNotes", tab)
+            self.assertTrue(tab["tableStartsAt"])
 
     def test_google_sheet_bootstrap_can_skip_header_writes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

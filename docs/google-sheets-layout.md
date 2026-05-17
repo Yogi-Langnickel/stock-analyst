@@ -107,6 +107,34 @@ issues have been extracted and the repeated sections are clearer.
     Internal audit tab for skipped pages, low-priority back matter, OCR-needed
     pages, parser warnings, and row-level review notes.
 
+## Tab Layout Matrix
+
+The bootstrap metadata now exposes a concrete layout plan for review. It does
+not yet apply formatting such as widths, filters, colors, or protected ranges to
+the live Sheet; those should be added only after this layout is accepted.
+
+<!-- markdownlint-disable MD013 -->
+| Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `Navigation Dashboard` | `layout_only` | 1 row, 0 cols | `A1` | Workbook links and processing status | Spreadsheet-native links to the main tabs, last issue processed, parser-backed/planned legend. |
+| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | `A1=date updated`, `B1=<timestamp>` | Explicit stock mentions only. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value. |
+| `Commodities` | `planned` | 2 rows, 1 col | `A2` | Row 1 commodity context | Spot/futures context, macro note, related instruments. |
+| `Options` | `planned` | 2 rows, 1 col | `A2` | Row 1 risk/stale-data notes | Dashboard for option summaries; detailed derivative cards currently emit to `Derivative Tips`. |
+| `Forex` | `planned` | 2 rows, 1 col | `A2` | Row 1 macro/calendar context | Currency-pair recommendations and central-bank context once parser-backed. |
+| `Example Portfolios` | `planned` | 2 rows, 2 cols | `A2` | Row 1 publisher portfolio status | Publisher model portfolio context only, not direct app advice. |
+| `Review Queue` | `planned` | 1 row, 1 col | `A1` | Header row | Reviewer-only triage; no family-facing export should read directly from this tab. |
+| `Reviewed Magazine Mentions` | `planned` | 1 row, 1 col | `A1` | Header row | Approved source-linked rows only after manual review. |
+| `Recommendation Cards` | `planned` | 1 row, 1 col | `A1` | Header row | Raw labelled card traceability; stock/derivative cards currently route to `Stocks` or `Derivative Tips`. |
+| `Derivative Tips` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Option/card rows with WKN, base value, base price, Omega/Hebel, runtime, target, stop. |
+| `AKTIONAER Depot` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Section inventory detects this surface; dedicated row emitter is not implemented yet. |
+| `Depot Transactions` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Section inventory detects transaction tables and no-transaction weeks; dedicated row emitter is not implemented yet. |
+| `Chart Check` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Section inventory detects pages; reviewed signals should later link back to stock WKNs. |
+| `Stock Quickcheck` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here; surface only reviewed summary in `Stocks`. |
+| `Statistics Context` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Context only. It must never create recommendation rows by itself. |
+| `Dividend Focus` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Multi-period dividend context; concise decision fields may surface in `Stocks`. |
+| `Extraction Audit` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | First stop for parser warnings and planned-tab surfaces before row emitters exist. |
+<!-- markdownlint-enable MD013 -->
+
 ## Asset-Class Enrichment
 
 Each major dashboard tab may have a small specialized enrichment area updated
@@ -166,6 +194,10 @@ DTOs for the workbook tabs. It currently routes:
 - derivative cards to `Derivative Tips`
 - dividend strategy rows to `Dividend Focus`
 - section-inventory routing hints to `Extraction Audit`
+
+`Recommendation Cards` is retained as a planned traceability tab, but the
+current workbook export plan does not populate it directly. Parsed stock cards
+route to `Stocks`, and parsed derivative cards route to `Derivative Tips`.
 
 The command does not call Google Sheets and does not write export files. Planned
 rows are draft reviewer infrastructure only: `exportable=false`,
