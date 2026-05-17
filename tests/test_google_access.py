@@ -289,10 +289,14 @@ class GoogleAccessTest(unittest.TestCase):
             result = bootstrap_google_sheet(config, sheets_service_factory=lambda: sheets)
 
         self.assertTrue(result["ok"])
+        self.assertIn("ETF", result["createdTabs"])
         self.assertIn("Options", result["createdTabs"])
+        self.assertIn("Crypto", result["createdTabs"])
         self.assertEqual(result["headerRowsWritten"], len(result["tabs"]))
         batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
+        self.assertIn({"addSheet": {"properties": {"title": "ETF"}}}, batch_body["requests"])
         self.assertIn({"addSheet": {"properties": {"title": "Options"}}}, batch_body["requests"])
+        self.assertIn({"addSheet": {"properties": {"title": "Crypto"}}}, batch_body["requests"])
         values_body = sheets.spreadsheets_resource.values_resource.batch_update_requests[0]["body"]
         self.assertEqual(values_body["valueInputOption"], "RAW")
         self.assertIn(
@@ -302,20 +306,8 @@ class GoogleAccessTest(unittest.TestCase):
             },
             values_body["data"],
         )
-        self.assertIn(
-            {
-                "range": "'Stocks'!A1",
-                "values": [["date updated"]],
-            },
-            values_body["data"],
-        )
-        self.assertIn(
-            {
-                "range": "'Stocks'!B1",
-                "values": [[""]],
-            },
-            values_body["data"],
-        )
+        self.assertNotIn({"range": "'Stocks'!A1", "values": [["date updated"]]}, values_body["data"])
+        self.assertNotIn({"range": "'Stocks'!B1", "values": [[""]]}, values_body["data"])
         self.assertIn(
             {
                 "range": "'Stocks'!A3:K3",
@@ -328,9 +320,9 @@ class GoogleAccessTest(unittest.TestCase):
                     "Target",
                     "Stop",
                     "Recommendation",
-                    "date updated",
                     "issue",
                     "page",
+                    "date updated",
                 ]],
             },
             values_body["data"],
@@ -345,14 +337,10 @@ class GoogleAccessTest(unittest.TestCase):
             "Only explicit stock mentions become rows; do not fan out index constituents.",
             stock_tab["layoutNotes"],
         )
-        self.assertEqual(
-            stock_tab["metadataCells"],
-            [
-                {"cell": "A1", "value": "date updated"},
-                {"cell": "B1", "value": ""},
-            ],
-        )
+        self.assertEqual(stock_tab["metadataCells"], [])
         tab_status = {tab["title"]: tab["parserStatus"] for tab in result["tabs"]}
+        self.assertEqual(tab_status["ETF"], "planned")
+        self.assertEqual(tab_status["Crypto"], "planned")
         self.assertEqual(tab_status["Derivative Tips"], "parser_backed")
         self.assertEqual(tab_status["Dividend Focus"], "parser_backed")
         self.assertEqual(tab_status["Extraction Audit"], "parser_backed")
@@ -363,6 +351,20 @@ class GoogleAccessTest(unittest.TestCase):
             self.assertGreaterEqual(tab["frozenRows"], 1)
             self.assertIn("layoutNotes", tab)
             self.assertTrue(tab["tableStartsAt"])
+
+        instrument_tabs = {
+            "Stocks",
+            "ETF",
+            "Commodities",
+            "Options",
+            "Crypto",
+            "Forex",
+            "Derivative Tips",
+            "Dividend Focus",
+        }
+        for tab in result["tabs"]:
+            if tab["title"] in instrument_tabs:
+                self.assertEqual(tab["headers"][-1], "date updated")
 
     def test_google_sheet_bootstrap_can_skip_header_writes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

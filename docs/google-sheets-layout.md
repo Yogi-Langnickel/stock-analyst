@@ -15,8 +15,10 @@ Use a first tab named `Navigation Dashboard` as the low-clutter entrypoint. It
 can show large visual links or button-like cells for the main areas:
 
 - Stocks
+- ETF
 - Commodities
 - Options
+- Crypto
 - Forex
 - Example Portfolios
 
@@ -38,72 +40,84 @@ issues have been extracted and the repeated sections are clearer.
    Dashboard-style view for equity recommendations, major indexes such as DAX
    and Dow Jones, small trend charts, key article bullets, reviewed
    recommendation state, and stock-specific enrichment such as insider buying
-   or selling. Cell `A1` contains the tab-level `date updated` label and `B1`
-   contains the latest tab update timestamp. The stock table header starts on
-   row 3 with `Company`, `WKN`, `Current Price*`, `Price at Recommendation`,
-   `Dividends`, `Target`, `Stop`, `Recommendation`, `date updated`, `issue`,
-   and `page`. The row-level `date updated` value is required: weekly imports
+   or selling. The stock table header starts on row 3 with `Company`, `WKN`,
+   `Current Price*`, `Price at Recommendation`, `Dividends`, `Target`, `Stop`,
+   `Recommendation`, `issue`, `page`, and `date updated`. The row-level
+   `date updated` value is required as the last field: weekly imports
    initialize it from the import/issue date when available, otherwise from the
    command's current UTC date, and later reviewed enrichment or newer issue
    mentions update it.
 
-3. `Commodities`
+3. `ETF`
+   ETF-related recommendations and fund context such as holdings, distributions,
+   fees, issuer/family, index exposure, and ETF-specific enrichment. The
+   row-level `date updated` field is the last field.
+
+4. `Commodities`
    Commodity-related recommendations, article bullets, price/context snapshots,
-   and commodity-specific enrichment.
+   and commodity-specific enrichment. The row-level `date updated` field is the
+   last field.
 
-4. `Options`
+5. `Options`
    Option and derivative recommendations with underlying, base value, strike or
-   base price, Omega/Hebel, runtime, target, stop, and risk flags.
+   base price, Omega/Hebel, runtime, target, stop, and risk flags. The row-level
+   `date updated` field is the last field.
 
-5. `Forex`
-   Currency-pair recommendations and macro/currency-specific context.
+6. `Crypto`
+   Crypto recommendations and digital-asset context such as exchange/liquidity,
+   sector/theme, risk flags, and daily enrichment. The row-level `date updated`
+   field is the last field.
 
-6. `Example Portfolios`
+7. `Forex`
+   Currency-pair recommendations and macro/currency-specific context. The
+   row-level `date updated` field is the last field.
+
+8. `Example Portfolios`
    Publisher model portfolio snapshots, transactions, stops, and changes.
 
-7. `Review Queue`
+9. `Review Queue`
    Draft-only reviewer workspace. This should stay reviewer-only.
 
-8. `Reviewed Magazine Mentions`
+10. `Reviewed Magazine Mentions`
    Main approved stock-centric export. One row per reviewed instrument mention
    with issue/page, printed name, identifiers, recommendation, price, target,
    stop, reviewer, and approved timestamp.
 
-9. `Recommendation Cards`
+11. `Recommendation Cards`
    Structured extraction of labelled magazine card fields. Link rows back to
    `Reviewed Magazine Mentions` through stable source IDs.
 
-10. `Derivative Tips`
+12. `Derivative Tips`
    Dedicated derivative table. Include underlying, derivative WKN/ISIN, type,
    base price, strike/cap, leverage/Omega, runtime, chance/risk, target, stop,
    recommendation, and source page.
 
-11. `AKTIONAER Depot`
+13. `AKTIONAER Depot`
    Dedicated magazine model-depot snapshot. One row per issue/position. Treat
    this as publisher portfolio context, not direct app advice.
 
-12. `Depot Transactions`
+14. `Depot Transactions`
    Dedicated ledger for `Durchgefuehrte Transaktionen`. One row per issue and
    transaction, including explicit no-transaction weeks.
 
-13. `Chart Check`
+15. `Chart Check`
    Dedicated page/table export for chart-check items. Link rows back to stock
    rows when WKNs match.
 
-14. `Stock Quickcheck`
+16. `Stock Quickcheck`
    Dedicated normalized quick-check table. Attach the final reviewed
    quick-check signal to the matching stock row, but keep the full table here.
 
-15. `Statistics Context`
+17. `Statistics Context`
    Dedicated context tab for market, index, sector, and stock-statistics data.
    Do not create recommendation rows from statistics alone.
 
-16. `Dividend Focus`
+18. `Dividend Focus`
     Dedicated dividend section for multi-date, multi-period, or table-based
     dividend data. Simple labelled card values can also be embedded in the
     stock/recommendation-card row.
 
-17. `Extraction Audit`
+19. `Extraction Audit`
     Internal audit tab for skipped pages, low-priority back matter, OCR-needed
     pages, parser warnings, and row-level review notes.
 
@@ -117,10 +131,12 @@ the live Sheet; those should be added only after this layout is accepted.
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `Navigation Dashboard` | `layout_only` | 1 row, 0 cols | `A1` | Workbook links and processing status | Spreadsheet-native links to the main tabs, last issue processed, parser-backed/planned legend. |
-| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | `A1=date updated`, `B1=<timestamp>` | Explicit stock mentions only. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value. |
-| `Commodities` | `planned` | 2 rows, 1 col | `A2` | Row 1 commodity context | Spot/futures context, macro note, related instruments. |
-| `Options` | `planned` | 2 rows, 1 col | `A2` | Row 1 risk/stale-data notes | Dashboard for option summaries; detailed derivative cards currently emit to `Derivative Tips`. |
-| `Forex` | `planned` | 2 rows, 1 col | `A2` | Row 1 macro/calendar context | Currency-pair recommendations and central-bank context once parser-backed. |
+| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Explicit stock mentions only. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value; `date updated` is the last row field. |
+| `ETF` | `planned` | 2 rows, 2 cols | `A2` | Row 1 fund context | Fund holdings, fee, distribution/yield, and index-exposure context once parser-backed; `date updated` is the last row field. |
+| `Commodities` | `planned` | 2 rows, 1 col | `A2` | Row 1 commodity context | Spot/futures context, macro note, related instruments; `date updated` is the last row field. |
+| `Options` | `planned` | 2 rows, 1 col | `A2` | Row 1 risk/stale-data notes | Dashboard for option summaries; detailed derivative cards currently emit to `Derivative Tips`; `date updated` is the last row field. |
+| `Crypto` | `planned` | 2 rows, 1 col | `A2` | Row 1 digital-asset context | Crypto recommendations, exchange/liquidity context, and digital-asset risk notes; `date updated` is the last row field. |
+| `Forex` | `planned` | 2 rows, 1 col | `A2` | Row 1 macro/calendar context | Currency-pair recommendations and central-bank context once parser-backed; `date updated` is the last row field. |
 | `Example Portfolios` | `planned` | 2 rows, 2 cols | `A2` | Row 1 publisher portfolio status | Publisher model portfolio context only, not direct app advice. |
 | `Review Queue` | `planned` | 1 row, 1 col | `A1` | Header row | Reviewer-only triage; no family-facing export should read directly from this tab. |
 | `Reviewed Magazine Mentions` | `planned` | 1 row, 1 col | `A1` | Header row | Approved source-linked rows only after manual review. |
@@ -142,9 +158,13 @@ daily from approved sources:
 
 - Stocks: insider buying/selling, major index context, and reviewed company
   news/context.
+- ETF: holdings, distribution/yield, expense-ratio context, issuer/family, and
+  benchmark/index exposure.
 - Commodities: spot/futures context, macro notes, and related ETF/equity links.
 - Options: underlying movement, runtime proximity, leverage/Omega, and
   instrument-specific risk warnings.
+- Crypto: current price, exchange/liquidity notes, market-cap/risk context, and
+  regulatory/news context.
 - Forex: currency-pair context, macro calendar notes, and central-bank context.
 - Example Portfolios: position changes, transactions, current stops, and
   publisher performance context.

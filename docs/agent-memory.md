@@ -40,11 +40,12 @@ Created: 2026-05-15
   derivative cards, dividend strategy rows, and section-inventory audit hints
   into Google Sheet tab row DTOs without writing to Sheets. Every planned row
   remains `needs_review`, non-exportable, and marked manual-review-required.
-- Stocks dry-run rows must populate row-level `date updated` from an explicit
-  import/issue date when available, otherwise from the command's current UTC
-  date. Section inventories, index context, statistics, quick-check tables, and
-  broad constituent lists must not fan out into `Stocks`; only explicitly
-  mentioned stock rows go there.
+- Instrument dry-run rows must populate row-level `date updated` as the last
+  field. Stocks initialize it from an explicit import/issue date when
+  available, otherwise from the command's current UTC date. Section inventories,
+  index context, statistics, quick-check tables, and broad constituent lists
+  must not fan out into `Stocks`; only explicitly mentioned stock rows go
+  there.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
@@ -68,9 +69,9 @@ Created: 2026-05-15
   check hourly on those days for new files and record lightweight metadata, while
   heavy OCR/parsing/review remains local-first.
 - Target workbook name is `Der Aktionär Summaries`; start with a `Navigation
-  Dashboard` plus asset-class dashboard tabs for Stocks, Commodities, Options,
-  Forex, and Example Portfolios, with specialized daily enrichment areas per
-  asset class.
+  Dashboard` plus asset-class dashboard tabs for Stocks, ETF, Commodities,
+  Options, Crypto, Forex, and Example Portfolios, with specialized daily
+  enrichment areas per asset class.
 
 ## Commands
 

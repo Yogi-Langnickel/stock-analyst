@@ -119,7 +119,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
 
         stock_row = next(row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks")
 
-        self.assertEqual(stock_row["values"][8], "2026-05-14")
+        self.assertEqual(stock_row["values"][-1], "2026-05-14")
 
     def test_routes_stock_card_to_stocks_sheet_row(self) -> None:
         plan = build_workbook_export_plan(
@@ -170,7 +170,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(stock_tab["tableStartsAt"], "A3")
         self.assertEqual(stock_tab["parserStatus"], "parser_backed")
         self.assertTrue(stock_tab["layoutNotes"])
-        self.assertIn({"cell": "A1", "value": "date updated"}, stock_tab["metadataCells"])
+        self.assertEqual(stock_tab["metadataCells"], [])
         self.assertEqual(row["values"][0], "Banco Sabadell")
         self.assertEqual(row["values"][1], "A0MRD4")
         self.assertEqual(row["values"][2], "")
@@ -179,9 +179,9 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][5], "4,30 EUR")
         self.assertEqual(row["values"][6], "2,70 EUR")
         self.assertEqual(row["values"][7], "new_recommendation")
-        self.assertEqual(row["values"][8], "2026-05-17")
-        self.assertEqual(row["values"][9], "2026-W03")
-        self.assertEqual(row["values"][10], "22")
+        self.assertEqual(row["values"][8], "2026-W03")
+        self.assertEqual(row["values"][9], "22")
+        self.assertEqual(row["values"][10], "2026-05-17")
         self.assertIn("manual_review_required", row["warnings"][0])
 
     def test_stock_update_date_prefers_explicit_import_date(self) -> None:
@@ -198,12 +198,13 @@ class WorkbookExportPlanTest(unittest.TestCase):
 
         stock_row = next(row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks")
 
-        self.assertEqual(stock_row["values"][8], "2026-05-16")
+        self.assertEqual(stock_row["values"][-1], "2026-05-16")
 
     def test_routes_derivative_cards_without_putting_name_in_source_id(self) -> None:
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
             issue_id="2026-W03",
+            stock_update_date="2026-05-17",
             recommendation_cards=(
                 RecommendationCard(
                     issue_id="2026-W03",
@@ -293,12 +294,14 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(actual_rows, expected_rows)
         for row in actual_rows:
             self.assertEqual(len(row["values"]), len(headers_for("Derivative Tips")))
-            self.assertEqual(row["values"][-1], ReviewStatus.NEEDS_REVIEW.value)
+            self.assertEqual(row["values"][-2], ReviewStatus.NEEDS_REVIEW.value)
+            self.assertTrue(row["values"][-1])
 
     def test_routes_dividend_rows_to_dividend_focus(self) -> None:
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
             issue_id="2026-W03",
+            stock_update_date="2026-05-17",
             dividend_strategy=(
                 DividendStrategyRow(
                     issue_id="2026-W03",
@@ -326,6 +329,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(len(row["values"]), len(headers_for("Dividend Focus")))
         self.assertEqual(row["values"][2], "Banco Sabadell")
         self.assertEqual(row["values"][5], "18,6 %")
+        self.assertTrue(row["values"][-1])
         self.assertEqual(row["reviewStatus"], ReviewStatus.NEEDS_REVIEW.value)
         self.assertEqual(headers_for("Dividend Focus")[4], "Payout count")
 

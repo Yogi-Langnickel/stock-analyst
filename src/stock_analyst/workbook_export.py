@@ -179,7 +179,10 @@ def build_workbook_export_plan(
             _cards_from(recommendation_cards),
             stock_update_date=resolved_stock_update_date,
         )
-        + _dividend_rows(_dividend_rows_from(dividend_strategy))
+        + _dividend_rows(
+            _dividend_rows_from(dividend_strategy),
+            instrument_update_date=resolved_stock_update_date,
+        )
         + _section_audit_rows(_sections_from(section_inventory))
     )
     return WorkbookExportPlan(
@@ -199,7 +202,7 @@ def _card_rows(
     rows: list[WorkbookDraftRow] = []
     for card in cards:
         if card.instrument_type == InstrumentType.DERIVATIVE:
-            rows.append(_derivative_card_row(card))
+            rows.append(_derivative_card_row(card, instrument_update_date=stock_update_date))
         else:
             rows.append(_recommendation_card_row(card, stock_update_date=stock_update_date))
     return rows
@@ -228,14 +231,18 @@ def _recommendation_card_row(
             card.target or "",
             card.stop or "",
             card.recommendation_status or "",
-            stock_update_date,
             card.issue_id,
             str(card.page),
+            stock_update_date,
         ),
     )
 
 
-def _derivative_card_row(card: RecommendationCard) -> WorkbookDraftRow:
+def _derivative_card_row(
+    card: RecommendationCard,
+    *,
+    instrument_update_date: str,
+) -> WorkbookDraftRow:
     source_id = _source_id("derivative", card.issue_id, card.page, card.wkn)
     return WorkbookDraftRow(
         tab="Derivative Tips",
@@ -259,11 +266,16 @@ def _derivative_card_row(card: RecommendationCard) -> WorkbookDraftRow:
             card.target or "",
             card.stop or "",
             ReviewStatus.NEEDS_REVIEW.value,
+            instrument_update_date,
         ),
     )
 
 
-def _dividend_rows(rows: Sequence[DividendStrategyRow]) -> list[WorkbookDraftRow]:
+def _dividend_rows(
+    rows: Sequence[DividendStrategyRow],
+    *,
+    instrument_update_date: str,
+) -> list[WorkbookDraftRow]:
     draft_rows: list[WorkbookDraftRow] = []
     for row in rows:
         source_id = _source_id("dividend", row.issue_id, row.page, row.wkn)
@@ -286,6 +298,7 @@ def _dividend_rows(rows: Sequence[DividendStrategyRow]) -> list[WorkbookDraftRow
                     row.month,
                     row.next_cum_day or "",
                     ReviewStatus.NEEDS_REVIEW.value,
+                    instrument_update_date,
                 ),
             )
         )
