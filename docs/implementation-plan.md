@@ -289,8 +289,8 @@ Acceptance:
   draft-only recommendation-card rows for real local PDFs, including printed
   instrument name, WKN, current price, target, stop, chance/risk dots, market
   cap, new/follow-up status, original issue/date, performance since
-  recommendation, dividend yield/trend, KUV/KGV, next report date, and
-  derivative fields such as underlying price, base price, Omega/Hebel, and
+  recommendation, dividend yield/trend, P/S and P/E ratios, next report date,
+  and derivative fields such as underlying price, base price, Omega/Hebel, and
   runtime.
 - The extractor keeps derivatives and underlying stocks as separate draft rows
   when both appear on the same page.

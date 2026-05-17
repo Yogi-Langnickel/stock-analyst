@@ -32,9 +32,10 @@ Created: 2026-05-15
 - A local embedded-text recommendation-card extractor exists for labelled card
   rows. It captures printed name, instrument type, WKN, current price, target,
   stop, chance/risk dots, market cap, new/follow-up status, performance since
-  recommendation, recommended issue/date, dividend yield/trend, KUV/KGV, next
-  report date, and derivative fields such as underlying price, base price,
-  Omega/Hebel, and runtime. It is draft-only and emits `needs_review`.
+  recommendation, recommended issue/date, dividend yield/trend, P/S and P/E
+  ratios, next report date, and derivative fields such as underlying price,
+  base price, Omega/Hebel, and runtime. It is draft-only and emits
+  `needs_review`.
 - A local section inventory command exists for high-value magazine tables and
   sections. It flags dividend strategy tables, derivative overview tables,
   AKTIONAER depot positions, depot transactions, chart-check pages,
@@ -59,8 +60,10 @@ Created: 2026-05-15
   WKN/ISIN; a new call or put for the same underlying is a new row when the
   derivative WKN/ISIN differs. Depot snapshots and transactions remain
   issue/event-specific history rows.
-- Stock rows include printed valuation fields `KUV 26e` and `KGV 26e` where
-  the card exposes them. `Kein Kauf` maps to `recommendation_status=no_buy`.
+- Stock rows use English sheet labels. `Dividendenrendite` maps to
+  `Dividend Yield`, `KUV 26e` maps to `P/S Ratio 26e`, `KGV 26e` maps to
+  `P/E Ratio 26e`, and the printed chance/risk dot ratings map to
+  `Chance/Risk`. `Kein Kauf` maps to `recommendation_status=no_buy`.
 - Future currency display should preserve printed source prices and add a
   dashboard/display toggle for `EUR`, `USD`, and `AUD`. Converted values must
   be derived enrichment fields with FX date/source metadata, not replacements
