@@ -13,6 +13,8 @@ from stock_analyst.schemas import InstrumentType, ReviewStatus
 
 LABEL_ALIASES = {
     "Akt. Kurs": "current_price",
+    "Empfehlungskurs": "entry_price",
+    "Performance": "performance_since_recommendation",
     "WKN": "wkn",
     "Ziel": "target",
     "Stopp": "stop",
@@ -26,8 +28,10 @@ LABEL_ALIASES = {
     "Nächster Termin": "next_report_date",
     "Kurs Basiswert": "underlying_price",
     "Basispreis": "base_price",
+    "Knock-out": "base_price",
     "Omega / Hebel": "omega_hebel",
     "Omega": "omega_hebel",
+    "Hebel": "omega_hebel",
     "Laufzeit": "runtime",
 }
 
@@ -83,6 +87,7 @@ class RecommendationCard:
     kuv_26e: str | None = None
     kgv_26e: str | None = None
     next_report_date: str | None = None
+    entry_price: str | None = None
     underlying_price: str | None = None
     base_price: str | None = None
     omega_hebel: str | None = None
@@ -115,6 +120,7 @@ class RecommendationCard:
             "kuv26e": self.kuv_26e,
             "kgv26e": self.kgv_26e,
             "nextReportDate": self.next_report_date,
+            "entryPrice": self.entry_price,
             "underlyingPrice": self.underlying_price,
             "basePrice": self.base_price,
             "omegaHebel": self.omega_hebel,
@@ -211,6 +217,8 @@ def extract_recommendation_cards_from_lines(
     """Extract card rows from page lines produced by local PDF text extraction."""
 
     normalized_lines = [_clean_line(line) for line in lines if _clean_line(line)]
+    if _looks_like_external_newsletter_ad(normalized_lines):
+        return ()
     cards: list[RecommendationCard] = []
     index = 0
     while index < len(normalized_lines):
@@ -391,6 +399,8 @@ def _parse_labelled_card(
         recommendation_status = "no_buy"
     if "recommended_issue" in fields or "performance_since_recommendation" in fields:
         recommendation_status = recommendation_status or "follow_up"
+    if instrument_type == InstrumentType.DERIVATIVE:
+        recommendation_status = recommendation_status or "new_recommendation"
 
     return (
         RecommendationCard(
@@ -413,6 +423,7 @@ def _parse_labelled_card(
             kuv_26e=fields.get("kuv_26e"),
             kgv_26e=fields.get("kgv_26e"),
             next_report_date=fields.get("next_report_date"),
+            entry_price=fields.get("entry_price"),
             underlying_price=fields.get("underlying_price"),
             base_price=fields.get("base_price"),
             omega_hebel=fields.get("omega_hebel"),
@@ -523,6 +534,9 @@ def _value_after_label(
         if ISSUE_DATE_RE.search(lines[start_index]):
             return lines[start_index], start_index + 1
         return f"{lines[start_index]} {lines[start_index + 1]}", start_index + 2
+    if key == "entry_price" and start_index + 1 < len(lines):
+        if re.match(r"^\d{2}\.\d{2}\.\d{4}$", lines[start_index]):
+            return lines[start_index + 1], start_index + 2
     if (
         key == "runtime"
         and start_index + 1 < len(lines)
@@ -742,7 +756,15 @@ def _rating_from_dots(value: str | None) -> int | None:
 
 def _looks_like_derivative(instrument_name: str) -> bool:
     lowered = instrument_name.lower()
-    return any(token in lowered for token in ("call", "put", "zertifikat", "discount"))
+    return any(
+        token in lowered
+        for token in ("call", "put", "zertifikat", "discount", "turbo", "long", "short")
+    )
+
+
+def _looks_like_external_newsletter_ad(lines: Sequence[str]) -> bool:
+    joined = " ".join(lines)
+    return "www.hebeltrader.de" in joined or "HEBELTRADER-Anlagegrundsätze" in joined
 
 
 def _instrument_type_for_card_start(raw_type: str) -> InstrumentType | None:

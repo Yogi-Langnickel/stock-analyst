@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+import re
 from typing import Iterable, Sequence
 
 from stock_analyst.chart_check import (
@@ -234,16 +235,26 @@ def build_workbook_export_plan(
         for row in _dividend_rows_from(dividend_strategy)
         if row.wkn and row.dividend_yield
     }
-    rows = tuple(
-        _card_rows(
-            _cards_from(recommendation_cards),
-            stock_update_date=resolved_stock_update_date,
-            dividend_yield_by_wkn=dividend_yield_by_wkn,
-        )
+    card_rows = _card_rows(
+        _cards_from(recommendation_cards),
+        stock_update_date=resolved_stock_update_date,
+        dividend_yield_by_wkn=dividend_yield_by_wkn,
+    )
+    stock_rows = _consolidate_stock_rows(
+        [row for row in card_rows if row.tab == "Stocks"]
         + _quickcheck_stock_rows(
             quickcheck_rows,
             stock_update_date=resolved_stock_update_date,
         )
+        + _chart_check_stock_rows(
+            chart_check_rows,
+            stock_update_date=resolved_stock_update_date,
+        )
+    )
+    non_stock_card_rows = [row for row in card_rows if row.tab != "Stocks"]
+    rows = tuple(
+        stock_rows
+        + non_stock_card_rows
         + _dividend_rows(
             _dividend_rows_from(dividend_strategy),
             instrument_update_date=resolved_stock_update_date,
@@ -293,14 +304,14 @@ def _card_rows(
                     or "",
                 )
             )
-        elif card.instrument_type in {InstrumentType.ETF, InstrumentType.FUND}:
-            rows.append(_etf_card_row(card, instrument_update_date=stock_update_date))
-        elif card.instrument_type == InstrumentType.COMMODITY:
-            rows.append(_commodity_card_row(card, instrument_update_date=stock_update_date))
-        elif card.instrument_type == InstrumentType.CRYPTO:
-            rows.append(_crypto_card_row(card, instrument_update_date=stock_update_date))
-        elif card.instrument_type == InstrumentType.FOREX:
-            rows.append(_forex_card_row(card, instrument_update_date=stock_update_date))
+        elif card.instrument_type in {
+            InstrumentType.ETF,
+            InstrumentType.FUND,
+            InstrumentType.COMMODITY,
+            InstrumentType.CRYPTO,
+            InstrumentType.FOREX,
+        }:
+            continue
         else:
             rows.append(_generic_recommendation_card_row(card))
     return rows
@@ -323,8 +334,8 @@ def _recommendation_card_row(
         values=(
             card.instrument_name,
             card.wkn or "",
-            "",
             card.current_price or "",
+            card.current_price if card.recommendation_status == "new_recommendation" else "",
             dividend_yield,
             card.market_cap or "",
             _chance_risk(card.chance, card.risk),
@@ -332,7 +343,13 @@ def _recommendation_card_row(
             card.kgv_26e or "",
             card.target or "",
             card.stop or "",
-            card.recommendation_status or "",
+            card.performance_since_recommendation or "",
+            "",
+            "",
+            "",
+            "",
+            card.next_report_date or "",
+            card.recommended_issue or card.recommendation_status or "",
             "",
             card.issue_id,
             str(card.page),
@@ -357,8 +374,6 @@ def _derivative_card_row(
         review_status=ReviewStatus.NEEDS_REVIEW,
         source_block="manual_review_pending",
         values=(
-            card.issue_id,
-            str(card.page),
             "",
             product,
             direction,
@@ -369,13 +384,15 @@ def _derivative_card_row(
             card.base_price or "",
             card.omega_hebel or "",
             card.runtime or "",
+            card.entry_price or card.current_price or "",
             card.current_price or "",
-            "",
-            "",
+            card.performance_since_recommendation or "",
             card.target or "",
             card.stop or "",
             card.recommendation_status or "",
             ReviewStatus.NEEDS_REVIEW.value,
+            card.issue_id,
+            str(card.page),
             instrument_update_date,
         ),
     )
@@ -539,15 +556,21 @@ def _dividend_rows(
                 review_status=ReviewStatus.NEEDS_REVIEW,
                 source_block="manual_review_pending",
                 values=(
-                    row.issue_id,
-                    str(row.page),
                     row.company,
                     row.wkn,
-                    row.payout_count or "",
-                    row.dividend_yield,
                     row.month,
+                    row.current_price,
+                    row.market_cap_billions_eur,
+                    row.dividend_yield,
+                    row.kgv_2026e,
+                    row.payout_count or "",
                     row.next_cum_day or "",
+                    row.next_pay_day or "",
+                    row.target or "",
+                    row.stop or "",
                     ReviewStatus.NEEDS_REVIEW.value,
+                    row.issue_id,
+                    str(row.page),
                     instrument_update_date,
                 ),
             )
@@ -573,8 +596,6 @@ def _derivative_overview_rows(
                 review_status=ReviewStatus.NEEDS_REVIEW,
                 source_block="manual_review_pending",
                 values=(
-                    row.issue_id,
-                    str(row.page),
                     row.underlying,
                     row.product,
                     row.direction,
@@ -592,6 +613,8 @@ def _derivative_overview_rows(
                     row.stop,
                     row.recommendation,
                     ReviewStatus.NEEDS_REVIEW.value,
+                    row.issue_id,
+                    str(row.page),
                     instrument_update_date,
                 ),
             )
@@ -617,8 +640,6 @@ def _depot_position_rows(
                 review_status=ReviewStatus.NEEDS_REVIEW,
                 source_block="manual_review_pending",
                 values=(
-                    row.issue_id,
-                    str(row.page),
                     row.instrument,
                     row.wkn,
                     row.quantity,
@@ -629,6 +650,8 @@ def _depot_position_rows(
                     row.performance_since_buy,
                     row.stop,
                     ReviewStatus.NEEDS_REVIEW.value,
+                    row.issue_id,
+                    str(row.page),
                     instrument_update_date,
                 ),
             )
@@ -659,8 +682,6 @@ def _depot_transaction_rows(
                 review_status=ReviewStatus.NEEDS_REVIEW,
                 source_block="manual_review_pending",
                 values=(
-                    row.issue_id,
-                    str(row.page),
                     row.action,
                     row.instrument,
                     row.wkn,
@@ -669,6 +690,8 @@ def _depot_transaction_rows(
                     row.price,
                     row.performance_since_buy,
                     ReviewStatus.NEEDS_REVIEW.value,
+                    row.issue_id,
+                    str(row.page),
                     instrument_update_date,
                 ),
             )
@@ -737,7 +760,13 @@ def _quickcheck_stock_rows(
                     "",
                     row.target,
                     row.stop,
-                    "previous_recommendation",
+                    row.performance_since_recommendation,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    row.recommended_issue,
                     row.comment,
                     row.issue_id,
                     str(row.page),
@@ -746,6 +775,143 @@ def _quickcheck_stock_rows(
             )
         )
     return draft_rows
+
+
+def _chart_check_stock_rows(
+    rows: Sequence[ChartCheckRow],
+    *,
+    stock_update_date: str,
+) -> list[WorkbookDraftRow]:
+    draft_rows: list[WorkbookDraftRow] = []
+    for row in rows:
+        source_id = _source_id("chart-check-stock", row.issue_id, row.page, row.wkn)
+        draft_rows.append(
+            WorkbookDraftRow(
+                tab="Stocks",
+                row_kind="stock_chart_check_summary",
+                source_id=source_id,
+                issue_id=row.issue_id,
+                page=row.page,
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="manual_review_pending",
+                values=(
+                    row.instrument,
+                    row.wkn,
+                    row.current_price,
+                    row.recommendation_price,
+                    row.dividend_yield,
+                    "",
+                    "",
+                    "",
+                    "",
+                    row.target,
+                    row.stop,
+                    row.performance_since_recommendation,
+                    row.high_52w,
+                    row.low_52w,
+                    row.performance_1y,
+                    row.performance_5y,
+                    row.next_report_date,
+                    row.recommended_issue,
+                    row.signal,
+                    row.issue_id,
+                    str(row.page),
+                    stock_update_date,
+                ),
+            )
+        )
+    return draft_rows
+
+
+def _consolidate_stock_rows(rows: Sequence[WorkbookDraftRow]) -> list[WorkbookDraftRow]:
+    grouped: dict[str, WorkbookDraftRow] = {}
+    order: list[str] = []
+    for row in rows:
+        key = _stock_identity_key(row.values)
+        if key not in grouped:
+            grouped[key] = row
+            order.append(key)
+            continue
+        grouped[key] = _merge_stock_rows(grouped[key], row)
+    return [grouped[key] for key in order]
+
+
+def _stock_identity_key(values: Sequence[str]) -> str:
+    wkn = values[1].strip() if len(values) > 1 else ""
+    if wkn:
+        return f"wkn:{wkn.casefold()}"
+    name = values[0].strip() if values else ""
+    return f"name:{name.casefold()}"
+
+
+def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) -> WorkbookDraftRow:
+    values = list(existing.values)
+    incoming_values = list(incoming.values)
+    _ensure_width(values, len(incoming_values))
+
+    latest_wins_indexes = {2, 3, 9, 10, 11, 12, 13, 14, 15, 16}
+    fill_only_indexes = {0, 1, 4, 5, 6, 7, 8, 17, 21}
+    for index in latest_wins_indexes:
+        if index < len(incoming_values) and incoming_values[index]:
+            values[index] = incoming_values[index]
+    for index in fill_only_indexes:
+        if index < len(incoming_values) and incoming_values[index] and not values[index]:
+            values[index] = incoming_values[index]
+
+    recommendation_index = 17
+    if recommendation_index < len(incoming_values) and incoming_values[recommendation_index]:
+        current = values[recommendation_index]
+        candidate = incoming_values[recommendation_index]
+        if not current or _looks_like_richer_recommendation(candidate, current):
+            values[recommendation_index] = candidate
+
+    comment_parts = _split_comment(values[18]) if len(values) > 18 else []
+    if len(incoming_values) > 18 and incoming_values[18]:
+        comment_parts.append(incoming_values[18])
+    if len(values) > 18:
+        values[18] = _join_unique(comment_parts)
+
+    if len(values) > 19 and len(incoming_values) > 19:
+        values[19] = _join_unique((values[19], incoming_values[19]))
+    if len(values) > 20 and len(incoming_values) > 20:
+        values[20] = _join_unique((values[20], incoming_values[20]), separator=", ")
+
+    return WorkbookDraftRow(
+        tab="Stocks",
+        row_kind="stock_consolidated",
+        source_id=_source_id("stock", existing.issue_id, existing.page, values[1] or values[0]),
+        issue_id=existing.issue_id,
+        page=existing.page,
+        values=tuple(values),
+        review_status=ReviewStatus.NEEDS_REVIEW,
+        source_block="manual_review_pending",
+    )
+
+
+def _ensure_width(values: list[str], width: int) -> None:
+    if len(values) < width:
+        values.extend("" for _ in range(width - len(values)))
+
+
+def _looks_like_richer_recommendation(candidate: str, current: str) -> bool:
+    return (_contains_date(candidate), len(candidate)) > (_contains_date(current), len(current))
+
+
+def _contains_date(value: str) -> bool:
+    return bool(re.search(r"\d{2}\.\d{2}\.\d{2,4}", value))
+
+
+def _split_comment(value: str) -> list[str]:
+    return [part.strip() for part in value.split(" | ") if part.strip()]
+
+
+def _join_unique(values: Iterable[str], *, separator: str = " | ") -> str:
+    result: list[str] = []
+    for value in values:
+        stripped = value.strip()
+        if stripped and stripped not in result:
+            result.append(stripped)
+    return separator.join(result)
 
 
 def _chart_check_rows(rows: Sequence[ChartCheckRow]) -> list[WorkbookDraftRow]:
@@ -852,6 +1018,8 @@ def _split_derivative_direction(name: str) -> tuple[str, str]:
         "Discount-Put",
         "Turbo-Call",
         "Turbo-Put",
+        "Turbo-Long",
+        "Turbo-Short",
         "Index-Zertifikat",
         "Call",
         "Put",

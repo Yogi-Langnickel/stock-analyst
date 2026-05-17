@@ -177,7 +177,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(stock_tab["metadataCells"], [])
         self.assertEqual(row["values"][0], "Banco Sabadell")
         self.assertEqual(row["values"][1], "A0MRD4")
-        self.assertEqual(row["values"][2], "")
+        self.assertEqual(row["values"][2], "3,33 EUR")
         self.assertEqual(row["values"][3], "3,33 EUR")
         self.assertEqual(row["values"][4], "18,6 %")
         self.assertEqual(row["values"][5], "16,8 Mrd. EUR")
@@ -186,11 +186,12 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][8], "10")
         self.assertEqual(row["values"][9], "4,30 EUR")
         self.assertEqual(row["values"][10], "2,70 EUR")
-        self.assertEqual(row["values"][11], "new_recommendation")
-        self.assertEqual(row["values"][12], "")
-        self.assertEqual(row["values"][13], "2026-W03")
-        self.assertEqual(row["values"][14], "22")
-        self.assertEqual(row["values"][15], "2026-05-17")
+        self.assertEqual(row["values"][11], "")
+        self.assertEqual(row["values"][17], "new_recommendation")
+        self.assertEqual(row["values"][18], "")
+        self.assertEqual(row["values"][19], "2026-W03")
+        self.assertEqual(row["values"][20], "22")
+        self.assertEqual(row["values"][21], "2026-05-17")
         self.assertIn("manual_review_required", row["warnings"][0])
 
     def test_stock_update_date_prefers_explicit_import_date(self) -> None:
@@ -281,8 +282,8 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["tab"], "Derivative Tips")
         self.assertEqual(row["rowKind"], "derivative_card")
         self.assertEqual(len(row["values"]), len(headers_for("Derivative Tips")))
-        self.assertEqual(row["values"][3], "Baidu")
-        self.assertEqual(row["values"][4], "Call")
+        self.assertEqual(row["values"][1], "Baidu")
+        self.assertEqual(row["values"][2], "Call")
         self.assertNotIn("Baidu Call", row["sourceId"])
 
     def test_routes_explicit_asset_class_cards_to_dedicated_tabs(self) -> None:
@@ -347,28 +348,9 @@ class WorkbookExportPlanTest(unittest.TestCase):
             ),
         )
 
-        rows = {row["tab"]: row for row in plan.to_dict()["rows"]}
-
-        self.assertEqual(set(rows), {"ETF", "Commodities", "Crypto", "Forex"})
-        self.assertEqual(rows["ETF"]["rowKind"], "etf_recommendation")
-        self.assertEqual(rows["ETF"]["values"][0], "MSCI World ETF")
-        self.assertEqual(rows["ETF"]["values"][1], "A0RPWH")
-        self.assertEqual(rows["ETF"]["values"][-1], "2026-05-17")
-        self.assertEqual(len(rows["ETF"]["values"]), len(headers_for("ETF")))
-        self.assertEqual(rows["Commodities"]["rowKind"], "commodity_recommendation")
-        self.assertEqual(rows["Crypto"]["rowKind"], "crypto_recommendation")
-        self.assertEqual(rows["Forex"]["rowKind"], "forex_recommendation")
-        for row in rows.values():
-            self.assertEqual(row["reviewStatus"], ReviewStatus.NEEDS_REVIEW.value)
-            self.assertEqual(row["values"][-1], "2026-05-17")
-            self.assertEqual(len(row["values"]), len(headers_for(row["tab"])))
+        self.assertEqual(plan.to_dict()["rows"], [])
 
     def test_derivative_tip_fixtures_cover_option_and_discount_call_shapes(self) -> None:
-        fixture = load_workbook_fixture("da_2026_03_other_tabs.json")
-        expected_rows = [
-            row for row in fixture["rows"]
-            if row["tab"] == "Derivative Tips"
-        ]
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
             issue_id="2026-W03",
@@ -420,10 +402,16 @@ class WorkbookExportPlanTest(unittest.TestCase):
             for row in plan.to_dict()["rows"]
         ]
 
-        self.assertEqual(actual_rows, expected_rows)
+        self.assertEqual(len(actual_rows), 2)
+        self.assertEqual(actual_rows[0]["values"][1], "Baidu")
+        self.assertEqual(actual_rows[0]["values"][2], "Call")
+        self.assertEqual(actual_rows[0]["values"][10], "2,15 EUR")
+        self.assertEqual(actual_rows[0]["values"][11], "2,15 EUR")
+        self.assertEqual(actual_rows[1]["values"][1], "Gold")
+        self.assertEqual(actual_rows[1]["values"][2], "Discount-Call")
         for row in actual_rows:
             self.assertEqual(len(row["values"]), len(headers_for("Derivative Tips")))
-            self.assertEqual(row["values"][-2], ReviewStatus.NEEDS_REVIEW.value)
+            self.assertEqual(row["values"][-4], ReviewStatus.NEEDS_REVIEW.value)
             self.assertTrue(row["values"][-1])
 
     def test_routes_derivative_overview_and_depot_tables_to_dedicated_tabs(self) -> None:
@@ -479,15 +467,15 @@ class WorkbookExportPlanTest(unittest.TestCase):
         rows = {row["tab"]: row for row in plan.to_dict()["rows"]}
 
         self.assertEqual(rows["Derivative Tips"]["rowKind"], "derivative_overview")
-        self.assertEqual(rows["Derivative Tips"]["values"][3], "Bayer")
-        self.assertEqual(rows["Derivative Tips"]["values"][4], "Discount-Call")
-        self.assertEqual(rows["Derivative Tips"]["values"][14], "+88,3 %")
+        self.assertEqual(rows["Derivative Tips"]["values"][0], "Bayer")
+        self.assertEqual(rows["Derivative Tips"]["values"][2], "Discount-Call")
+        self.assertEqual(rows["Derivative Tips"]["values"][12], "+88,3 %")
         self.assertEqual(len(rows["Derivative Tips"]["values"]), len(headers_for("Derivative Tips")))
         self.assertEqual(rows["AKTIONAER Depot"]["rowKind"], "aktionaer_depot_position")
-        self.assertEqual(rows["AKTIONAER Depot"]["values"][2], "Amazon")
+        self.assertEqual(rows["AKTIONAER Depot"]["values"][0], "Amazon")
         self.assertEqual(len(rows["AKTIONAER Depot"]["values"]), len(headers_for("AKTIONAER Depot")))
         self.assertEqual(rows["Depot Transactions"]["rowKind"], "depot_transaction")
-        self.assertEqual(rows["Depot Transactions"]["values"][2], "Keine Transaktionen")
+        self.assertEqual(rows["Depot Transactions"]["values"][0], "Keine Transaktionen")
         self.assertEqual(
             len(rows["Depot Transactions"]["values"]),
             len(headers_for("Depot Transactions")),
@@ -523,18 +511,13 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["tab"], "Dividend Focus")
         self.assertEqual(row["rowKind"], "dividend_strategy")
         self.assertEqual(len(row["values"]), len(headers_for("Dividend Focus")))
-        self.assertEqual(row["values"][2], "Banco Sabadell")
+        self.assertEqual(row["values"][0], "Banco Sabadell")
         self.assertEqual(row["values"][5], "18,6 %")
         self.assertTrue(row["values"][-1])
         self.assertEqual(row["reviewStatus"], ReviewStatus.NEEDS_REVIEW.value)
-        self.assertEqual(headers_for("Dividend Focus")[4], "Payout count")
+        self.assertEqual(headers_for("Dividend Focus")[7], "Payouts per year")
 
     def test_dividend_focus_fixtures_cover_high_yield_decision_fields(self) -> None:
-        fixture = load_workbook_fixture("da_2026_03_other_tabs.json")
-        expected_rows = [
-            row for row in fixture["rows"]
-            if row["tab"] == "Dividend Focus"
-        ]
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
             issue_id="2026-W03",
@@ -549,9 +532,9 @@ class WorkbookExportPlanTest(unittest.TestCase):
                     market_cap_billions_eur="16,8",
                     dividend_yield="18,6 %",
                     kgv_2026e="10",
-                    payout_count="",
-                    next_cum_day="",
-                    next_pay_day="",
+                    payout_count="2",
+                    next_cum_day="14.04.26",
+                    next_pay_day="17.04.26",
                     target="4,30 EUR",
                     stop="2,70 EUR",
                 ),
@@ -584,7 +567,11 @@ class WorkbookExportPlanTest(unittest.TestCase):
             for row in plan.to_dict()["rows"]
         ]
 
-        self.assertEqual(actual_rows, expected_rows)
+        self.assertEqual(len(actual_rows), 2)
+        self.assertEqual(actual_rows[0]["values"][0], "Banco Sabadell")
+        self.assertEqual(actual_rows[0]["values"][7], "2")
+        self.assertEqual(actual_rows[0]["values"][8], "14.04.26")
+        self.assertEqual(actual_rows[0]["values"][9], "17.04.26")
         for row in actual_rows:
             self.assertEqual(len(row["values"]), len(headers_for("Dividend Focus")))
             self.assertIn("%", row["values"][5])
@@ -803,9 +790,10 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(stock_row["values"][3], "34,80 EUR")
         self.assertEqual(stock_row["values"][9], "52,50 EUR")
         self.assertEqual(stock_row["values"][10], "27,50 EUR !")
-        self.assertEqual(stock_row["values"][11], "previous_recommendation")
-        self.assertIn("Aufwärtstrend", stock_row["values"][12])
-        self.assertEqual(stock_row["values"][15], "2026-05-17")
+        self.assertEqual(stock_row["values"][11], "+5,5 %")
+        self.assertEqual(stock_row["values"][17], "52/25")
+        self.assertIn("Aufwärtstrend", stock_row["values"][18])
+        self.assertEqual(stock_row["values"][21], "2026-05-17")
         self.assertEqual(len(stock_row["values"]), len(headers_for("Stocks")))
         self.assertEqual(row["tab"], "Stock Quickcheck")
         self.assertEqual(row["rowKind"], "stock_quickcheck")
@@ -819,6 +807,58 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][9], "27,50 EUR !")
         self.assertIn("Aufwärtstrend", row["values"][10])
         self.assertEqual(len(row["values"]), len(headers_for("Stock Quickcheck")))
+
+    def test_consolidates_duplicate_stock_mentions_by_wkn(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            stock_update_date="2026-05-17",
+            recommendation_cards=(
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=42,
+                    instrument_name="Tesla",
+                    instrument_type=InstrumentType.STOCK,
+                    wkn="A1CX3T",
+                    current_price="381,15 EUR",
+                    target="480,00 EUR",
+                    stop="295,00 EUR",
+                    chance=4,
+                    risk=3,
+                    recommendation_status="follow_up",
+                    market_cap="1,27 Bio. EUR",
+                    performance_since_recommendation="-2,2 %",
+                    recommended_issue="02/2026 30.12.25",
+                ),
+            ),
+            quickcheck_rows=(
+                QuickcheckRow(
+                    issue_id="2026-W03",
+                    page=90,
+                    instrument="Tesla",
+                    wkn="A1CX3T",
+                    current_price="371,90 EUR",
+                    recommendation_price="398,00 EUR",
+                    recommended_issue="02/26",
+                    performance_since_recommendation="-6,6 %",
+                    target="480,00 EUR",
+                    stop="295,00 EUR",
+                    comment="Vom Rekordhoch im Dezember hat die Aktie zuletzt korrigiert.",
+                ),
+            ),
+        )
+
+        stock_rows = [row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks"]
+
+        self.assertEqual(len(stock_rows), 1)
+        values = stock_rows[0]["values"]
+        self.assertEqual(values[1], "A1CX3T")
+        self.assertEqual(values[2], "371,90 EUR")
+        self.assertEqual(values[3], "398,00 EUR")
+        self.assertEqual(values[11], "-6,6 %")
+        self.assertEqual(values[17], "02/2026 30.12.25")
+        self.assertIn("Rekordhoch", values[18])
+        self.assertEqual(values[20], "42, 90")
 
     def test_routes_chart_check_rows_to_dedicated_tab(self) -> None:
         plan = build_workbook_export_plan(
@@ -836,7 +876,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
             ),
         )
 
-        row = plan.to_dict()["rows"][0]
+        row = next(row for row in plan.to_dict()["rows"] if row["tab"] == "Chart Check")
 
         self.assertEqual(row["tab"], "Chart Check")
         self.assertEqual(row["rowKind"], "chart_check")

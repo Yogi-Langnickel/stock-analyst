@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from stock_analyst.google_access import (
+    DEFAULT_SHEET_TABS,
     GoogleAccessError,
     bootstrap_google_sheet,
     build_drive_pdf_metadata_result,
@@ -302,17 +303,22 @@ class GoogleAccessTest(unittest.TestCase):
             result = bootstrap_google_sheet(config, sheets_service_factory=lambda: sheets)
 
         self.assertTrue(result["ok"])
-        self.assertIn("ETF", result["createdTabs"])
-        self.assertIn("Options", result["createdTabs"])
-        self.assertIn("Crypto", result["createdTabs"])
+        self.assertIn("Derivative Tips", result["createdTabs"])
+        self.assertIn("Dividend Focus", result["createdTabs"])
+        self.assertIn("Chart Check", result["createdTabs"])
         self.assertEqual(result["headerRowsWritten"], len(result["tabs"]))
         batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
-        self.assertIn({"addSheet": {"properties": {"title": "ETF"}}}, batch_body["requests"])
-        self.assertIn({"addSheet": {"properties": {"title": "Options"}}}, batch_body["requests"])
-        self.assertIn({"addSheet": {"properties": {"title": "Crypto"}}}, batch_body["requests"])
+        self.assertIn(
+            {"addSheet": {"properties": {"title": "Derivative Tips"}}},
+            batch_body["requests"],
+        )
+        self.assertIn(
+            {"addSheet": {"properties": {"title": "Dividend Focus"}}},
+            batch_body["requests"],
+        )
         values_body = sheets.spreadsheets_resource.values_resource.batch_update_requests[0]["body"]
         self.assertEqual(values_body["valueInputOption"], "RAW")
-        self.assertIn(
+        self.assertNotIn(
             {
                 "range": "'Navigation Dashboard'!A1:D1",
                 "values": [["Area", "Tab", "Purpose", "Status"]],
@@ -323,7 +329,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertNotIn({"range": "'Stocks'!B1", "values": [[""]]}, values_body["data"])
         self.assertIn(
             {
-                "range": "'Stocks'!A3:P3",
+                "range": "'Stocks'!A3:V3",
                 "values": [[
                     "Company",
                     "WKN",
@@ -336,6 +342,12 @@ class GoogleAccessTest(unittest.TestCase):
                     "P/E Ratio 26e",
                     "Target",
                     "Stop",
+                    "Performance since Recommendation",
+                    "52w High",
+                    "52w Low",
+                    "1Y Performance",
+                    "5Y Performance",
+                    "Next Report",
                     "Recommendation",
                     "Comment",
                     "issue",
@@ -355,10 +367,15 @@ class GoogleAccessTest(unittest.TestCase):
             "Only explicit stock mentions become rows; do not fan out index constituents.",
             stock_tab["layoutNotes"],
         )
+        self.assertIn(
+            "Quick-check and chart-check stock rows also surface here with split source fields.",
+            stock_tab["layoutNotes"],
+        )
         self.assertEqual(stock_tab["metadataCells"], [])
         tab_status = {tab["title"]: tab["parserStatus"] for tab in result["tabs"]}
-        self.assertEqual(tab_status["ETF"], "planned")
-        self.assertEqual(tab_status["Crypto"], "planned")
+        self.assertNotIn("ETF", tab_status)
+        self.assertNotIn("Options", tab_status)
+        self.assertNotIn("Crypto", tab_status)
         self.assertEqual(tab_status["Derivative Tips"], "parser_backed")
         self.assertEqual(tab_status["Dividend Focus"], "parser_backed")
         self.assertEqual(tab_status["Extraction Audit"], "parser_backed")
@@ -366,7 +383,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(tab_status["Depot Transactions"], "parser_backed")
         self.assertEqual(tab_status["Chart Check"], "parser_backed")
         self.assertEqual(tab_status["Stock Quickcheck"], "parser_backed")
-        self.assertEqual(tab_status["Navigation Dashboard"], "layout_only")
+        self.assertNotIn("Navigation Dashboard", tab_status)
         for tab in result["tabs"]:
             self.assertGreaterEqual(tab["frozenRows"], 1)
             self.assertIn("layoutNotes", tab)
@@ -374,11 +391,6 @@ class GoogleAccessTest(unittest.TestCase):
 
         instrument_tabs = {
             "Stocks",
-            "ETF",
-            "Commodities",
-            "Options",
-            "Crypto",
-            "Forex",
             "Derivative Tips",
             "Dividend Focus",
         }
@@ -413,6 +425,94 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["headerRowsWritten"], 0)
         self.assertEqual(sheets.spreadsheets_resource.values_resource.batch_update_requests, [])
 
+    def test_google_sheet_bootstrap_prunes_only_generated_inactive_tabs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {"properties": {"sheetId": 10, "title": "Navigation Dashboard"}},
+                        {"properties": {"sheetId": 20, "title": "Options"}},
+                        {"properties": {"sheetId": 30, "title": "Manual Review Notes"}},
+                        {"properties": {"sheetId": 40, "title": "Stocks"}},
+                    ],
+                }
+            )
+
+            result = bootstrap_google_sheet(config, sheets_service_factory=lambda: sheets)
+
+        batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
+        delete_requests = [
+            request["deleteSheet"]
+            for request in batch_body["requests"]
+            if "deleteSheet" in request
+        ]
+        self.assertEqual(result["deletedTabCount"], 2)
+        self.assertIn({"sheetId": 10}, delete_requests)
+        self.assertIn({"sheetId": 20}, delete_requests)
+        self.assertNotIn({"sheetId": 30}, delete_requests)
+
+    def test_google_sheet_bootstrap_replaces_generated_conditional_format_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {
+                            "properties": {"sheetId": index + 1, "title": spec.title},
+                            "conditionalFormats": [{}]
+                            if spec.title == "AKTIONAER Depot"
+                            else [{}, {}]
+                            if spec.title == "Depot Transactions"
+                            else [],
+                        }
+                        for index, spec in enumerate(DEFAULT_SHEET_TABS)
+                    ],
+                }
+            )
+
+            result = bootstrap_google_sheet(
+                config,
+                sheets_service_factory=lambda: sheets,
+                write_headers=False,
+            )
+
+        batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
+        delete_requests = [
+            request["deleteConditionalFormatRule"]
+            for request in batch_body["requests"]
+            if "deleteConditionalFormatRule" in request
+        ]
+        add_requests = [
+            request["addConditionalFormatRule"]
+            for request in batch_body["requests"]
+            if "addConditionalFormatRule" in request
+        ]
+        self.assertEqual(result["formatRulesWritten"], 7)
+        self.assertEqual(len(delete_requests), 3)
+        self.assertEqual(len(add_requests), 4)
+        self.assertIn({"sheetId": 3, "index": 0}, delete_requests)
+        self.assertIn({"sheetId": 4, "index": 1}, delete_requests)
+        self.assertIn({"sheetId": 4, "index": 0}, delete_requests)
+
     def test_google_sheet_clear_data_rows_preserves_headers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
@@ -442,8 +542,8 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["headersRewritten"])
         self.assertEqual(result["clearedTabCount"], len(result["clearedRanges"]))
-        self.assertIn("'Stocks'!A4:P", clear_ranges)
-        self.assertIn("'Navigation Dashboard'!A2:D", clear_ranges)
+        self.assertIn("'Stocks'!A4:V", clear_ranges)
+        self.assertNotIn("'Navigation Dashboard'!A2:D", clear_ranges)
         self.assertGreater(len(values_resource.batch_update_requests), 0)
 
     def test_google_sheet_export_writes_workbook_rows_and_replaces_same_issue(self) -> None:
@@ -467,13 +567,19 @@ class GoogleAccessTest(unittest.TestCase):
                 }
             )
             sheets.spreadsheets_resource.values_resource.values_by_range[
-                "'Stocks'!A4:P"
+                "'Stocks'!A4:V"
             ] = [
                 [
                     "Old Same Issue",
                     "OLD",
                     "",
                     "1 EUR",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
                     "",
                     "",
                     "",
@@ -492,6 +598,12 @@ class GoogleAccessTest(unittest.TestCase):
                     "KEEP",
                     "",
                     "2 EUR",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
                     "",
                     "",
                     "",
@@ -523,6 +635,12 @@ class GoogleAccessTest(unittest.TestCase):
                             "",
                             "4,30 EUR",
                             "2,70 EUR",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
                             "new_recommendation",
                             "",
                             "2026-W03",
@@ -533,15 +651,20 @@ class GoogleAccessTest(unittest.TestCase):
                     {
                         "tab": "Dividend Focus",
                         "values": [
-                            "2026-W03",
-                            "18",
                             "Banco Sabadell",
                             "A0MRD4",
+                            "Maerz",
+                            "3,33 EUR",
                             "",
                             "18,6 %",
-                            "Maerz",
+                            "",
+                            "",
+                            "",
+                            "",
                             "",
                             "needs_review",
+                            "2026-W03",
+                            "18",
                             "2026-05-17",
                         ],
                     },
@@ -556,7 +679,7 @@ class GoogleAccessTest(unittest.TestCase):
 
         values_resource = sheets.spreadsheets_resource.values_resource
         data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
-        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:P5")
+        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:V5")
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["enrichmentProviderCalls"], 0)
@@ -565,7 +688,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn("Dividend Focus", result["clearedTabs"])
         self.assertEqual(stocks_write["values"][0][0], "Keep Different Issue")
         self.assertEqual(stocks_write["values"][1][0], "Banco Sabadell")
-        self.assertIn("'Stocks'!A4:P", [request["range"] for request in values_resource.clear_requests])
+        self.assertIn("'Stocks'!A4:V", [request["range"] for request in values_resource.clear_requests])
 
 
 if __name__ == "__main__":

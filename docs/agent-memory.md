@@ -45,9 +45,9 @@ Created: 2026-05-15
   also surface in `Stocks` as previous-recommendation stock rows with split
   current price, price at recommendation, target, stop, and comment fields.
 - `Chart-Check` pages are parser-backed into `Chart Check` as explicit
-  instrument/WKN rows with the publisher bullet summary. They remain
-  review-only context and must not update `Stocks` until a reviewed attach rule
-  exists.
+  instrument/WKN rows with the publisher bullet summary and table fields. They
+  also surface into `Stocks` by WKN/normalized company, remain `needs_review`,
+  and must not invent missing values.
 - A local workbook export-plan command can route draft recommendation cards,
   derivative cards, derivative overview rows, dividend strategy rows, AKTIONAER
   depot positions, depot transaction/no-transaction rows, and section-inventory
@@ -57,16 +57,21 @@ Created: 2026-05-15
 - Instrument dry-run rows must populate row-level `date updated` as the last
   field. Stocks initialize it from an explicit import/issue date when
   available, otherwise from the command's current UTC date. Section inventories,
-  index context, statistics, chart-check tables, and broad constituent lists
-  must not fan out into `Stocks`; parsed quick-check stock rows and other
-  explicitly mentioned stock rows go there.
-- Workbook identity rule: once a stock, ETF, commodity, crypto, or forex
-  instrument exists, later magazine mentions should update the existing
-  instrument row rather than append duplicates. Options/derivatives are
-  different: update only the same derivative/security, normally by derivative
-  WKN/ISIN; a new call or put for the same underlying is a new row when the
-  derivative WKN/ISIN differs. Depot snapshots and transactions remain
-  issue/event-specific history rows.
+  index context, statistics, and broad constituent lists must not fan out into
+  `Stocks`; parsed quick-check, chart-check, and other explicitly mentioned
+  stock rows go there.
+- Active workbook tabs are pruned to data-backed surfaces only: `Stocks`,
+  `Derivative Tips`, `AKTIONAER Depot`, `Depot Transactions`, `Chart Check`,
+  `Stock Quickcheck`, `Dividend Focus`, and `Extraction Audit`. Planned tabs are
+  removed from the live workbook until they have real emitted rows; pruning is
+  limited to project-known generated tabs so manual user tabs survive.
+- Workbook identity rule: once a stock exists, later magazine mentions update
+  the existing instrument row rather than append duplicates. Options and
+  derivatives all live in `Derivative Tips` for now and are different: update
+  only the same derivative/security, normally by derivative WKN/ISIN; a new
+  call or put for the same underlying is a new row when the derivative WKN/ISIN
+  differs. Depot snapshots and transactions remain issue/event-specific history
+  rows.
 - Stock rows use English sheet labels. `Dividendenrendite` maps to
   `Dividend Yield`, `KUV 26e` maps to `P/S Ratio 26e`, `KGV 26e` maps to
   `P/E Ratio 26e`, `Marktkap.` / `Marktkapitalisierung` maps to `Market Cap`,
@@ -83,9 +88,10 @@ Created: 2026-05-15
   visual-ocr-review`. It renders selected pages to ignored private PNG
   artifacts using PyMuPDF and can optionally run local Tesseract OCR. Command
   output must stay privacy-safe: paths, dimensions, hashes, counts, statuses,
-  and failure reasons only; no OCR text in JSON output. On 2026-05-17 rendering
-  worked for `DA_2026_03` pages 22, 62, and 63; local OCR was blocked by a
-  missing `tesseract` binary.
+  and failure reasons only; no OCR text in JSON output. On 2026-05-18 local
+  Tesseract 5.5.2 with `deu` and `eng` language data extracted OCR text for
+  `DA_2026_03` pages 18-19, 22, 37, 61-63, and 66 into ignored private
+  artifacts.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
 - Live enrichment must wait until magazine extraction has populated workbook
@@ -116,10 +122,9 @@ Created: 2026-05-15
   between Wednesday and Thursday; a future EventBridge/Lambda preprocessor may
   check hourly on those days for new files and record lightweight metadata, while
   heavy OCR/parsing/review remains local-first.
-- Target workbook name is `Der Aktionär Summaries`; start with a `Navigation
-  Dashboard` plus asset-class dashboard tabs for Stocks, ETF, Commodities,
-  Options, Crypto, Forex, and Example Portfolios, with specialized daily
-  enrichment areas per asset class.
+- Target workbook name is `Der Aktionär Summaries`; keep the live workbook
+  trimmed to data-backed tabs until the parser emits real rows for broader
+  asset-class dashboards.
 
 ## Commands
 

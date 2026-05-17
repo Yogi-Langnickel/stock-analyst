@@ -91,6 +91,18 @@ class GoogleSheetTabSpec:
     layout_notes: tuple[str, ...] = ()
 
 
+DATA_BACKED_TAB_TITLES = {
+    "Stocks",
+    "Derivative Tips",
+    "AKTIONAER Depot",
+    "Depot Transactions",
+    "Chart Check",
+    "Stock Quickcheck",
+    "Dividend Focus",
+    "Extraction Audit",
+}
+
+
 DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     GoogleSheetTabSpec(
         "Navigation Dashboard",
@@ -116,6 +128,12 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "P/E Ratio 26e",
             "Target",
             "Stop",
+            "Performance since Recommendation",
+            "52w High",
+            "52w Low",
+            "1Y Performance",
+            "5Y Performance",
+            "Next Report",
             "Recommendation",
             "Comment",
             "issue",
@@ -129,7 +147,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         table_starts_at="A3",
         layout_notes=(
             "Only explicit stock mentions become rows; do not fan out index constituents.",
-            "Quick-check stock rows also surface here with split price, target, stop, and comment fields.",
+            "Quick-check and chart-check stock rows also surface here with split source fields.",
             "Current Price* is daily enrichment; Price at Recommendation is the magazine source value.",
             "Row-level date updated is the last field and advances on enrichment or newer mention.",
         ),
@@ -329,8 +347,6 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     GoogleSheetTabSpec(
         "Derivative Tips",
         (
-            "Issue",
-            "Page",
             "Underlying",
             "Derivative",
             "Direction",
@@ -348,6 +364,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Stop",
             "Recommendation",
             "Review status",
+            "Issue",
+            "Page",
             "date updated",
         ),
         "Derivative overview tables and option cards.",
@@ -362,8 +380,6 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     GoogleSheetTabSpec(
         "AKTIONAER Depot",
         (
-            "Issue",
-            "Page",
             "Instrument",
             "WKN",
             "Quantity",
@@ -374,6 +390,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Performance since buy",
             "Stop",
             "Review status",
+            "Issue",
+            "Page",
             "date updated",
         ),
         "Publisher model-depot position snapshots.",
@@ -388,8 +406,6 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     GoogleSheetTabSpec(
         "Depot Transactions",
         (
-            "Issue",
-            "Page",
             "Action",
             "Instrument",
             "WKN",
@@ -398,6 +414,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Price",
             "Performance since buy",
             "Review status",
+            "Issue",
+            "Page",
             "date updated",
         ),
         "Publisher model-depot transaction ledger.",
@@ -416,7 +434,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         frozen_columns=3,
         layout_notes=(
             "Parser-backed for Chart-Check instrument rows and publisher bullet summaries.",
-            "Attach reviewed chart signals back to matching stock rows by WKN.",
+            "Also surface parsed chart fields into matching stock rows by WKN or normalized company.",
         ),
         parser_status="parser_backed",
     ),
@@ -458,15 +476,21 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     GoogleSheetTabSpec(
         "Dividend Focus",
         (
-            "Issue",
-            "Page",
             "Instrument",
             "WKN",
-            "Payout count",
-            "Yield",
             "Period",
-            "Ex date",
+            "Current Price",
+            "Market Cap EUR bn",
+            "Dividend Yield",
+            "P/E Ratio 26e",
+            "Payouts per year",
+            "Cum date",
+            "Pay date",
+            "Target",
+            "Stop",
             "Review status",
+            "Issue",
+            "Page",
             "date updated",
         ),
         "Dividend section and multi-period dividend data.",
@@ -489,6 +513,14 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         ),
         parser_status="parser_backed",
     ),
+)
+
+ALL_SHEET_TABS = DEFAULT_SHEET_TABS
+GENERATED_SHEET_TAB_TITLES = {spec.title for spec in ALL_SHEET_TABS}
+
+
+DEFAULT_SHEET_TABS = tuple(
+    spec for spec in DEFAULT_SHEET_TABS if spec.title in DATA_BACKED_TAB_TITLES
 )
 
 
@@ -606,6 +638,7 @@ def bootstrap_google_sheet(
     sheets_service_factory=None,
     tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
     write_headers: bool = True,
+    prune_extra_tabs: bool = True,
 ) -> dict[str, object]:
     """Create missing workbook tabs and write stable header rows.
 
@@ -622,29 +655,52 @@ def bootstrap_google_sheet(
             sheets.spreadsheets()
             .get(
                 spreadsheetId=config.sheets_spreadsheet_id,
-                fields="spreadsheetId,properties.title,sheets.properties.title",
+                fields=(
+                    "spreadsheetId,properties.title,"
+                    "sheets(properties(sheetId,title),conditionalFormats)"
+                ),
             )
             .execute()
         )
-        existing_titles = tuple(
-            sheet.get("properties", {}).get("title")
-            for sheet in spreadsheet.get("sheets", [])
-            if sheet.get("properties", {}).get("title")
-        )
+        sheet_properties = _sheet_properties_with_formats(spreadsheet)
+        existing_titles = tuple(str(properties.get("title")) for properties in sheet_properties)
         missing_titles = tuple(
             spec.title for spec in tab_specs if spec.title not in set(existing_titles)
         )
+        desired_titles = {spec.title for spec in tab_specs}
+        delete_sheet_ids = tuple(
+            int(properties["sheetId"])
+            for properties in sheet_properties
+            if prune_extra_tabs
+            and properties.get("title") not in desired_titles
+            and properties.get("title") in GENERATED_SHEET_TAB_TITLES
+            and "sheetId" in properties
+        )
 
-        if missing_titles:
+        structure_requests = [
+            {"addSheet": {"properties": {"title": title}}}
+            for title in missing_titles
+        ] + [
+            {"deleteSheet": {"sheetId": sheet_id}}
+            for sheet_id in delete_sheet_ids
+        ]
+        if structure_requests:
             sheets.spreadsheets().batchUpdate(
                 spreadsheetId=config.sheets_spreadsheet_id,
-                body={
-                    "requests": [
-                        {"addSheet": {"properties": {"title": title}}}
-                        for title in missing_titles
-                    ]
-                },
+                body={"requests": structure_requests},
             ).execute()
+            spreadsheet = (
+                sheets.spreadsheets()
+                .get(
+                    spreadsheetId=config.sheets_spreadsheet_id,
+                    fields=(
+                        "spreadsheetId,properties.title,"
+                        "sheets(properties(sheetId,title),conditionalFormats)"
+                    ),
+                )
+                .execute()
+            )
+            sheet_properties = _sheet_properties_with_formats(spreadsheet)
 
         header_ranges = _build_sheet_header_ranges(tab_specs) if write_headers else ()
         if header_ranges:
@@ -654,6 +710,12 @@ def bootstrap_google_sheet(
                     "valueInputOption": "RAW",
                     "data": list(header_ranges),
                 },
+            ).execute()
+        format_requests = _build_conditional_format_requests(tab_specs, sheet_properties)
+        if format_requests:
+            sheets.spreadsheets().batchUpdate(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                body={"requests": list(format_requests)},
             ).execute()
     except Exception as error:
         raise GoogleAccessError(
@@ -667,7 +729,9 @@ def bootstrap_google_sheet(
         "spreadsheetId": config.sheets_spreadsheet_id,
         "existingTabs": list(existing_titles),
         "createdTabs": list(missing_titles),
+        "deletedTabCount": len(delete_sheet_ids),
         "headerRowsWritten": len(tab_specs) if write_headers else 0,
+        "formatRulesWritten": len(format_requests) if "format_requests" in locals() else 0,
         "tabs": [
             {
                 "title": spec.title,
@@ -997,6 +1061,105 @@ def _build_sheet_body_clear_ranges(
         )
         for spec in tab_specs
     )
+
+
+def _build_conditional_format_requests(
+    tab_specs: tuple[GoogleSheetTabSpec, ...],
+    sheet_properties: tuple[Mapping[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    sheet_ids_by_title = {
+        str(properties.get("title")): int(properties["sheetId"])
+        for properties in sheet_properties
+        if properties.get("title") and "sheetId" in properties
+    }
+    properties_by_title = {
+        str(properties.get("title")): properties
+        for properties in sheet_properties
+        if properties.get("title")
+    }
+    requests: list[dict[str, object]] = []
+    for spec in tab_specs:
+        if spec.title not in {"AKTIONAER Depot", "Depot Transactions"}:
+            continue
+        sheet_id = sheet_ids_by_title.get(spec.title)
+        if sheet_id is None or "Performance since buy" not in spec.headers:
+            continue
+        existing_rule_count = len(properties_by_title.get(spec.title, {}).get("conditionalFormats", []))
+        requests.extend(
+            {
+                "deleteConditionalFormatRule": {
+                    "sheetId": sheet_id,
+                    "index": index,
+                }
+            }
+            for index in range(existing_rule_count - 1, -1, -1)
+        )
+        column_index = spec.headers.index("Performance since buy")
+        data_range = {
+            "sheetId": sheet_id,
+            "startRowIndex": spec.header_row,
+            "startColumnIndex": column_index,
+            "endColumnIndex": column_index + 1,
+        }
+        requests.extend(
+            (
+                _conditional_format_request(
+                    data_range=data_range,
+                    starts_with="+",
+                    background_color={"red": 0.85, "green": 0.94, "blue": 0.85},
+                    index=0,
+                ),
+                _conditional_format_request(
+                    data_range=data_range,
+                    starts_with="-",
+                    background_color={"red": 0.98, "green": 0.84, "blue": 0.84},
+                    index=0,
+                ),
+            )
+        )
+    return tuple(requests)
+
+
+def _sheet_properties_with_formats(
+    spreadsheet: Mapping[str, object],
+) -> tuple[dict[str, object], ...]:
+    sheet_properties: list[dict[str, object]] = []
+    for sheet in spreadsheet.get("sheets", []):
+        if not isinstance(sheet, Mapping):
+            continue
+        raw_properties = sheet.get("properties", {})
+        if not isinstance(raw_properties, Mapping) or not raw_properties.get("title"):
+            continue
+        properties = dict(raw_properties)
+        conditional_formats = sheet.get("conditionalFormats", [])
+        if isinstance(conditional_formats, list):
+            properties["conditionalFormats"] = conditional_formats
+        sheet_properties.append(properties)
+    return tuple(sheet_properties)
+
+
+def _conditional_format_request(
+    *,
+    data_range: dict[str, object],
+    starts_with: str,
+    background_color: dict[str, float],
+    index: int,
+) -> dict[str, object]:
+    return {
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [data_range],
+                "booleanRule": {
+                    "condition": {
+                        "type": "TEXT_STARTS_WITH",
+                        "values": [{"userEnteredValue": starts_with}],
+                    },
+                    "format": {"backgroundColor": background_color},
+                },
+            },
+            "index": index,
+        }
+    }
 
 
 def _sheet_values_get(

@@ -318,6 +318,7 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(card.base_price, "150,00 USD")
         self.assertEqual(card.omega_hebel, "3,1")
         self.assertEqual(card.runtime, "18.09.26 (8,5 Monate)")
+        self.assertEqual(card.recommendation_status, "new_recommendation")
 
     def test_extracts_derivative_omega_label_without_hebel_suffix(self) -> None:
         cards = extract_recommendation_cards_from_lines(
@@ -407,6 +408,63 @@ class RecommendationCardsTest(unittest.TestCase):
         )
 
         self.assertEqual(cards[0].runtime, "20.03.2026")
+
+    def test_extracts_turbo_long_option_card(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Silber Turbo-Long",
+                "WKN",
+                "JU2U7G",
+                "Akt. Kurs",
+                "34,43 €",
+                "Empfehlungskurs",
+                "03.12.2025",
+                "16,76 €",
+                "Performance",
+                "+105,4 %",
+                "Ziel",
+                "40,00 € !",
+                "Stopp",
+                "25,00 € !",
+                "Kurs Basiswert",
+                "79,61 $",
+                "Knock-out",
+                "39,58 $",
+                "Hebel",
+                "2,0",
+                "Laufzeit",
+                "open end",
+            ),
+            issue_id="2026-W03",
+            page_number=79,
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].instrument_name, "Silber Turbo-Long")
+        self.assertEqual(cards[0].instrument_type.value, "derivative")
+        self.assertEqual(cards[0].entry_price, "16,76 EUR")
+        self.assertEqual(cards[0].performance_since_recommendation, "+105,4 %")
+        self.assertEqual(cards[0].recommendation_status, "follow_up")
+        self.assertEqual(cards[0].base_price, "39,58 USD")
+        self.assertEqual(cards[0].omega_hebel, "2,0")
+
+    def test_ignores_embedded_hebeltrader_ad_option_card(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "www.hebeltrader.de",
+                "MTU",
+                "Optionsschein Call",
+                "WKN",
+                "MK9CNS",
+                "Akt. Kurs**",
+                "0,30 €",
+                "HEBELTRADER-Anlagegrundsätze",
+            ),
+            issue_id="2026-W03",
+            page_number=71,
+        )
+
+        self.assertEqual(cards, ())
 
     def test_ignores_invalid_wkn_values(self) -> None:
         cards = extract_recommendation_cards_from_lines(
