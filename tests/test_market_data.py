@@ -11,6 +11,7 @@ from stock_analyst.market_data import (
     load_market_data_planning_config,
     load_market_data_config,
     load_market_data_env_file,
+    load_market_data_symbol_file,
     market_data_disabled,
     plan_fmp_enrichment_requests,
     parse_stooq_daily_csv,
@@ -127,6 +128,34 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(config.daily_call_limit, 17)
         self.assertEqual(config.terms_version, "fmp-review-2026-05-17")
         self.assertNotIn("test-secret-key", repr(config))
+
+    def test_market_data_symbol_file_normalizes_comments_and_comma_lists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            symbol_file = Path(temp_dir) / "symbols.txt"
+            symbol_file.write_text(
+                "\n".join(
+                    (
+                        "# reviewer-controlled symbols",
+                        " aapl ",
+                        "MSFT, nvda",
+                        "",
+                        "AAPL",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            symbols = load_market_data_symbol_file(symbol_file)
+
+        self.assertEqual(symbols, ("AAPL", "MSFT", "NVDA"))
+
+    def test_market_data_symbol_file_rejects_whitespace_inside_symbol(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            symbol_file = Path(temp_dir) / "symbols.txt"
+            symbol_file.write_text("BAD SYMBOL\n", encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                load_market_data_symbol_file(symbol_file)
 
     def test_market_data_is_disabled_by_default(self) -> None:
         result = market_data_disabled("AAPL.US")
@@ -346,6 +375,34 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(result["chargedCallCount"], 1)
         self.assertEqual(result["deniedCallCount"], 1)
         self.assertNotIn("test-secret-key", repr(result))
+
+    def test_market_data_plan_command_accepts_symbol_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env_file = root / ".env"
+            symbol_file = root / "symbols.txt"
+            env_file.write_text(
+                "\n".join(
+                    (
+                        "FMP_API_KEY=test-secret-key",
+                        f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
+                        "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=5",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            symbol_file.write_text("AAPL\nMSFT\n", encoding="utf-8")
+
+            result = run_market_data_plan_command(
+                env_file=env_file,
+                symbol_files=(symbol_file,),
+                endpoints=("profile",),
+            )
+
+        self.assertEqual(result["plannedCallCount"], 2)
+        self.assertEqual(result["chargedCallCount"], 2)
+        self.assertEqual(result["requests"][0]["symbol"], "AAPL")
+        self.assertEqual(result["requests"][1]["symbol"], "MSFT")
 
 
 if __name__ == "__main__":

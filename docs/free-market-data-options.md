@@ -162,3 +162,8 @@ because adapters, cache policy, throttling, and terms checks are not complete.
   `STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT`, and
   `STOCK_ANALYST_MARKET_DATA_TERMS_VERSION`, but command output exposes only
   whether credentials are configured.
+- `--symbol-file ./data/private/enrichment-symbols.txt` supports private
+  reviewer-controlled ticker lists for local scheduled dry runs.
+- `scripts/stock-analyst-local-run` can run PDF import, extraction quality
+  reporting, and FMP dry-run planning from the local machine without enabling
+  live market-data network access.

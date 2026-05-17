@@ -534,6 +534,32 @@ def load_market_data_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def load_market_data_symbol_file(path: Path) -> tuple[str, ...]:
+    """Read reviewer-controlled ticker symbols from a local private text file."""
+
+    if not path.exists():
+        raise ValueError(f"market data symbol file does not exist: {path}")
+
+    symbols: list[str] = []
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        for raw_symbol in line.split(","):
+            symbol = raw_symbol.strip()
+            if not symbol:
+                continue
+            if any(character.isspace() for character in symbol):
+                raise ValueError(
+                    f"invalid market data symbol on line {line_number}: "
+                    "symbols must not contain whitespace"
+                )
+            symbols.append(symbol)
+
+    return _normalize_unique_symbols(tuple(symbols))
+
+
 def load_market_data_planning_config(
     *,
     env: Mapping[str, str] | None = None,

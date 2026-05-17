@@ -30,7 +30,7 @@ Usage:
   scripts/stock-analyst recommendation-cards <pdf> [args...]
   scripts/stock-analyst section-inventory <pdf> [args...]
   scripts/stock-analyst dividend-strategy <pdf> [args...]
-  scripts/stock-analyst market-data-plan [args...]
+  scripts/stock-analyst market-data-plan [--env-file .env] [--symbol TICKER] [--symbol-file path]
   scripts/stock-analyst python <python args...>
 
 The wrapper prefers .venv/bin/python when present. It does not need shell

@@ -158,6 +158,21 @@ The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.
 
+Plan local FMP enrichment requests without making network calls. This uses the
+hard local budget from `.env` and supports reviewer-controlled symbol files:
+
+```sh
+scripts/stock-analyst market-data-plan --env-file .env --symbol-file ./data/private/enrichment-symbols.txt
+```
+
+Run the local scheduled task manually. It imports new local PDFs, refreshes the
+local extraction quality report, and plans FMP enrichment without live provider
+calls:
+
+```sh
+scripts/stock-analyst-local-run
+```
+
 Local PDF intake does not require Google Drive or Google Sheets credentials.
 Those will only be needed later to sync source PDFs into a private Drive folder
 or export approved, reviewed rows into a configured Sheet.
@@ -183,6 +198,7 @@ manual activation is optional for interactive work.
 - [Implementation plan](docs/implementation-plan.md)
 - [Free market data options](docs/free-market-data-options.md)
 - [Google Sheets layout](docs/google-sheets-layout.md)
+- [Local scheduling](docs/local-scheduling.md)
 - [OCR options](docs/ocr-options.md)
 - [Persona review and revisions](docs/persona-review.md)
 - [Security and privacy](docs/security-and-privacy.md)

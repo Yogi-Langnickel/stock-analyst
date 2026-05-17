@@ -28,6 +28,7 @@ from stock_analyst.market_data import (
     DEFAULT_PROVIDER_ENV,
     MarketDataEnrichmentPlan,
     MarketDataPlanningConfig,
+    load_market_data_symbol_file,
     load_market_data_planning_config,
     plan_fmp_enrichment_requests,
 )
@@ -218,6 +219,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Ticker symbol to include. Repeat for multiple symbols.",
+    )
+    market_data_plan.add_argument(
+        "--symbol-file",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "Optional private text file with one ticker per line, or comma-separated "
+            "tickers. Blank lines and # comments are ignored."
+        ),
     )
     market_data_plan.add_argument(
         "--endpoint",
@@ -470,6 +481,7 @@ def run_market_data_plan_command(
     *,
     env_file: Path | None = None,
     symbols: tuple[str, ...] = (),
+    symbol_files: tuple[Path, ...] = (),
     endpoints: tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     config = load_market_data_planning_config(
@@ -482,8 +494,12 @@ def run_market_data_plan_command(
             f"{DEFAULT_PROVIDER_ENV}=fmp is required"
         )
 
+    all_symbols = list(symbols)
+    for symbol_file in symbol_files:
+        all_symbols.extend(load_market_data_symbol_file(symbol_file))
+
     plan = plan_fmp_enrichment_requests(
-        symbols,
+        tuple(all_symbols),
         endpoints=endpoints or DEFAULT_FMP_ENDPOINTS,
         cache_root=config.cache_dir,
         daily_call_limit=config.daily_call_limit,
@@ -618,6 +634,7 @@ def main(argv: list[str] | None = None) -> int:
             result = run_market_data_plan_command(
                 env_file=args.env_file,
                 symbols=tuple(args.symbol),
+                symbol_files=tuple(args.symbol_file),
                 endpoints=tuple(args.endpoint) if args.endpoint else None,
             )
         elif args.command == "google-access-smoke":

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_DIR="${STOCK_ANALYST_RUN_DIR:-${ROOT_DIR}/data/local-runs}"
+ISSUES_DIR="${STOCK_ANALYST_ISSUES_DIR:-${ROOT_DIR}/data/private/issues}"
+UPLOAD_DIR="${STOCK_ANALYST_UPLOAD_DIR:-${ROOT_DIR}/data/uploads}"
+ENV_FILE="${STOCK_ANALYST_ENV_FILE:-${ROOT_DIR}/.env}"
+SYMBOL_FILE="${STOCK_ANALYST_SYMBOL_FILE:-${ROOT_DIR}/data/private/enrichment-symbols.txt}"
+
+mkdir -p "${RUN_DIR}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+LOG_FILE="${RUN_DIR}/${STAMP}.log"
+SUMMARY_FILE="${RUN_DIR}/${STAMP}.summary.json"
+
+{
+  printf 'Stock Analyst local run started: %s\n' "${STAMP}"
+  printf 'Issues dir: %s\n' "${ISSUES_DIR}"
+  printf 'Upload dir: %s\n' "${UPLOAD_DIR}"
+  printf 'External services enabled: false\n'
+  printf '\n'
+
+  if [[ -d "${ISSUES_DIR}" ]]; then
+    "${ROOT_DIR}/scripts/stock-analyst" import-pdf-folder \
+      --recursive \
+      --upload-dir "${UPLOAD_DIR}" \
+      "${ISSUES_DIR}"
+  else
+    printf 'Skipping PDF import; issues dir does not exist.\n'
+  fi
+
+  printf '\n'
+  if [[ -f "${UPLOAD_DIR}/uploads.jsonl" ]]; then
+    "${ROOT_DIR}/scripts/stock-analyst" extraction-quality-report \
+      "${UPLOAD_DIR}/uploads.jsonl"
+  else
+    printf 'Skipping extraction quality report; upload manifest does not exist.\n'
+  fi
+
+  printf '\n'
+  if [[ -f "${ENV_FILE}" && -f "${SYMBOL_FILE}" ]]; then
+    "${ROOT_DIR}/scripts/stock-analyst" market-data-plan \
+      --env-file "${ENV_FILE}" \
+      --symbol-file "${SYMBOL_FILE}"
+  else
+    printf 'Skipping FMP dry-run plan; env file or symbol file is missing.\n'
+  fi
+} >"${LOG_FILE}" 2>&1
+
+cat >"${SUMMARY_FILE}" <<EOF
+{
+  "externalServicesEnabled": false,
+  "logFile": "${LOG_FILE}",
+  "summaryFile": "${SUMMARY_FILE}",
+  "startedAtUtc": "${STAMP}",
+  "status": "completed"
+}
+EOF
+
+printf '%s\n' "${SUMMARY_FILE}"
