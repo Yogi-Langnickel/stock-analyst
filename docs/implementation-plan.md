@@ -90,7 +90,9 @@ Recommended Drive/Lambda/local split:
   be runnable without AWS, Google Sheets, market-data providers, or LLM calls.
 - A daily enrichment job can run separately after extraction, updating
   asset-class-specific context from approved providers without overwriting
-  magazine-source values.
+  magazine-source values. It must use instruments already populated from the
+  magazine into workbook rows; provider symbols are translations of those rows,
+  not a separate watchlist source.
 - Lambda environment variables may hold non-secret config such as folder IDs,
   spreadsheet IDs, schedule mode, and Secrets Manager secret names. Do not store
   Google service-account JSON or private keys directly in Lambda environment

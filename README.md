@@ -160,15 +160,21 @@ private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.
 
 Plan local provider enrichment requests without making network calls. This uses
-the hard local budget from `.env` and supports reviewer-controlled symbol files:
+the hard local budget from `.env`. For the real workflow, derive candidates
+from magazine-backed workbook rows and a private provider-symbol map:
 
 ```sh
-scripts/stock-analyst market-data-plan --env-file .env --symbol-file ./data/private/enrichment-symbols.txt
+scripts/stock-analyst workbook-export-plan ./data/private/issues/DA_2026_03.pdf > ./data/private/workbook-plan.json
+scripts/stock-analyst market-data-plan --env-file .env --workbook-plan-file ./data/private/workbook-plan.json --symbol-map-file ./data/private/market-symbol-map.csv
 ```
 
+Do not use enrichment provider API calls before magazine rows have been
+populated into the workbook flow. Manual `--symbol` and `--symbol-file` inputs
+are development-only and are not an approved source for live enrichment.
+
 Run the local scheduled task manually. It imports new local PDFs, refreshes the
-local extraction quality report, and plans market-data enrichment without live provider
-calls:
+local extraction quality report, and only plans market-data enrichment when
+`STOCK_ANALYST_WORKBOOK_PLAN_FILE` points at a magazine-backed workbook plan:
 
 ```sh
 scripts/stock-analyst-local-run

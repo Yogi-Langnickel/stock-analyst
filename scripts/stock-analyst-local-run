@@ -6,7 +6,8 @@ RUN_DIR="${STOCK_ANALYST_RUN_DIR:-${ROOT_DIR}/data/local-runs}"
 ISSUES_DIR="${STOCK_ANALYST_ISSUES_DIR:-${ROOT_DIR}/data/private/issues}"
 UPLOAD_DIR="${STOCK_ANALYST_UPLOAD_DIR:-${ROOT_DIR}/data/uploads}"
 ENV_FILE="${STOCK_ANALYST_ENV_FILE:-${ROOT_DIR}/.env}"
-SYMBOL_FILE="${STOCK_ANALYST_SYMBOL_FILE:-${ROOT_DIR}/data/private/enrichment-symbols.txt}"
+WORKBOOK_PLAN_FILE="${STOCK_ANALYST_WORKBOOK_PLAN_FILE:-}"
+SYMBOL_MAP_FILE="${STOCK_ANALYST_SYMBOL_MAP_FILE:-${ROOT_DIR}/data/private/market-symbol-map.csv}"
 
 mkdir -p "${RUN_DIR}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -38,12 +39,19 @@ SUMMARY_FILE="${RUN_DIR}/${STAMP}.summary.json"
   fi
 
   printf '\n'
-  if [[ -f "${ENV_FILE}" && -f "${SYMBOL_FILE}" ]]; then
-    "${ROOT_DIR}/scripts/stock-analyst" market-data-plan \
-      --env-file "${ENV_FILE}" \
-      --symbol-file "${SYMBOL_FILE}"
+  if [[ -f "${ENV_FILE}" && -n "${WORKBOOK_PLAN_FILE}" && -f "${WORKBOOK_PLAN_FILE}" ]]; then
+    if [[ -f "${SYMBOL_MAP_FILE}" ]]; then
+      "${ROOT_DIR}/scripts/stock-analyst" market-data-plan \
+        --env-file "${ENV_FILE}" \
+        --workbook-plan-file "${WORKBOOK_PLAN_FILE}" \
+        --symbol-map-file "${SYMBOL_MAP_FILE}"
+    else
+      "${ROOT_DIR}/scripts/stock-analyst" market-data-plan \
+        --env-file "${ENV_FILE}" \
+        --workbook-plan-file "${WORKBOOK_PLAN_FILE}"
+    fi
   else
-    printf 'Skipping market-data dry-run plan; env file or symbol file is missing.\n'
+    printf 'Skipping market-data dry-run plan; magazine-backed workbook plan is not configured yet.\n'
   fi
 } >"${LOG_FILE}" 2>&1
 

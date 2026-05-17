@@ -28,9 +28,12 @@ from stock_analyst.market_data import (
     MarketDataEnrichmentPlan,
     MarketDataPlanningConfig,
     load_market_data_budget_state,
+    load_market_data_symbol_map_file,
     load_market_data_symbol_file,
     load_market_data_planning_config,
+    market_data_candidates_from_workbook_plan,
     plan_market_data_enrichment_requests,
+    ready_market_data_symbols_from_workbook_candidates,
 )
 from stock_analyst.pipeline import (
     PdfProcessingError,
@@ -228,6 +231,24 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Optional private text file with one ticker per line, or comma-separated "
             "tickers. Blank lines and # comments are ignored."
+        ),
+    )
+    market_data_plan.add_argument(
+        "--workbook-plan-file",
+        type=Path,
+        default=None,
+        help=(
+            "Preferred source for enrichment planning. Read a JSON workbook-export-plan "
+            "and only plan symbols mapped from magazine-backed workbook rows."
+        ),
+    )
+    market_data_plan.add_argument(
+        "--symbol-map-file",
+        type=Path,
+        default=None,
+        help=(
+            "Private CSV mapping workbook rows to provider symbols. Columns: "
+            "source_id,wkn,name,symbol."
         ),
     )
     market_data_plan.add_argument(
@@ -482,6 +503,8 @@ def run_market_data_plan_command(
     env_file: Path | None = None,
     symbols: tuple[str, ...] = (),
     symbol_files: tuple[Path, ...] = (),
+    workbook_plan_file: Path | None = None,
+    symbol_map_file: Path | None = None,
     endpoints: tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     config = load_market_data_planning_config(
@@ -493,6 +516,24 @@ def run_market_data_plan_command(
     all_symbols = list(symbols)
     for symbol_file in symbol_files:
         all_symbols.extend(load_market_data_symbol_file(symbol_file))
+
+    source_mode = "manual_symbols" if all_symbols else "empty"
+    workbook_candidates = ()
+    if workbook_plan_file is not None:
+        symbol_map = (
+            load_market_data_symbol_map_file(symbol_map_file)
+            if symbol_map_file is not None
+            else {}
+        )
+        payload = json.loads(workbook_plan_file.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"workbook plan file is not a JSON object: {workbook_plan_file}")
+        workbook_candidates = market_data_candidates_from_workbook_plan(
+            payload,
+            symbol_map=symbol_map,
+        )
+        all_symbols.extend(ready_market_data_symbols_from_workbook_candidates(workbook_candidates))
+        source_mode = "mixed" if symbols or symbol_files else "workbook_plan"
 
     budget_date = datetime.now(timezone.utc).date()
     budget_state = load_market_data_budget_state(
@@ -514,6 +555,8 @@ def run_market_data_plan_command(
         plan,
         config,
         budget_date=budget_date.isoformat(),
+        source_mode=source_mode,
+        workbook_candidates=workbook_candidates,
     )
 
 
@@ -553,7 +596,14 @@ def _market_data_plan_to_dict(
     config: MarketDataPlanningConfig,
     *,
     budget_date: str | None = None,
+    source_mode: str = "manual_symbols",
+    workbook_candidates: tuple[object, ...] = (),
 ) -> dict[str, object]:
+    candidate_dicts = [
+        candidate.to_dict()
+        for candidate in workbook_candidates
+        if hasattr(candidate, "to_dict")
+    ]
     return {
         "dryRun": plan.dry_run,
         "provider": plan.provider,
@@ -565,6 +615,20 @@ def _market_data_plan_to_dict(
         "cacheDir": str(config.cache_dir),
         "budgetDir": str(config.budget_dir),
         "budgetDate": budget_date,
+        "sourceMode": source_mode,
+        "sheetRowsRequiredBeforeLiveCalls": True,
+        "candidateCount": len(candidate_dicts),
+        "readyCandidateCount": len(
+            [candidate for candidate in candidate_dicts if candidate["status"] == "ready"]
+        ),
+        "blockedCandidateCount": len(
+            [
+                candidate
+                for candidate in candidate_dicts
+                if candidate["status"] != "ready"
+            ]
+        ),
+        "workbookCandidates": candidate_dicts,
         "termsVersion": config.terms_version,
         "dailyCallLimit": plan.daily_call_limit,
         "plannedCallCount": plan.planned_call_count,
@@ -649,6 +713,8 @@ def main(argv: list[str] | None = None) -> int:
                 env_file=args.env_file,
                 symbols=tuple(args.symbol),
                 symbol_files=tuple(args.symbol_file),
+                workbook_plan_file=args.workbook_plan_file,
+                symbol_map_file=args.symbol_map_file,
                 endpoints=tuple(args.endpoint) if args.endpoint else None,
             )
         elif args.command == "google-access-smoke":

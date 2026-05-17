@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
@@ -13,10 +14,13 @@ from stock_analyst.market_data import (
     load_market_data_planning_config,
     load_market_data_config,
     load_market_data_env_file,
+    load_market_data_symbol_map_file,
     load_market_data_symbol_file,
+    market_data_candidates_from_workbook_plan,
     market_data_disabled,
     plan_fmp_enrichment_requests,
     plan_market_data_enrichment_requests,
+    ready_market_data_symbols_from_workbook_candidates,
     read_market_data_cache_record,
     write_market_data_budget_state,
     write_market_data_cache_record,
@@ -202,6 +206,121 @@ class MarketDataTest(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 load_market_data_symbol_file(symbol_file)
+
+    def test_market_data_symbol_map_file_loads_private_workbook_mappings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            symbol_map_file = Path(temp_dir) / "market-symbol-map.csv"
+            symbol_map_file.write_text(
+                "\n".join(
+                    (
+                        "source_id,wkn,name,symbol",
+                        "stock:2026-W03:p22:A0MRD4:abc,A0MRD4,Banco Sabadell,SAB.MC",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            symbol_map = load_market_data_symbol_map_file(symbol_map_file)
+
+        self.assertEqual(symbol_map["source_id:stock:2026-W03:p22:A0MRD4:abc"], "SAB.MC")
+        self.assertEqual(symbol_map["wkn:A0MRD4"], "SAB.MC")
+        self.assertEqual(symbol_map["name:banco sabadell"], "SAB.MC")
+
+    def test_workbook_plan_candidates_require_symbol_mapping(self) -> None:
+        payload = {
+            "rows": [
+                {
+                    "tab": "Stocks",
+                    "rowKind": "stock_recommendation",
+                    "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
+                    "values": [
+                        "Banco Sabadell",
+                        "A0MRD4",
+                        "",
+                        "3,33 EUR",
+                        "",
+                        "4,30 EUR",
+                        "2,70 EUR",
+                        "new_recommendation",
+                        "2026-W03",
+                        "22",
+                        "2026-05-17",
+                    ],
+                },
+                {
+                    "tab": "Extraction Audit",
+                    "rowKind": "section_inventory",
+                    "sourceId": "section:2026-W03:p62:abc",
+                    "values": [],
+                },
+            ]
+        }
+
+        candidates = market_data_candidates_from_workbook_plan(payload)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].tab, "Stocks")
+        self.assertEqual(candidates[0].name, "Banco Sabadell")
+        self.assertEqual(candidates[0].wkn, "A0MRD4")
+        self.assertEqual(candidates[0].status, "needs_symbol_mapping")
+        self.assertIsNone(candidates[0].symbol)
+        self.assertEqual(ready_market_data_symbols_from_workbook_candidates(candidates), ())
+
+    def test_workbook_plan_candidates_only_plan_mapped_sheet_instruments(self) -> None:
+        payload = {
+            "rows": [
+                {
+                    "tab": "Stocks",
+                    "rowKind": "stock_recommendation",
+                    "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
+                    "values": [
+                        "Banco Sabadell",
+                        "A0MRD4",
+                        "",
+                        "3,33 EUR",
+                        "",
+                        "4,30 EUR",
+                        "2,70 EUR",
+                        "new_recommendation",
+                        "2026-W03",
+                        "22",
+                        "2026-05-17",
+                    ],
+                },
+                {
+                    "tab": "Crypto",
+                    "rowKind": "crypto_recommendation",
+                    "sourceId": "crypto:2026-W03:p40:review:def",
+                    "values": [
+                        "Bitcoin",
+                        "",
+                        "",
+                        "90000 USD",
+                        "watch",
+                        "",
+                        "2026-W03",
+                        "40",
+                        "needs_review",
+                        "2026-05-17",
+                    ],
+                },
+            ]
+        }
+
+        candidates = market_data_candidates_from_workbook_plan(
+            payload,
+            symbol_map={
+                "wkn:A0MRD4": "SAB.MC",
+                "name:bitcoin": "BTC/USD",
+            },
+        )
+
+        self.assertEqual(
+            ready_market_data_symbols_from_workbook_candidates(candidates),
+            ("SAB.MC", "BTC/USD"),
+        )
+        self.assertEqual(candidates[0].status, "ready")
+        self.assertEqual(candidates[1].status, "ready")
 
     def test_market_data_is_disabled_by_default(self) -> None:
         result = market_data_disabled("AAPL.US")
@@ -623,6 +742,92 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(result["chargedCallCount"], 2)
         self.assertEqual(result["requests"][0]["symbol"], "AAPL")
         self.assertEqual(result["requests"][1]["symbol"], "MSFT")
+
+    def test_market_data_plan_command_accepts_workbook_plan_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env_file = root / ".env"
+            workbook_plan = root / "workbook-plan.json"
+            symbol_map = root / "market-symbol-map.csv"
+            env_file.write_text(
+                "\n".join(
+                    (
+                        "FMP_API_KEY=test-secret-key",
+                        f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
+                        "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=5",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            workbook_plan.write_text(
+                json.dumps(
+                    {
+                        "rows": [
+                            {
+                                "tab": "Stocks",
+                                "rowKind": "stock_recommendation",
+                                "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
+                                "values": [
+                                    "Banco Sabadell",
+                                    "A0MRD4",
+                                    "",
+                                    "3,33 EUR",
+                                    "",
+                                    "4,30 EUR",
+                                    "2,70 EUR",
+                                    "new_recommendation",
+                                    "2026-W03",
+                                    "22",
+                                    "2026-05-17",
+                                ],
+                            },
+                            {
+                                "tab": "ETF",
+                                "rowKind": "etf_recommendation",
+                                "sourceId": "etf:2026-W03:p12:ETF123:def",
+                                "values": [
+                                    "Example ETF",
+                                    "ETF123",
+                                    "",
+                                    "10 EUR",
+                                    "",
+                                    "watch",
+                                    "2026-W03",
+                                    "12",
+                                    "needs_review",
+                                    "2026-05-17",
+                                ],
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            symbol_map.write_text(
+                "\n".join(
+                    (
+                        "source_id,wkn,name,symbol",
+                        ",A0MRD4,,SAB.MC",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_market_data_plan_command(
+                env_file=env_file,
+                workbook_plan_file=workbook_plan,
+                symbol_map_file=symbol_map,
+                endpoints=("profile",),
+            )
+
+        self.assertEqual(result["sourceMode"], "workbook_plan")
+        self.assertTrue(result["sheetRowsRequiredBeforeLiveCalls"])
+        self.assertEqual(result["candidateCount"], 2)
+        self.assertEqual(result["readyCandidateCount"], 1)
+        self.assertEqual(result["blockedCandidateCount"], 1)
+        self.assertEqual(result["plannedCallCount"], 1)
+        self.assertEqual(result["requests"][0]["symbol"], "SAB.MC")
+        self.assertEqual(result["workbookCandidates"][1]["status"], "needs_symbol_mapping")
 
     def test_market_data_plan_command_supports_alpha_vantage_env_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

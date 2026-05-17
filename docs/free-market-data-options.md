@@ -8,6 +8,12 @@ Market data is enrichment only. It can help reviewers validate context, stale
 prices, symbols, and broad market moves, but it must not overwrite magazine
 source fields or fill missing recommendation details.
 
+Enrichment is downstream of magazine extraction. Do not make live provider API
+calls until magazine rows have been populated into the workbook flow. Provider
+symbols must come from instruments already present in the sheet/export rows,
+with a private symbol map used only to translate a magazine row, WKN, or name to
+the provider's ticker format.
+
 ## Provider Status
 
 | Provider | Current implementation | Credentials | Network in tests | Fit |
@@ -31,28 +37,34 @@ because adapters, cache policy, throttling, and terms checks are not complete.
    - Default for tests, local PDF intake, and family review.
    - No network calls and no secrets.
 
-2. Stooq CSV
+2. Workbook-backed enrichment candidates
+   - First populate rows from the magazine into the workbook/export flow.
+   - Build enrichment candidates from those rows only.
+   - Use a private symbol map for provider ticker translations. Do not enrich
+     arbitrary watchlist symbols that are not in the workbook.
+
+3. Stooq CSV
    - Useful for no-key historical daily context and deterministic CSV parsing.
    - Best first live adapter because it avoids credentials and keeps failures
      simple.
-   - Use explicit reviewer-provided ticker symbols until ticker/ISIN/WKN
-     normalization exists.
+   - Use workbook-backed provider symbols only once ticker/ISIN/WKN
+     normalization or a private symbol map exists.
 
-3. Twelve Data
+4. Twelve Data
    - Best first broad daily enrichment candidate because the free tier gives
      800 daily credits and supports batch requests.
    - Use for current price, quote snapshots, technical indicators, market
      metadata, and some fundamentals/analysis where the free plan allows it.
    - Treat endpoint credit weights as budget debits, not raw request counts.
 
-4. Finnhub
+5. Finnhub
    - Best candidate for analyst recommendation trends, insider activity,
      earnings surprise, company news, and quote fallback.
    - Free-tier daily limits were not confirmed in official docs during review;
      common references report 60 calls/minute. Keep a local default cap of
      500/day until live response headers are inspected and documented.
 
-5. Alpha Vantage
+6. Alpha Vantage
    - Useful as a sparse fallback for company overview, quote, technical
      indicators, commodities, forex, crypto, economic indicators, news
      sentiment, and insider transactions.
@@ -60,7 +72,7 @@ because adapters, cache policy, throttling, and terms checks are not complete.
      polling. Reserve it for high-confidence ticker enrichments or gaps from
      Twelve Data/Finnhub/FMP.
 
-6. Financial Modeling Prep
+7. Financial Modeling Prep
    - Useful later for quote, profile, and fundamentals exploration.
    - Current implementation is metadata-only plus a dry-run request planner.
    - `FMP_API_KEY` is the expected future credential, but the planner does not
@@ -70,7 +82,7 @@ because adapters, cache policy, throttling, and terms checks are not complete.
    - Keep a hard planning budget of 235 calls/day and plan against a
      512MB/month bandwidth ceiling before live access.
 
-7. SEC companyfacts and filings
+8. SEC companyfacts and filings
    - Official free source for US fundamentals and filing metadata.
    - Use for issuer/company context, not price validation.
 
@@ -120,15 +132,18 @@ because adapters, cache policy, throttling, and terms checks are not complete.
    separate adapter behind explicit configuration.
 3. Add cache files under ignored `data/market-cache` before enabling any live
    provider.
-4. Attach enrichment output as source metadata with provider, observed date,
+4. Derive provider symbols from workbook rows via `--workbook-plan-file` and a
+   private `--symbol-map-file`. Manual `--symbol` and `--symbol-file` planning
+   are development-only and must not be used for live enrichment.
+5. Attach enrichment output as source metadata with provider, observed date,
    and status.
-5. Cache metadata must carry freshness and compliance review fields before any
+6. Cache metadata must carry freshness and compliance review fields before any
    live adapter is enabled: `retrieved_at`, `observed_on` when the provider
    supplies one, `ttl_seconds`, `expires_at`, `source_url_hash` instead of raw
    URLs, `terms_checked_at`, and a terms version or review note.
-6. Mark unavailable or ambiguous market rows as `needs_review`; never infer a
+7. Mark unavailable or ambiguous market rows as `needs_review`; never infer a
    missing price, stop loss, target, ticker, ISIN, WKN, or recommendation.
-7. Add provider terms/rate-limit notes before enabling network calls.
+8. Add provider terms/rate-limit notes before enabling network calls.
 
 ## Enrichment Signal Plan
 
@@ -204,10 +219,16 @@ recommendations, target prices, stop prices, or WKN/source fields.
   `STOCK_ANALYST_MARKET_DATA_TERMS_VERSION`, but command output exposes only
   whether credentials are configured.
 - `--symbol-file ./data/private/enrichment-symbols.txt` supports private
-  reviewer-controlled ticker lists for local scheduled dry runs.
+  reviewer-controlled ticker lists for local development dry runs only. It is
+  not an approved live-enrichment source.
+- `--workbook-plan-file ./data/private/workbook-plan.json` is the preferred
+  enrichment-planning source. It reads magazine-backed workbook rows and only
+  plans provider requests for rows with a matching entry in a private
+  `--symbol-map-file` CSV containing `source_id,wkn,name,symbol`.
 - `scripts/stock-analyst-local-run` can run PDF import, extraction quality
-  reporting, and FMP dry-run planning from the local machine without enabling
-  live market-data network access.
+  reporting, and workbook-backed market-data dry-run planning from the local
+  machine without enabling live market-data network access. It no longer uses a
+  free-form symbol file by default.
 
 ## Sixth Slice Implemented
 

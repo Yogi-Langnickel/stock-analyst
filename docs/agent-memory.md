@@ -48,6 +48,10 @@ Created: 2026-05-15
   there.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
+- Live enrichment must wait until magazine extraction has populated workbook
+  rows. Provider symbols must be derived from those workbook rows, usually via a
+  private `source_id,wkn,name,symbol` map; arbitrary watchlist symbols are not
+  an approved live-enrichment source.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
   Vantage, Twelve Data, FMP, and SEC companyfacts, but live adapters are not
   implemented. Cache request metadata and FMP dry-run request plans can be
@@ -87,8 +91,10 @@ Created: 2026-05-15
   interpreter.
 - `scripts/stock-analyst workbook-export-plan ./data/private/issues/DA_2026_03.pdf`:
   run the local workbook plan through the venv-aware wrapper.
-- `scripts/stock-analyst market-data-plan --env-file .env --symbol AAPL`:
-  dry-run FMP enrichment planning with local env-file config and no network.
+- `scripts/stock-analyst market-data-plan --env-file .env --workbook-plan-file
+  ./data/private/workbook-plan.json --symbol-map-file
+  ./data/private/market-symbol-map.csv`: dry-run provider enrichment planning
+  from magazine-backed workbook rows with local env-file config and no network.
 - `PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests`
 - `PYTHONPATH=src python3 -m unittest discover tests`
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`

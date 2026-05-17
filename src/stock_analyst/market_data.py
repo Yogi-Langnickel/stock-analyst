@@ -21,6 +21,15 @@ MARKET_CACHE_DIR_ENV = "STOCK_ANALYST_MARKET_DATA_CACHE_DIR"
 MARKET_BUDGET_DIR_ENV = "STOCK_ANALYST_MARKET_DATA_BUDGET_DIR"
 MARKET_DAILY_CALL_LIMIT_ENV = "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT"
 MARKET_TERMS_VERSION_ENV = "STOCK_ANALYST_MARKET_DATA_TERMS_VERSION"
+WORKBOOK_INSTRUMENT_TABS = {
+    "Stocks": (0, 1),
+    "ETF": (0, 1),
+    "Commodities": (0, 1),
+    "Crypto": (0, 1),
+    "Forex": (0, None),
+    "Dividend Focus": (2, 3),
+    "Derivative Tips": (4, 5),
+}
 DEFAULT_ALPHA_VANTAGE_DAILY_CALL_LIMIT = 25
 DEFAULT_FMP_DAILY_CALL_LIMIT = 235
 DEFAULT_TWELVE_DATA_DAILY_CALL_LIMIT = 800
@@ -297,6 +306,30 @@ class MarketDataBudgetState:
     daily_call_limit: int
     charged_call_count: int = 0
     updated_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class MarketDataWorkbookCandidate:
+    source_id: str
+    tab: str
+    row_kind: str
+    name: str
+    wkn: str
+    symbol: str | None
+    status: str
+    reason: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "sourceId": self.source_id,
+            "tab": self.tab,
+            "rowKind": self.row_kind,
+            "name": self.name,
+            "wkn": self.wkn,
+            "symbol": self.symbol,
+            "status": self.status,
+            "reason": self.reason,
+        }
 
 
 @dataclass(frozen=True)
@@ -814,6 +847,138 @@ def load_market_data_symbol_file(path: Path) -> tuple[str, ...]:
     return _normalize_unique_symbols(tuple(symbols))
 
 
+def load_market_data_symbol_map_file(path: Path) -> dict[str, str]:
+    """Load private workbook-row-to-provider-symbol mappings from CSV.
+
+    Supported columns are ``source_id``, ``wkn``, ``name``, and ``symbol``.
+    At least one of ``source_id``, ``wkn``, or ``name`` must be populated for
+    every row. This keeps enrichment scoped to magazine/workbook instruments
+    while allowing provider-specific ticker symbols to be supplied privately.
+    """
+
+    if not path.exists():
+        raise ValueError(f"market data symbol map file does not exist: {path}")
+
+    rows = csv.DictReader(StringIO(path.read_text(encoding="utf-8")))
+    if rows.fieldnames is None:
+        raise ValueError(f"market data symbol map file is empty: {path}")
+
+    normalized_fieldnames = {field.strip().lower() for field in rows.fieldnames if field}
+    if "symbol" not in normalized_fieldnames:
+        raise ValueError("market data symbol map file must include a symbol column")
+
+    symbol_map: dict[str, str] = {}
+    for line_number, row in enumerate(rows, 2):
+        normalized_row = {
+            (key or "").strip().lower(): (value or "").strip()
+            for key, value in row.items()
+        }
+        symbol = normalized_row.get("symbol", "")
+        if not symbol:
+            raise ValueError(f"market data symbol map line {line_number} is missing symbol")
+        if any(character.isspace() for character in symbol):
+            raise ValueError(
+                f"invalid market data symbol map line {line_number}: "
+                "symbols must not contain whitespace"
+            )
+        normalized_symbol = _normalize_unique_symbols((symbol,))[0]
+        keys = tuple(
+            key
+            for key in (
+                _source_id_lookup_key(normalized_row.get("source_id", "")),
+                _wkn_lookup_key(normalized_row.get("wkn", "")),
+                _name_lookup_key(normalized_row.get("name", "")),
+            )
+            if key
+        )
+        if not keys:
+            raise ValueError(
+                f"market data symbol map line {line_number} must include source_id, wkn, or name"
+            )
+        for key in keys:
+            symbol_map[key] = normalized_symbol
+
+    return symbol_map
+
+
+def market_data_candidates_from_workbook_plan(
+    payload: Mapping[str, object],
+    *,
+    symbol_map: Mapping[str, str] | None = None,
+) -> tuple[MarketDataWorkbookCandidate, ...]:
+    """Extract enrichment candidates from magazine-backed workbook rows only."""
+
+    raw_rows = payload.get("rows")
+    if not isinstance(raw_rows, list):
+        raise ValueError("workbook plan must contain a rows list")
+
+    candidates: list[MarketDataWorkbookCandidate] = []
+    mappings = symbol_map or {}
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            continue
+        tab = str(raw_row.get("tab") or "")
+        indexes = WORKBOOK_INSTRUMENT_TABS.get(tab)
+        if indexes is None:
+            continue
+        raw_values = raw_row.get("values")
+        if not isinstance(raw_values, list):
+            continue
+
+        name_index, wkn_index = indexes
+        name = _row_value(raw_values, name_index)
+        wkn = _row_value(raw_values, wkn_index) if wkn_index is not None else ""
+        source_id = str(raw_row.get("sourceId") or "")
+        row_kind = str(raw_row.get("rowKind") or "")
+        symbol = _symbol_for_workbook_row(
+            source_id=source_id,
+            wkn=wkn,
+            name=name,
+            symbol_map=mappings,
+        )
+        if symbol:
+            candidates.append(
+                MarketDataWorkbookCandidate(
+                    source_id=source_id,
+                    tab=tab,
+                    row_kind=row_kind,
+                    name=name,
+                    wkn=wkn,
+                    symbol=symbol,
+                    status="ready",
+                    reason="provider symbol mapped from workbook-backed instrument row",
+                )
+            )
+        else:
+            candidates.append(
+                MarketDataWorkbookCandidate(
+                    source_id=source_id,
+                    tab=tab,
+                    row_kind=row_kind,
+                    name=name,
+                    wkn=wkn,
+                    symbol=None,
+                    status="needs_symbol_mapping",
+                    reason=(
+                        "magazine row is present, but provider ticker mapping is required "
+                        "before enrichment can be planned"
+                    ),
+                )
+            )
+
+    return tuple(candidates)
+
+
+def ready_market_data_symbols_from_workbook_candidates(
+    candidates: tuple[MarketDataWorkbookCandidate, ...],
+) -> tuple[str, ...]:
+    """Return unique provider symbols for workbook candidates that are ready."""
+
+    return _normalize_unique_symbols(
+        tuple(candidate.symbol or "" for candidate in candidates if candidate.status == "ready")
+    )
+
+
 def _configured_credential_env_var(
     provider: ProviderMetadata,
     source: Mapping[str, str],
@@ -1048,6 +1213,45 @@ def _normalize_unique_symbols(symbols: tuple[str, ...]) -> tuple[str, ...]:
         seen.add(symbol)
 
     return tuple(normalized)
+
+
+def _source_id_lookup_key(value: str | None) -> str:
+    normalized = (value or "").strip()
+    return f"source_id:{normalized}" if normalized else ""
+
+
+def _wkn_lookup_key(value: str | None) -> str:
+    normalized = (value or "").strip().upper()
+    return f"wkn:{normalized}" if normalized else ""
+
+
+def _name_lookup_key(value: str | None) -> str:
+    normalized = re.sub(r"\s+", " ", (value or "").strip().lower())
+    return f"name:{normalized}" if normalized else ""
+
+
+def _symbol_for_workbook_row(
+    *,
+    source_id: str,
+    wkn: str,
+    name: str,
+    symbol_map: Mapping[str, str],
+) -> str | None:
+    for key in (
+        _source_id_lookup_key(source_id),
+        _wkn_lookup_key(wkn),
+        _name_lookup_key(name),
+    ):
+        symbol = symbol_map.get(key)
+        if symbol:
+            return symbol
+    return None
+
+
+def _row_value(values: list[object], index: int) -> str:
+    if index >= len(values):
+        return ""
+    return str(values[index] or "").strip()
 
 
 def _normalize_unique_endpoints(endpoints: tuple[str, ...]) -> tuple[str, ...]:

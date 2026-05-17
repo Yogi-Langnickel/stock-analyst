@@ -5,8 +5,8 @@ Last updated: 2026-05-17
 
 The first scheduled Stock Analyst runner stays local-first and dry-run for
 external services. It can import PDFs from private local storage, refresh the
-local extraction quality report, and plan market-data enrichment requests
-without making live provider calls.
+local extraction quality report, and plan market-data enrichment requests from
+magazine-backed workbook rows without making live provider calls.
 
 ## Local Runner
 
@@ -24,7 +24,8 @@ small summary JSON file. It uses these defaults:
 | Issues folder | `data/private/issues` |
 | Upload folder | `data/uploads` |
 | Env file | `.env` |
-| Market-data symbol file | `data/private/enrichment-symbols.txt` |
+| Workbook plan file | unset; set `STOCK_ANALYST_WORKBOOK_PLAN_FILE` after magazine rows are produced |
+| Market-data symbol map | `data/private/market-symbol-map.csv` |
 | Run output | `data/local-runs` |
 | Market-data budget ledger | `data/market-cache/_budgets` |
 
@@ -32,24 +33,29 @@ Override any path with environment variables:
 
 ```sh
 STOCK_ANALYST_ISSUES_DIR=/path/to/issues \
-STOCK_ANALYST_SYMBOL_FILE=/path/to/symbols.txt \
+STOCK_ANALYST_WORKBOOK_PLAN_FILE=/path/to/workbook-plan.json \
 scripts/stock-analyst-local-run
 ```
 
-The symbol file accepts one ticker per line or comma-separated tickers. Blank
-lines and `#` comments are ignored:
+The symbol map is private CSV that translates existing workbook rows to provider
+symbols. The accepted columns are `source_id`, `wkn`, `name`, and `symbol`.
+At least one of `source_id`, `wkn`, or `name` must be present per row:
 
-```text
-# review queue symbols
-AAPL
-MSFT, NVDA
+```csv
+source_id,wkn,name,symbol
+,A0MRD4,Banco Sabadell,SAB.MC
 ```
+
+Do not use free-form symbol files for live enrichment. Enrichment must be scoped
+to instruments already populated from the magazine into the workbook flow.
 
 ## Provider Budgets
 
-The local runner calls `market-data-plan`, not a live adapter. The planner uses
-the local `.env` values and enforces provider-specific hard daily planning
-budgets before any future network adapter can be enabled. Example FMP config:
+The local runner calls `market-data-plan`, not a live adapter. It only plans
+market-data requests when `STOCK_ANALYST_WORKBOOK_PLAN_FILE` points at a
+magazine-backed workbook plan. The planner uses the local `.env` values and
+enforces provider-specific hard daily planning budgets before any future network
+adapter can be enabled. Example FMP config:
 
 ```sh
 FMP_API_KEY=...
