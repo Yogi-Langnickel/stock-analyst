@@ -1,6 +1,7 @@
 import unittest
 
 from stock_analyst.recommendation_cards import extract_recommendation_cards_from_lines
+from stock_analyst.schemas import InstrumentType
 
 
 class RecommendationCardsTest(unittest.TestCase):
@@ -178,6 +179,36 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(card.base_price, "150,00 USD")
         self.assertEqual(card.omega_hebel, "3,1")
         self.assertEqual(card.runtime, "18.09.26 (8,5 Monate)")
+
+    def test_extracts_explicit_non_stock_instrument_types(self) -> None:
+        examples = (
+            ("ETF", "MSCI World ETF", "A0RPWH", InstrumentType.ETF),
+            ("Rohstoff", "Gold", "GOLD01", InstrumentType.COMMODITY),
+            ("Krypto", "Bitcoin", "BTC123", InstrumentType.CRYPTO),
+            ("Forex", "EUR/USD", "EURUSD", InstrumentType.FOREX),
+        )
+
+        for label, name, wkn, expected_type in examples:
+            with self.subTest(label=label):
+                cards = extract_recommendation_cards_from_lines(
+                    (
+                        label,
+                        name,
+                        "Akt. Kurs",
+                        "123,00 €",
+                        "WKN",
+                        wkn,
+                        "Ziel",
+                        "150,00 €",
+                    ),
+                    issue_id="2026-W03",
+                    page_number=42,
+                )
+
+                self.assertEqual(len(cards), 1)
+                self.assertEqual(cards[0].instrument_name, name)
+                self.assertEqual(cards[0].instrument_type, expected_type)
+                self.assertEqual(cards[0].wkn, wkn)
 
     def test_ignores_article_lines_that_mention_call_without_card_labels(self) -> None:
         cards = extract_recommendation_cards_from_lines(

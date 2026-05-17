@@ -35,6 +35,21 @@ CARD_END_MARKERS = {
     "Foto:",
     "Weitere Informationen",
 }
+CARD_START_TYPES = {
+    "Aktie": InstrumentType.STOCK,
+    "ETF": InstrumentType.ETF,
+    "Fonds": InstrumentType.FUND,
+    "Rohstoff": InstrumentType.COMMODITY,
+    "Commodity": InstrumentType.COMMODITY,
+    "Krypto": InstrumentType.CRYPTO,
+    "Crypto": InstrumentType.CRYPTO,
+    "Forex": InstrumentType.FOREX,
+    "Währung": InstrumentType.FOREX,
+    "Devisen": InstrumentType.FOREX,
+    "Derivat": InstrumentType.DERIVATIVE,
+    "Zertifikat": InstrumentType.DERIVATIVE,
+    "Option": InstrumentType.DERIVATIVE,
+}
 
 EURO_SUFFIX_RE = re.compile(r"(?<=\d)\s*€")
 USD_SUFFIX_RE = re.compile(r"(?<=\d)\s*\$")
@@ -178,7 +193,7 @@ def extract_recommendation_cards_from_lines(
     index = 0
     while index < len(normalized_lines):
         line = normalized_lines[index]
-        explicit_card_start = line in {"Aktie", "Derivat", "Zertifikat", "Option"}
+        explicit_card_start = _instrument_type_for_card_start(line) is not None
         derivative_card_start = (
             _looks_like_derivative(line)
             and _line_at(normalized_lines, index + 1) == "WKN"
@@ -229,12 +244,9 @@ def _parse_labelled_card(
     if risk is None:
         notes.append("risk_rating_needs_review")
 
-    instrument_type = (
-        InstrumentType.DERIVATIVE
-        if raw_type in {"Derivat", "Zertifikat", "Option"}
-        or _looks_like_derivative(instrument_name)
-        else InstrumentType.STOCK
-    )
+    instrument_type = _instrument_type_for_card_start(raw_type) or InstrumentType.STOCK
+    if instrument_type != InstrumentType.DERIVATIVE and _looks_like_derivative(instrument_name):
+        instrument_type = InstrumentType.DERIVATIVE
     recommendation_status = "new_recommendation" if "new_recommendation" in fields else None
     if "recommended_issue" in fields or "performance_since_recommendation" in fields:
         recommendation_status = recommendation_status or "follow_up"
@@ -435,6 +447,10 @@ def _rating_from_dots(value: str | None) -> int | None:
 def _looks_like_derivative(instrument_name: str) -> bool:
     lowered = instrument_name.lower()
     return any(token in lowered for token in ("call", "put", "zertifikat", "discount"))
+
+
+def _instrument_type_for_card_start(raw_type: str) -> InstrumentType | None:
+    return CARD_START_TYPES.get(raw_type)
 
 
 def _line_at(lines: Sequence[str], index: int) -> str | None:

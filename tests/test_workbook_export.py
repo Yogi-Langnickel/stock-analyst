@@ -234,6 +234,84 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][4], "Baidu Call")
         self.assertNotIn("Baidu Call", row["sourceId"])
 
+    def test_routes_explicit_asset_class_cards_to_dedicated_tabs(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            stock_update_date="2026-05-17",
+            recommendation_cards=(
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=12,
+                    instrument_name="MSCI World ETF",
+                    instrument_type=InstrumentType.ETF,
+                    wkn="A0RPWH",
+                    current_price="115,00 EUR",
+                    target=None,
+                    stop=None,
+                    chance=None,
+                    risk=None,
+                    recommendation_status="follow_up",
+                    dividend_yield="1,8 %",
+                ),
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=13,
+                    instrument_name="Gold",
+                    instrument_type=InstrumentType.COMMODITY,
+                    wkn="GOLD01",
+                    current_price="2.350 USD",
+                    target="2.600 USD",
+                    stop="2.100 USD",
+                    chance=None,
+                    risk=None,
+                    recommendation_status="new_recommendation",
+                ),
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=14,
+                    instrument_name="Bitcoin",
+                    instrument_type=InstrumentType.CRYPTO,
+                    wkn="BTC123",
+                    current_price="98.000 USD",
+                    target="120.000 USD",
+                    stop="82.000 USD",
+                    chance=None,
+                    risk=None,
+                    recommendation_status="follow_up",
+                ),
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=15,
+                    instrument_name="EUR/USD",
+                    instrument_type=InstrumentType.FOREX,
+                    wkn="EURUSD",
+                    current_price="1,0850",
+                    target="1,1200",
+                    stop="1,0650",
+                    chance=None,
+                    risk=None,
+                    recommendation_status="follow_up",
+                ),
+            ),
+        )
+
+        rows = {row["tab"]: row for row in plan.to_dict()["rows"]}
+
+        self.assertEqual(set(rows), {"ETF", "Commodities", "Crypto", "Forex"})
+        self.assertEqual(rows["ETF"]["rowKind"], "etf_recommendation")
+        self.assertEqual(rows["ETF"]["values"][0], "MSCI World ETF")
+        self.assertEqual(rows["ETF"]["values"][1], "A0RPWH")
+        self.assertEqual(rows["ETF"]["values"][-1], "2026-05-17")
+        self.assertEqual(len(rows["ETF"]["values"]), len(headers_for("ETF")))
+        self.assertEqual(rows["Commodities"]["rowKind"], "commodity_recommendation")
+        self.assertEqual(rows["Crypto"]["rowKind"], "crypto_recommendation")
+        self.assertEqual(rows["Forex"]["rowKind"], "forex_recommendation")
+        for row in rows.values():
+            self.assertEqual(row["reviewStatus"], ReviewStatus.NEEDS_REVIEW.value)
+            self.assertEqual(row["values"][-1], "2026-05-17")
+            self.assertEqual(len(row["values"]), len(headers_for(row["tab"])))
+
     def test_derivative_tip_fixtures_cover_option_and_discount_call_shapes(self) -> None:
         fixture = load_workbook_fixture("da_2026_03_other_tabs.json")
         expected_rows = [

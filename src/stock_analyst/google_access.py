@@ -133,8 +133,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         "ETF",
         (
             "ETF",
-            "Ticker",
-            "ISIN",
+            "WKN",
             "Current Price*",
             "Price at Recommendation",
             "Distribution/Yield",

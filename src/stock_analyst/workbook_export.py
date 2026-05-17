@@ -203,8 +203,18 @@ def _card_rows(
     for card in cards:
         if card.instrument_type == InstrumentType.DERIVATIVE:
             rows.append(_derivative_card_row(card, instrument_update_date=stock_update_date))
-        else:
+        elif card.instrument_type == InstrumentType.STOCK:
             rows.append(_recommendation_card_row(card, stock_update_date=stock_update_date))
+        elif card.instrument_type in {InstrumentType.ETF, InstrumentType.FUND}:
+            rows.append(_etf_card_row(card, instrument_update_date=stock_update_date))
+        elif card.instrument_type == InstrumentType.COMMODITY:
+            rows.append(_commodity_card_row(card, instrument_update_date=stock_update_date))
+        elif card.instrument_type == InstrumentType.CRYPTO:
+            rows.append(_crypto_card_row(card, instrument_update_date=stock_update_date))
+        elif card.instrument_type == InstrumentType.FOREX:
+            rows.append(_forex_card_row(card, instrument_update_date=stock_update_date))
+        else:
+            rows.append(_generic_recommendation_card_row(card))
     return rows
 
 
@@ -267,6 +277,146 @@ def _derivative_card_row(
             card.stop or "",
             ReviewStatus.NEEDS_REVIEW.value,
             instrument_update_date,
+        ),
+    )
+
+
+def _etf_card_row(
+    card: RecommendationCard,
+    *,
+    instrument_update_date: str,
+) -> WorkbookDraftRow:
+    dividend = _join_non_empty((card.dividend_yield, card.dividend_per_share_trend))
+    return WorkbookDraftRow(
+        tab="ETF",
+        row_kind="etf_recommendation",
+        source_id=_source_id("etf", card.issue_id, card.page, card.wkn),
+        issue_id=card.issue_id,
+        page=card.page,
+        review_status=ReviewStatus.NEEDS_REVIEW,
+        source_block="manual_review_pending",
+        values=(
+            card.instrument_name,
+            card.wkn or "",
+            "",
+            card.current_price or "",
+            dividend,
+            card.recommendation_status or "",
+            card.issue_id,
+            str(card.page),
+            ReviewStatus.NEEDS_REVIEW.value,
+            instrument_update_date,
+        ),
+    )
+
+
+def _commodity_card_row(
+    card: RecommendationCard,
+    *,
+    instrument_update_date: str,
+) -> WorkbookDraftRow:
+    return WorkbookDraftRow(
+        tab="Commodities",
+        row_kind="commodity_recommendation",
+        source_id=_source_id("commodity", card.issue_id, card.page, card.wkn),
+        issue_id=card.issue_id,
+        page=card.page,
+        review_status=ReviewStatus.NEEDS_REVIEW,
+        source_block="manual_review_pending",
+        values=(
+            card.instrument_name,
+            card.wkn or "",
+            "",
+            card.recommendation_status or "",
+            _join_non_empty((card.target, card.stop)),
+            card.issue_id,
+            str(card.page),
+            ReviewStatus.NEEDS_REVIEW.value,
+            instrument_update_date,
+        ),
+    )
+
+
+def _crypto_card_row(
+    card: RecommendationCard,
+    *,
+    instrument_update_date: str,
+) -> WorkbookDraftRow:
+    return WorkbookDraftRow(
+        tab="Crypto",
+        row_kind="crypto_recommendation",
+        source_id=_source_id("crypto", card.issue_id, card.page, card.wkn),
+        issue_id=card.issue_id,
+        page=card.page,
+        review_status=ReviewStatus.NEEDS_REVIEW,
+        source_block="manual_review_pending",
+        values=(
+            card.instrument_name,
+            card.wkn or "",
+            "",
+            card.current_price or "",
+            card.recommendation_status or "",
+            _join_non_empty((card.target, card.stop)),
+            card.issue_id,
+            str(card.page),
+            ReviewStatus.NEEDS_REVIEW.value,
+            instrument_update_date,
+        ),
+    )
+
+
+def _forex_card_row(
+    card: RecommendationCard,
+    *,
+    instrument_update_date: str,
+) -> WorkbookDraftRow:
+    return WorkbookDraftRow(
+        tab="Forex",
+        row_kind="forex_recommendation",
+        source_id=_source_id("forex", card.issue_id, card.page, card.wkn),
+        issue_id=card.issue_id,
+        page=card.page,
+        review_status=ReviewStatus.NEEDS_REVIEW,
+        source_block="manual_review_pending",
+        values=(
+            card.instrument_name,
+            "",
+            card.recommendation_status or "",
+            _join_non_empty((card.current_price, card.target, card.stop)),
+            card.issue_id,
+            str(card.page),
+            ReviewStatus.NEEDS_REVIEW.value,
+            instrument_update_date,
+        ),
+    )
+
+
+def _generic_recommendation_card_row(card: RecommendationCard) -> WorkbookDraftRow:
+    source_id = _source_id("card", card.issue_id, card.page, card.wkn)
+    return WorkbookDraftRow(
+        tab="Recommendation Cards",
+        row_kind="recommendation_card",
+        source_id=source_id,
+        issue_id=card.issue_id,
+        page=card.page,
+        review_status=ReviewStatus.NEEDS_REVIEW,
+        source_block="manual_review_pending",
+        values=(
+            source_id,
+            card.issue_id,
+            str(card.page),
+            card.instrument_name,
+            card.wkn or "",
+            _chance_risk(card.chance, card.risk),
+            card.recommendation_status or "",
+            card.current_price or "",
+            card.target or "",
+            card.stop or "",
+            card.market_cap or "",
+            card.kgv_26e or "",
+            card.kuv_26e or "",
+            _join_non_empty((card.dividend_yield, card.dividend_per_share_trend)),
+            ReviewStatus.NEEDS_REVIEW.value,
         ),
     )
 

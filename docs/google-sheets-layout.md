@@ -50,7 +50,7 @@ issues have been extracted and the repeated sections are clearer.
 
 3. `ETF`
    ETF-related recommendations and fund context such as holdings, distributions,
-   fees, issuer/family, index exposure, and ETF-specific enrichment. The
+   fees, issuer/family, index exposure, WKN, and ETF-specific enrichment. The
    row-level `date updated` field is the last field.
 
 4. `Commodities`
@@ -132,7 +132,7 @@ the live Sheet; those should be added only after this layout is accepted.
 | --- | --- | --- | --- | --- | --- |
 | `Navigation Dashboard` | `layout_only` | 1 row, 0 cols | `A1` | Workbook links and processing status | Spreadsheet-native links to the main tabs, last issue processed, parser-backed/planned legend. |
 | `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Explicit stock mentions only. `Current Price*` comes from daily enrichment; `Price at Recommendation` is the printed magazine value; `date updated` is the last row field. |
-| `ETF` | `planned` | 2 rows, 2 cols | `A2` | Row 1 fund context | Fund holdings, fee, distribution/yield, and index-exposure context once parser-backed; `date updated` is the last row field. |
+| `ETF` | `planned` | 2 rows, 2 cols | `A2` | Row 1 fund context | Fund holdings, fee, WKN, distribution/yield, and index-exposure context once parser-backed; `date updated` is the last row field. |
 | `Commodities` | `planned` | 2 rows, 1 col | `A2` | Row 1 commodity context | Spot/futures context, macro note, related instruments; `date updated` is the last row field. |
 | `Options` | `planned` | 2 rows, 1 col | `A2` | Row 1 risk/stale-data notes | Dashboard for option summaries; detailed derivative cards currently emit to `Derivative Tips`; `date updated` is the last row field. |
 | `Crypto` | `planned` | 2 rows, 1 col | `A2` | Row 1 digital-asset context | Crypto recommendations, exchange/liquidity context, and digital-asset risk notes; `date updated` is the last row field. |
