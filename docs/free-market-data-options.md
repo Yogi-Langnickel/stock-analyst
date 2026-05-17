@@ -16,6 +16,7 @@ source fields or fill missing recommendation details.
 | `stooq_csv` | Local CSV parser only | None | No | First deterministic price-context parser |
 | `alpha_vantage` | Metadata only | `ALPHA_VANTAGE_API_KEY` | No | Optional future key-based daily and cross-asset context |
 | `twelve_data` | Metadata only | `TWELVE_DATA_API_KEY` | No | Optional future quote/time-series/reference context |
+| `fmp` | Metadata and dry-run planner only | `FMP_API_KEY` | No | Optional future Financial Modeling Prep quote/profile/fundamentals context |
 | `sec_companyfacts` | Metadata only | No key; `SEC_USER_AGENT` before live access | No | Optional future US issuer fundamentals and filing metadata |
 
 `STOCK_ANALYST_MARKET_DATA_PROVIDER` defaults to `disabled`. Selecting
@@ -48,7 +49,17 @@ because adapters, cache policy, throttling, and terms checks are not complete.
    - Treat as optional because it requires a key and has per-minute credit
      limits.
 
-5. SEC companyfacts and filings
+5. Financial Modeling Prep
+   - Useful later for quote, profile, and fundamentals exploration.
+   - Current implementation is metadata-only plus a dry-run request planner.
+   - `FMP_API_KEY` is the expected future credential, but the planner does not
+     read, store, or expose it.
+   - Supported dry-run planning endpoints start with `batch-quote-short`,
+     `profile`, and `dividends`.
+   - Keep a hard planning budget of 235 calls/day and plan against a
+     512MB/month bandwidth ceiling before live access.
+
+6. SEC companyfacts and filings
    - Official free source for US fundamentals and filing metadata.
    - Use for issuer/company context, not price validation.
 
@@ -63,6 +74,10 @@ because adapters, cache policy, throttling, and terms checks are not complete.
 - Twelve Data: Basic is listed as free with 8 API credits per minute and 800 per
   day, with endpoint-specific credit weights. Source:
   <https://twelvedata.com/pricing>.
+- Financial Modeling Prep: first project slice is bounded to metadata and
+  dry-run planning only. Treat the configured limit as a hard 235 calls/day
+  budget with a 512MB/month bandwidth planning note until live terms, endpoint
+  weights, caching, and accounting are reviewed.
 - SEC companyfacts: the official SEC API exposes
   `data.sec.gov/api/xbrl/companyfacts/CIK##########.json`, bulk companyfacts ZIP
   data, and real-time API updates. SEC fair-access guidance limits each user to
@@ -128,3 +143,22 @@ because adapters, cache policy, throttling, and terms checks are not complete.
   sensitive query structure.
 - TTL expiry is computed only from supplied metadata; live providers remain
   disabled and no network access is added.
+
+## Fifth Slice Implemented
+
+- Financial Modeling Prep provider metadata is available as `fmp` with future
+  credential env var `FMP_API_KEY`.
+- FMP remains metadata-only and `network_access=False`; selecting it with a key
+  still reports that the live adapter is not implemented.
+- `stock_analyst.market_data.plan_fmp_enrichment_requests` creates dry-run
+  `batch-quote-short`, `profile`, and `dividends` request descriptors without
+  reading secrets or making network calls.
+- The planner enforces a hard 235 calls/day default budget, denies call 236,
+  treats local cache hits as budget-free, and carries the 512MB/month bandwidth
+  planning note.
+- `scripts/stock-analyst market-data-plan --env-file .env --symbol AAPL`
+  supports dry-run planning from local env files. It recognizes
+  `FMP_API_KEY`, `STOCK_ANALYST_MARKET_DATA_CACHE_DIR`,
+  `STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT`, and
+  `STOCK_ANALYST_MARKET_DATA_TERMS_VERSION`, but command output exposes only
+  whether credentials are configured.

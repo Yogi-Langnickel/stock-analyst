@@ -30,6 +30,7 @@ Usage:
   scripts/stock-analyst recommendation-cards <pdf> [args...]
   scripts/stock-analyst section-inventory <pdf> [args...]
   scripts/stock-analyst dividend-strategy <pdf> [args...]
+  scripts/stock-analyst market-data-plan [args...]
   scripts/stock-analyst python <python args...>
 
 The wrapper prefers .venv/bin/python when present. It does not need shell
@@ -61,7 +62,7 @@ case "${COMMAND}" in
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "$@"
     ;;
-  workbook-export-plan|recommendation-cards|section-inventory|dividend-strategy|process-pdf|import-pdf-folder|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap)
+  workbook-export-plan|recommendation-cards|section-inventory|dividend-strategy|market-data-plan|process-pdf|import-pdf-folder|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap)
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "${COMMAND}" "$@"
     ;;

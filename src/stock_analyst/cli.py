@@ -23,6 +23,14 @@ from stock_analyst.intake import (
     preview_pdf_intake,
     store_pdf_upload,
 )
+from stock_analyst.market_data import (
+    DEFAULT_FMP_ENDPOINTS,
+    DEFAULT_PROVIDER_ENV,
+    MarketDataEnrichmentPlan,
+    MarketDataPlanningConfig,
+    load_market_data_planning_config,
+    plan_fmp_enrichment_requests,
+)
 from stock_analyst.pipeline import (
     PdfProcessingError,
     build_draft_review_status,
@@ -193,6 +201,32 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=40,
         help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    market_data_plan = subcommands.add_parser(
+        "market-data-plan",
+        help="Build a dry-run market-data enrichment request and budget plan.",
+    )
+    market_data_plan.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Optional local env file with market-data config. Do not commit it.",
+    )
+    market_data_plan.add_argument(
+        "--symbol",
+        action="append",
+        default=[],
+        help="Ticker symbol to include. Repeat for multiple symbols.",
+    )
+    market_data_plan.add_argument(
+        "--endpoint",
+        action="append",
+        default=None,
+        help=(
+            "Dry-run endpoint to plan. Defaults to "
+            f"{', '.join(DEFAULT_FMP_ENDPOINTS)}."
+        ),
     )
 
     google_access_smoke = subcommands.add_parser(
@@ -432,6 +466,32 @@ def run_workbook_export_plan(
     return plan.to_dict()
 
 
+def run_market_data_plan_command(
+    *,
+    env_file: Path | None = None,
+    symbols: tuple[str, ...] = (),
+    endpoints: tuple[str, ...] | None = None,
+) -> dict[str, object]:
+    config = load_market_data_planning_config(
+        env_file=env_file,
+        default_provider="fmp",
+    )
+    if config.provider_config.provider.provider_id != "fmp":
+        raise ValueError(
+            "only the FMP dry-run market-data planner is implemented; "
+            f"{DEFAULT_PROVIDER_ENV}=fmp is required"
+        )
+
+    plan = plan_fmp_enrichment_requests(
+        symbols,
+        endpoints=endpoints or DEFAULT_FMP_ENDPOINTS,
+        cache_root=config.cache_dir,
+        daily_call_limit=config.daily_call_limit,
+        terms_version=config.terms_version,
+    )
+    return _market_data_plan_to_dict(plan, config)
+
+
 def run_google_access_smoke_command(
     *,
     env_file: Path | None = None,
@@ -461,6 +521,46 @@ def run_google_sheets_bootstrap_command(
 ) -> dict[str, object]:
     config = load_google_access_config(env_file=env_file)
     return bootstrap_google_sheet(config, write_headers=write_headers)
+
+
+def _market_data_plan_to_dict(
+    plan: MarketDataEnrichmentPlan,
+    config: MarketDataPlanningConfig,
+) -> dict[str, object]:
+    return {
+        "dryRun": plan.dry_run,
+        "provider": plan.provider,
+        "providerEnabled": config.provider_config.enabled,
+        "providerStatus": config.provider_config.provider.status,
+        "providerReason": config.provider_config.reason,
+        "credentialConfigured": config.credential_configured,
+        "networkAccess": plan.network_access,
+        "cacheDir": str(config.cache_dir),
+        "termsVersion": config.terms_version,
+        "dailyCallLimit": plan.daily_call_limit,
+        "plannedCallCount": plan.planned_call_count,
+        "chargedCallCount": plan.charged_call_count,
+        "cacheHitCount": plan.cache_hit_count,
+        "deniedCallCount": plan.denied_call_count,
+        "remainingDailyCallBudget": plan.remaining_daily_call_budget,
+        "bandwidthNote": plan.bandwidth_note,
+        "status": plan.status,
+        "reason": plan.reason,
+        "requests": [
+            {
+                "provider": request.descriptor.provider,
+                "symbol": request.descriptor.symbol,
+                "endpoint": request.descriptor.endpoint,
+                "params": dict(request.descriptor.params),
+                "cacheKey": request.cache_key,
+                "cachePath": str(request.cache_path),
+                "budgetAction": request.budget_action,
+                "consumesBudget": request.consumes_budget,
+                "reason": request.reason,
+            }
+            for request in plan.requests
+        ],
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -513,6 +613,12 @@ def main(argv: list[str] | None = None) -> int:
                 args.pdf,
                 issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "market-data-plan":
+            result = run_market_data_plan_command(
+                env_file=args.env_file,
+                symbols=tuple(args.symbol),
+                endpoints=tuple(args.endpoint) if args.endpoint else None,
             )
         elif args.command == "google-access-smoke":
             result = run_google_access_smoke_command(env_file=args.env_file)

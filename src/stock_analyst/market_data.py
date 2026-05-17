@@ -17,6 +17,11 @@ from typing import Mapping
 
 DEFAULT_PROVIDER_ENV = "STOCK_ANALYST_MARKET_DATA_PROVIDER"
 DEFAULT_MARKET_CACHE_DIR = Path("data/market-cache")
+MARKET_CACHE_DIR_ENV = "STOCK_ANALYST_MARKET_DATA_CACHE_DIR"
+MARKET_DAILY_CALL_LIMIT_ENV = "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT"
+MARKET_TERMS_VERSION_ENV = "STOCK_ANALYST_MARKET_DATA_TERMS_VERSION"
+DEFAULT_FMP_DAILY_CALL_LIMIT = 235
+DEFAULT_FMP_ENDPOINTS = ("batch-quote-short", "profile", "dividends")
 SECRET_PARAM_MARKERS = ("authorization", "credential", "key", "password", "secret", "token")
 
 
@@ -33,6 +38,8 @@ class ProviderMetadata:
     safety_notes: tuple[str, ...] = ()
     rate_limit_notes: tuple[str, ...] = ()
     cache_required_before_live: bool = True
+    daily_call_budget: int | None = None
+    bandwidth_notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -41,6 +48,15 @@ class MarketDataConfig:
     provider: ProviderMetadata
     enabled: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class MarketDataPlanningConfig:
+    provider_config: MarketDataConfig
+    cache_dir: Path
+    daily_call_limit: int
+    terms_version: str | None = None
+    credential_configured: bool = False
 
 
 PROVIDER_METADATA: dict[str, ProviderMetadata] = {
@@ -98,6 +114,26 @@ PROVIDER_METADATA: dict[str, ProviderMetadata] = {
         ),
         rate_limit_notes=("Credit accounting is required before any live request scheduling.",),
     ),
+    "fmp": ProviderMetadata(
+        provider_id="fmp",
+        display_name="Financial Modeling Prep",
+        status="metadata_only",
+        credentials_required=True,
+        network_access=False,
+        credential_env_var="FMP_API_KEY",
+        purpose="Optional future quote, profile, and fundamentals context for reviewer enrichment.",
+        safety_notes=(
+            "Adapter is not implemented.",
+            "Dry-run planning must not read or expose FMP_API_KEY.",
+            "Cache, call-budget accounting, and bandwidth accounting are required before live calls.",
+        ),
+        rate_limit_notes=(
+            "Hard dry-run planning budget: 235 calls per day.",
+            "Live adapter must stop scheduling before this budget is exceeded.",
+        ),
+        daily_call_budget=DEFAULT_FMP_DAILY_CALL_LIMIT,
+        bandwidth_notes=("Plan against a 512MB/month bandwidth ceiling before live access.",),
+    ),
     "sec_companyfacts": ProviderMetadata(
         provider_id="sec_companyfacts",
         display_name="SEC companyfacts",
@@ -121,6 +157,46 @@ class MarketDataRequestDescriptor:
     symbol: str
     endpoint: str
     params: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class MarketDataPlannedRequest:
+    descriptor: MarketDataRequestDescriptor
+    cache_key: str
+    cache_path: Path
+    budget_action: str
+    consumes_budget: bool
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class MarketDataBudgetLedger:
+    daily_call_limit: int
+    charged_call_count: int
+    cache_hit_count: int
+    denied_call_count: int
+
+    @property
+    def remaining_daily_call_budget(self) -> int:
+        return max(self.daily_call_limit - self.charged_call_count, 0)
+
+
+@dataclass(frozen=True)
+class MarketDataEnrichmentPlan:
+    provider: str
+    status: str
+    dry_run: bool
+    network_access: bool
+    daily_call_limit: int
+    planned_call_count: int
+    charged_call_count: int
+    cache_hit_count: int
+    denied_call_count: int
+    remaining_daily_call_budget: int
+    bandwidth_note: str
+    ledger: MarketDataBudgetLedger
+    requests: tuple[MarketDataPlannedRequest, ...] = ()
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -188,6 +264,142 @@ def describe_market_data_request(
         symbol=normalized_symbol,
         endpoint=normalized_endpoint,
         params=_normalize_safe_cache_params(params or {}),
+    )
+
+
+def plan_fmp_enrichment_requests(
+    symbols: tuple[str, ...],
+    *,
+    endpoints: tuple[str, ...] = DEFAULT_FMP_ENDPOINTS,
+    cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
+    daily_call_limit: int = DEFAULT_FMP_DAILY_CALL_LIMIT,
+    terms_version: str | None = None,
+) -> MarketDataEnrichmentPlan:
+    """Plan FMP enrichment descriptors without reading secrets or making network calls."""
+
+    provider = PROVIDER_METADATA["fmp"]
+    if daily_call_limit <= 0:
+        raise ValueError("FMP daily call limit must be positive")
+
+    normalized_symbols = _normalize_unique_symbols(symbols)
+    normalized_endpoints = _normalize_unique_endpoints(endpoints)
+    planned_call_count = len(normalized_symbols) * len(normalized_endpoints)
+    bandwidth_note = provider.bandwidth_notes[0] if provider.bandwidth_notes else ""
+
+    if not normalized_symbols:
+        ledger = MarketDataBudgetLedger(
+            daily_call_limit=daily_call_limit,
+            charged_call_count=0,
+            cache_hit_count=0,
+            denied_call_count=0,
+        )
+        return MarketDataEnrichmentPlan(
+            provider=provider.provider_id,
+            status="empty",
+            dry_run=True,
+            network_access=False,
+            daily_call_limit=daily_call_limit,
+            planned_call_count=0,
+            charged_call_count=0,
+            cache_hit_count=0,
+            denied_call_count=0,
+            remaining_daily_call_budget=ledger.remaining_daily_call_budget,
+            bandwidth_note=bandwidth_note,
+            ledger=ledger,
+            reason="no symbols were supplied for FMP enrichment planning",
+        )
+
+    requests: list[MarketDataPlannedRequest] = []
+    charged_call_count = 0
+    cache_hit_count = 0
+    denied_call_count = 0
+    normalized_terms_version = terms_version.strip() if terms_version else None
+
+    for symbol in normalized_symbols:
+        for endpoint in normalized_endpoints:
+            descriptor = describe_market_data_request(
+                provider=provider.provider_id,
+                symbol=symbol,
+                endpoint=endpoint,
+                params={"symbol": symbol},
+            )
+            cache = build_market_data_cache_metadata(
+                descriptor,
+                cache_root=cache_root,
+                terms_version=normalized_terms_version,
+            )
+
+            if cache.cache_path.exists():
+                cache_hit_count += 1
+                requests.append(
+                    MarketDataPlannedRequest(
+                        descriptor=descriptor,
+                        cache_key=cache.cache_key,
+                        cache_path=cache.cache_path,
+                        budget_action="cache_hit",
+                        consumes_budget=False,
+                        reason="local cache hit; budget not consumed",
+                    )
+                )
+                continue
+
+            if charged_call_count >= daily_call_limit:
+                denied_call_count += 1
+                requests.append(
+                    MarketDataPlannedRequest(
+                        descriptor=descriptor,
+                        cache_key=cache.cache_key,
+                        cache_path=cache.cache_path,
+                        budget_action="denied",
+                        consumes_budget=False,
+                        reason=(
+                            f"hard daily FMP call limit reached at {daily_call_limit} calls; "
+                            "live calls remain disabled"
+                        ),
+                    )
+                )
+                continue
+
+            charged_call_count += 1
+            requests.append(
+                MarketDataPlannedRequest(
+                    descriptor=descriptor,
+                    cache_key=cache.cache_key,
+                    cache_path=cache.cache_path,
+                    budget_action="charge",
+                    consumes_budget=True,
+                )
+            )
+
+    ledger = MarketDataBudgetLedger(
+        daily_call_limit=daily_call_limit,
+        charged_call_count=charged_call_count,
+        cache_hit_count=cache_hit_count,
+        denied_call_count=denied_call_count,
+    )
+    status = "over_budget" if denied_call_count else "planned"
+    reason = (
+        "planned FMP enrichment requests exceed the hard daily "
+        f"limit of {daily_call_limit} calls"
+        if denied_call_count
+        else None
+    )
+
+    return MarketDataEnrichmentPlan(
+        provider=provider.provider_id,
+        status=status,
+        dry_run=True,
+        network_access=False,
+        daily_call_limit=daily_call_limit,
+        planned_call_count=planned_call_count,
+        charged_call_count=charged_call_count,
+        cache_hit_count=cache_hit_count,
+        denied_call_count=denied_call_count,
+        remaining_daily_call_budget=ledger.remaining_daily_call_budget,
+        bandwidth_note=bandwidth_note,
+        ledger=ledger,
+        requests=tuple(requests),
+        reason=reason,
     )
 
 
@@ -300,6 +512,63 @@ def load_market_data_config(env: Mapping[str, str] | None = None) -> MarketDataC
     )
 
 
+def load_market_data_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        raise ValueError(f"market data env file does not exist: {path}")
+
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise ValueError(f"invalid market data env line {line_number}: expected KEY=VALUE")
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if not key:
+            raise ValueError(f"invalid market data env line {line_number}: key is empty")
+        values[key] = value
+
+    return values
+
+
+def load_market_data_planning_config(
+    *,
+    env: Mapping[str, str] | None = None,
+    env_file: Path | None = None,
+    default_provider: str = "disabled",
+) -> MarketDataPlanningConfig:
+    source = dict(os.environ if env is None else env)
+    if not source.get(DEFAULT_PROVIDER_ENV):
+        source[DEFAULT_PROVIDER_ENV] = default_provider
+    if env_file is not None:
+        source.update(load_market_data_env_file(env_file))
+        if not source.get(DEFAULT_PROVIDER_ENV):
+            source[DEFAULT_PROVIDER_ENV] = default_provider
+
+    provider_config = load_market_data_config(source)
+    daily_call_limit = _parse_positive_int_env(
+        source,
+        MARKET_DAILY_CALL_LIMIT_ENV,
+        provider_config.provider.daily_call_budget or DEFAULT_FMP_DAILY_CALL_LIMIT,
+    )
+    cache_dir = Path(source.get(MARKET_CACHE_DIR_ENV, str(DEFAULT_MARKET_CACHE_DIR))).expanduser()
+    terms_version = source.get(MARKET_TERMS_VERSION_ENV)
+    normalized_terms_version = terms_version.strip() if terms_version else None
+    credential_env_var = provider_config.provider.credential_env_var
+    credential_configured = bool(credential_env_var and source.get(credential_env_var))
+
+    return MarketDataPlanningConfig(
+        provider_config=provider_config,
+        cache_dir=cache_dir,
+        daily_call_limit=daily_call_limit,
+        terms_version=normalized_terms_version,
+        credential_configured=credential_configured,
+    )
+
+
 def market_data_disabled(symbol: str) -> MarketDataResult:
     return MarketDataResult(
         symbol=symbol,
@@ -366,6 +635,54 @@ def _normalize_safe_cache_params(params: Mapping[str, object]) -> tuple[tuple[st
         normalized.append((key, str(raw_value)))
 
     return tuple(sorted(normalized))
+
+
+def _parse_positive_int_env(source: Mapping[str, str], name: str, default: int) -> int:
+    raw_value = source.get(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+
+    try:
+        parsed = int(raw_value)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+
+    if parsed <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
+def _normalize_unique_symbols(symbols: tuple[str, ...]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for raw_symbol in symbols:
+        symbol = raw_symbol.strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        normalized.append(symbol)
+        seen.add(symbol)
+
+    return tuple(normalized)
+
+
+def _normalize_unique_endpoints(endpoints: tuple[str, ...]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for raw_endpoint in endpoints:
+        endpoint = raw_endpoint.strip().lower()
+        if not endpoint:
+            raise ValueError("FMP enrichment endpoint cannot be blank")
+        if endpoint in seen:
+            continue
+        normalized.append(endpoint)
+        seen.add(endpoint)
+
+    if not normalized:
+        raise ValueError("at least one FMP enrichment endpoint is required")
+
+    return tuple(normalized)
 
 
 def _slug_for_cache(value: str) -> str:

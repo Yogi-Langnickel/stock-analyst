@@ -48,10 +48,12 @@ Created: 2026-05-15
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
-  Vantage, Twelve Data, and SEC companyfacts, but live adapters are not
-  implemented. Cache request metadata can be built deterministically for known
-  providers without creating files, exposing credential-like parameters, or
-  making network calls.
+  Vantage, Twelve Data, FMP, and SEC companyfacts, but live adapters are not
+  implemented. Cache request metadata and FMP dry-run request plans can be
+  built deterministically for known providers without creating files, exposing
+  credential-like parameters, reading secrets, or making network calls. FMP
+  planning defaults to a 235 calls/day hard limit, treats local cache hits as
+  budget-free, and carries a 512MB/month bandwidth note.
 - Manual review remains mandatory before family-visible digest rows or exports.
 - Next real-corpus unblock is user-provided private PDFs from the last two years
   in ignored local `data/private/issues/` or a private Drive folder. Local
@@ -80,6 +82,8 @@ Created: 2026-05-15
   interpreter.
 - `scripts/stock-analyst workbook-export-plan ./data/private/issues/DA_2026_03.pdf`:
   run the local workbook plan through the venv-aware wrapper.
+- `scripts/stock-analyst market-data-plan --env-file .env --symbol AAPL`:
+  dry-run FMP enrichment planning with local env-file config and no network.
 - `PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests`
 - `PYTHONPATH=src python3 -m unittest discover tests`
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`
