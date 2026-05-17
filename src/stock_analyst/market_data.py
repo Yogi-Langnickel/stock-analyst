@@ -18,6 +18,7 @@ from typing import Mapping
 DEFAULT_PROVIDER_ENV = "STOCK_ANALYST_MARKET_DATA_PROVIDER"
 DEFAULT_MARKET_CACHE_DIR = Path("data/market-cache")
 MARKET_CACHE_DIR_ENV = "STOCK_ANALYST_MARKET_DATA_CACHE_DIR"
+MARKET_BUDGET_DIR_ENV = "STOCK_ANALYST_MARKET_DATA_BUDGET_DIR"
 MARKET_DAILY_CALL_LIMIT_ENV = "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT"
 MARKET_TERMS_VERSION_ENV = "STOCK_ANALYST_MARKET_DATA_TERMS_VERSION"
 DEFAULT_ALPHA_VANTAGE_DAILY_CALL_LIMIT = 25
@@ -73,6 +74,7 @@ class MarketDataConfig:
 class MarketDataPlanningConfig:
     provider_config: MarketDataConfig
     cache_dir: Path
+    budget_dir: Path
     daily_call_limit: int
     terms_version: str | None = None
     credential_configured: bool = False
@@ -234,10 +236,16 @@ class MarketDataBudgetLedger:
     charged_call_count: int
     cache_hit_count: int
     denied_call_count: int
+    prior_charged_call_count: int = 0
 
     @property
     def remaining_daily_call_budget(self) -> int:
-        return max(self.daily_call_limit - self.charged_call_count, 0)
+        return max(
+            self.daily_call_limit
+            - self.prior_charged_call_count
+            - self.charged_call_count,
+            0,
+        )
 
 
 @dataclass(frozen=True)
@@ -249,6 +257,7 @@ class MarketDataEnrichmentPlan:
     daily_call_limit: int
     planned_call_count: int
     charged_call_count: int
+    prior_charged_call_count: int
     cache_hit_count: int
     denied_call_count: int
     remaining_daily_call_budget: int
@@ -272,6 +281,15 @@ class MarketDataCacheMetadata:
     source_url_hash: str | None = None
     terms_checked_at: date | None = None
     terms_version: str | None = None
+
+
+@dataclass(frozen=True)
+class MarketDataBudgetState:
+    provider: str
+    budget_date: date
+    daily_call_limit: int
+    charged_call_count: int = 0
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -333,6 +351,7 @@ def plan_market_data_enrichment_requests(
     endpoints: tuple[str, ...] | None = None,
     cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
     daily_call_limit: int | None = None,
+    prior_charged_call_count: int = 0,
     terms_version: str | None = None,
 ) -> MarketDataEnrichmentPlan:
     """Plan provider enrichment descriptors without secrets or network calls."""
@@ -347,6 +366,8 @@ def plan_market_data_enrichment_requests(
         raise ValueError(f"{provider.provider_id} daily call limit must be configured")
     if resolved_limit <= 0:
         raise ValueError(f"{provider.provider_id} daily call limit must be positive")
+    if prior_charged_call_count < 0:
+        raise ValueError(f"{provider.provider_id} prior charged call count cannot be negative")
 
     normalized_symbols = _normalize_unique_symbols(symbols)
     normalized_endpoints = _normalize_unique_endpoints(
@@ -363,6 +384,7 @@ def plan_market_data_enrichment_requests(
             charged_call_count=0,
             cache_hit_count=0,
             denied_call_count=0,
+            prior_charged_call_count=prior_charged_call_count,
         )
         return MarketDataEnrichmentPlan(
             provider=provider.provider_id,
@@ -372,6 +394,7 @@ def plan_market_data_enrichment_requests(
             daily_call_limit=resolved_limit,
             planned_call_count=0,
             charged_call_count=0,
+            prior_charged_call_count=prior_charged_call_count,
             cache_hit_count=0,
             denied_call_count=0,
             remaining_daily_call_budget=ledger.remaining_daily_call_budget,
@@ -414,7 +437,7 @@ def plan_market_data_enrichment_requests(
                 )
                 continue
 
-            if charged_call_count >= resolved_limit:
+            if prior_charged_call_count + charged_call_count >= resolved_limit:
                 denied_call_count += 1
                 requests.append(
                     MarketDataPlannedRequest(
@@ -448,6 +471,7 @@ def plan_market_data_enrichment_requests(
         charged_call_count=charged_call_count,
         cache_hit_count=cache_hit_count,
         denied_call_count=denied_call_count,
+        prior_charged_call_count=prior_charged_call_count,
     )
     status = "over_budget" if denied_call_count else "planned"
     reason = (
@@ -465,6 +489,7 @@ def plan_market_data_enrichment_requests(
         daily_call_limit=resolved_limit,
         planned_call_count=planned_call_count,
         charged_call_count=charged_call_count,
+        prior_charged_call_count=prior_charged_call_count,
         cache_hit_count=cache_hit_count,
         denied_call_count=denied_call_count,
         remaining_daily_call_budget=ledger.remaining_daily_call_budget,
@@ -481,6 +506,7 @@ def plan_fmp_enrichment_requests(
     endpoints: tuple[str, ...] = DEFAULT_FMP_ENDPOINTS,
     cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
     daily_call_limit: int = DEFAULT_FMP_DAILY_CALL_LIMIT,
+    prior_charged_call_count: int = 0,
     terms_version: str | None = None,
 ) -> MarketDataEnrichmentPlan:
     """Plan FMP enrichment descriptors without reading secrets or making network calls."""
@@ -491,6 +517,7 @@ def plan_fmp_enrichment_requests(
         endpoints=endpoints,
         cache_root=cache_root,
         daily_call_limit=daily_call_limit,
+        prior_charged_call_count=prior_charged_call_count,
         terms_version=terms_version,
     )
 
@@ -549,6 +576,87 @@ def build_market_data_cache_metadata(
         terms_checked_at=terms_checked_at,
         terms_version=normalized_terms_version,
     )
+
+
+def market_data_budget_path(
+    *,
+    provider: str,
+    budget_date: date,
+    budget_root: Path,
+) -> Path:
+    normalized_provider = provider.strip().lower()
+    if normalized_provider not in PROVIDER_METADATA:
+        raise ValueError(f"unknown market data provider: {normalized_provider}")
+    return budget_root / f"{budget_date.isoformat()}-{normalized_provider}.json"
+
+
+def load_market_data_budget_state(
+    *,
+    provider: str,
+    budget_date: date,
+    daily_call_limit: int,
+    budget_root: Path,
+) -> MarketDataBudgetState:
+    path = market_data_budget_path(
+        provider=provider,
+        budget_date=budget_date,
+        budget_root=budget_root,
+    )
+    if not path.exists():
+        return MarketDataBudgetState(
+            provider=provider.strip().lower(),
+            budget_date=budget_date,
+            daily_call_limit=daily_call_limit,
+        )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"market data budget file is not an object: {path}")
+
+    stored_provider = str(payload.get("provider") or "").strip().lower()
+    stored_date = date.fromisoformat(str(payload.get("budgetDate")))
+    if stored_provider != provider.strip().lower() or stored_date != budget_date:
+        raise ValueError(f"market data budget file does not match requested provider/date: {path}")
+
+    charged_call_count = _non_negative_int_payload(payload, "chargedCallCount")
+    stored_limit = _non_negative_int_payload(payload, "dailyCallLimit")
+    updated_at = _optional_datetime_payload(payload.get("updatedAt"))
+
+    return MarketDataBudgetState(
+        provider=stored_provider,
+        budget_date=stored_date,
+        daily_call_limit=stored_limit or daily_call_limit,
+        charged_call_count=charged_call_count,
+        updated_at=updated_at,
+    )
+
+
+def write_market_data_budget_state(
+    state: MarketDataBudgetState,
+    *,
+    budget_root: Path,
+) -> Path:
+    if state.charged_call_count < 0:
+        raise ValueError("market data charged_call_count cannot be negative")
+    if state.daily_call_limit <= 0:
+        raise ValueError("market data daily_call_limit must be positive")
+
+    path = market_data_budget_path(
+        provider=state.provider,
+        budget_date=state.budget_date,
+        budget_root=budget_root,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    updated_at = state.updated_at or datetime.now(timezone.utc)
+    payload = {
+        "provider": state.provider,
+        "budgetDate": state.budget_date.isoformat(),
+        "dailyCallLimit": state.daily_call_limit,
+        "chargedCallCount": state.charged_call_count,
+        "updatedAt": updated_at.isoformat(),
+    }
+    path.write_text(f"{json.dumps(payload, sort_keys=True)}\n", encoding="utf-8")
+    return path
 
 
 def load_market_data_config(env: Mapping[str, str] | None = None) -> MarketDataConfig:
@@ -684,6 +792,9 @@ def load_market_data_planning_config(
         provider_config.provider.daily_call_budget or DEFAULT_FMP_DAILY_CALL_LIMIT,
     )
     cache_dir = Path(source.get(MARKET_CACHE_DIR_ENV, str(DEFAULT_MARKET_CACHE_DIR))).expanduser()
+    budget_dir = Path(
+        source.get(MARKET_BUDGET_DIR_ENV, str(cache_dir / "_budgets"))
+    ).expanduser()
     terms_version = source.get(MARKET_TERMS_VERSION_ENV)
     normalized_terms_version = terms_version.strip() if terms_version else None
     credential_configured = _configured_credential_env_var(
@@ -694,6 +805,7 @@ def load_market_data_planning_config(
     return MarketDataPlanningConfig(
         provider_config=provider_config,
         cache_dir=cache_dir,
+        budget_dir=budget_dir,
         daily_call_limit=daily_call_limit,
         terms_version=normalized_terms_version,
         credential_configured=credential_configured,
@@ -783,6 +895,23 @@ def _parse_positive_int_env(source: Mapping[str, str], name: str, default: int) 
     return parsed
 
 
+def _non_negative_int_payload(payload: Mapping[str, object], key: str) -> int:
+    raw_value = payload.get(key, 0)
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"market data budget {key} must be a non-negative integer") from error
+    if parsed < 0:
+        raise ValueError(f"market data budget {key} must be a non-negative integer")
+    return parsed
+
+
+def _optional_datetime_payload(value: object) -> datetime | None:
+    if value is None:
+        return None
+    return _normalize_cache_datetime(datetime.fromisoformat(str(value)))
+
+
 def _normalize_unique_symbols(symbols: tuple[str, ...]) -> tuple[str, ...]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -804,14 +933,14 @@ def _normalize_unique_endpoints(endpoints: tuple[str, ...]) -> tuple[str, ...]:
     for raw_endpoint in endpoints:
         endpoint = raw_endpoint.strip().lower()
         if not endpoint:
-            raise ValueError("FMP enrichment endpoint cannot be blank")
+            raise ValueError("market data enrichment endpoint cannot be blank")
         if endpoint in seen:
             continue
         normalized.append(endpoint)
         seen.add(endpoint)
 
     if not normalized:
-        raise ValueError("at least one FMP enrichment endpoint is required")
+        raise ValueError("at least one market data enrichment endpoint is required")
 
     return tuple(normalized)
 

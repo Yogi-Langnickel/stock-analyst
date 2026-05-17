@@ -51,10 +51,11 @@ Created: 2026-05-15
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
   Vantage, Twelve Data, FMP, and SEC companyfacts, but live adapters are not
   implemented. Cache request metadata and FMP dry-run request plans can be
-  built deterministically for known providers without creating files, exposing
-  credential-like parameters, reading secrets, or making network calls. FMP
-  planning defaults to a 235 calls/day hard limit, treats local cache hits as
-  budget-free, and carries a 512MB/month bandwidth note.
+  built deterministically for known providers without exposing credential-like
+  parameters, reading secrets, or making network calls. Dry-run planning reads a
+  local provider/day budget ledger so prior same-day usage counts against the
+  hard cap. FMP planning defaults to a 235 calls/day hard limit, treats local
+  cache hits as budget-free, and carries a 512MB/month bandwidth note.
 - Manual review remains mandatory before family-visible digest rows or exports.
 - Next real-corpus unblock is user-provided private PDFs from the last two years
   in ignored local `data/private/issues/` or a private Drive folder. Local

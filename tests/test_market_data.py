@@ -5,9 +5,11 @@ from decimal import Decimal
 from pathlib import Path
 
 from stock_analyst.market_data import (
+    MarketDataBudgetState,
     available_provider_metadata,
     build_market_data_cache_metadata,
     describe_market_data_request,
+    load_market_data_budget_state,
     load_market_data_planning_config,
     load_market_data_config,
     load_market_data_env_file,
@@ -15,6 +17,7 @@ from stock_analyst.market_data import (
     market_data_disabled,
     plan_fmp_enrichment_requests,
     plan_market_data_enrichment_requests,
+    write_market_data_budget_state,
     parse_stooq_daily_csv,
 )
 from stock_analyst.cli import run_market_data_plan_command
@@ -150,6 +153,7 @@ class MarketDataTest(unittest.TestCase):
                         "STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp",
                         "FMP_API_KEY='test-secret-key'",
                         f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
+                        f"STOCK_ANALYST_MARKET_DATA_BUDGET_DIR={root / 'budget'}",
                         "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=17",
                         "STOCK_ANALYST_MARKET_DATA_TERMS_VERSION=fmp-review-2026-05-17",
                     )
@@ -165,6 +169,7 @@ class MarketDataTest(unittest.TestCase):
         self.assertFalse(config.provider_config.enabled)
         self.assertTrue(config.credential_configured)
         self.assertEqual(config.daily_call_limit, 17)
+        self.assertEqual(config.budget_dir, root / "budget")
         self.assertEqual(config.terms_version, "fmp-review-2026-05-17")
         self.assertNotIn("test-secret-key", repr(config))
 
@@ -292,6 +297,44 @@ class MarketDataTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_market_data_cache_metadata(descriptor, ttl_seconds=-1)
 
+    def test_market_data_budget_state_round_trips_without_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            budget_root = Path(temp_dir) / "budget"
+            state = MarketDataBudgetState(
+                provider="fmp",
+                budget_date=date(2026, 5, 17),
+                daily_call_limit=235,
+                charged_call_count=17,
+                updated_at=datetime(2026, 5, 17, 1, 2, tzinfo=timezone.utc),
+            )
+
+            path = write_market_data_budget_state(state, budget_root=budget_root)
+            loaded = load_market_data_budget_state(
+                provider="fmp",
+                budget_date=date(2026, 5, 17),
+                daily_call_limit=235,
+                budget_root=budget_root,
+            )
+            ledger_text = path.read_text(encoding="utf-8")
+
+        self.assertTrue(path.name.endswith("-fmp.json"))
+        self.assertEqual(loaded.provider, "fmp")
+        self.assertEqual(loaded.charged_call_count, 17)
+        self.assertEqual(loaded.daily_call_limit, 235)
+        self.assertNotIn("API_KEY", ledger_text)
+
+    def test_missing_market_data_budget_state_defaults_to_zero_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            loaded = load_market_data_budget_state(
+                provider="twelve_data",
+                budget_date=date(2026, 5, 17),
+                daily_call_limit=800,
+                budget_root=Path(temp_dir),
+            )
+
+        self.assertEqual(loaded.charged_call_count, 0)
+        self.assertEqual(loaded.daily_call_limit, 800)
+
     def test_market_data_request_descriptor_rejects_secret_cache_params(self) -> None:
         with self.assertRaises(ValueError):
             describe_market_data_request(
@@ -354,6 +397,22 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(plan.requests[-1].budget_action, "denied")
         self.assertFalse(plan.requests[-1].consumes_budget)
         self.assertIn("235 calls", plan.requests[-1].reason)
+
+    def test_fmp_dry_run_enrichment_planner_accounts_for_prior_daily_usage(self) -> None:
+        plan = plan_fmp_enrichment_requests(
+            ("AAPL", "MSFT"),
+            endpoints=("quote",),
+            daily_call_limit=2,
+            prior_charged_call_count=1,
+        )
+
+        self.assertEqual(plan.status, "over_budget")
+        self.assertEqual(plan.prior_charged_call_count, 1)
+        self.assertEqual(plan.charged_call_count, 1)
+        self.assertEqual(plan.denied_call_count, 1)
+        self.assertEqual(plan.remaining_daily_call_budget, 0)
+        self.assertEqual(plan.requests[0].budget_action, "charge")
+        self.assertEqual(plan.requests[1].budget_action, "denied")
 
     def test_fmp_dry_run_enrichment_planner_does_not_charge_cache_hits(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -435,6 +494,7 @@ class MarketDataTest(unittest.TestCase):
                     (
                         "FMP_API_KEY=test-secret-key",
                         f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
+                        f"STOCK_ANALYST_MARKET_DATA_BUDGET_DIR={root / 'budget'}",
                         "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=1",
                     )
                 ),
@@ -453,9 +513,49 @@ class MarketDataTest(unittest.TestCase):
         self.assertTrue(result["credentialConfigured"])
         self.assertFalse(result["networkAccess"])
         self.assertEqual(result["dailyCallLimit"], 1)
+        self.assertEqual(result["priorChargedCallCount"], 0)
         self.assertEqual(result["chargedCallCount"], 1)
         self.assertEqual(result["deniedCallCount"], 1)
+        self.assertEqual(result["budgetDir"], str(root / "budget"))
+        self.assertIn("budgetDate", result)
         self.assertNotIn("test-secret-key", repr(result))
+
+    def test_market_data_plan_command_uses_persisted_daily_budget_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env_file = root / ".env"
+            budget_root = root / "budget"
+            write_market_data_budget_state(
+                MarketDataBudgetState(
+                    provider="fmp",
+                    budget_date=datetime.now(timezone.utc).date(),
+                    daily_call_limit=2,
+                    charged_call_count=1,
+                ),
+                budget_root=budget_root,
+            )
+            env_file.write_text(
+                "\n".join(
+                    (
+                        "FMP_API_KEY=test-secret-key",
+                        f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
+                        f"STOCK_ANALYST_MARKET_DATA_BUDGET_DIR={budget_root}",
+                        "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=2",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_market_data_plan_command(
+                env_file=env_file,
+                symbols=("AAPL", "MSFT"),
+                endpoints=("profile",),
+            )
+
+        self.assertEqual(result["priorChargedCallCount"], 1)
+        self.assertEqual(result["chargedCallCount"], 1)
+        self.assertEqual(result["deniedCallCount"], 1)
+        self.assertEqual(result["remainingDailyCallBudget"], 0)
 
     def test_market_data_plan_command_accepts_symbol_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

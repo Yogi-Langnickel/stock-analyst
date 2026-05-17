@@ -27,6 +27,7 @@ from stock_analyst.market_data import (
     DEFAULT_PROVIDER_ENDPOINTS,
     MarketDataEnrichmentPlan,
     MarketDataPlanningConfig,
+    load_market_data_budget_state,
     load_market_data_symbol_file,
     load_market_data_planning_config,
     plan_market_data_enrichment_requests,
@@ -493,15 +494,27 @@ def run_market_data_plan_command(
     for symbol_file in symbol_files:
         all_symbols.extend(load_market_data_symbol_file(symbol_file))
 
+    budget_date = datetime.now(timezone.utc).date()
+    budget_state = load_market_data_budget_state(
+        provider=provider_id,
+        budget_date=budget_date,
+        daily_call_limit=config.daily_call_limit,
+        budget_root=config.budget_dir,
+    )
     plan = plan_market_data_enrichment_requests(
         provider_id,
         tuple(all_symbols),
         endpoints=endpoints or DEFAULT_PROVIDER_ENDPOINTS.get(provider_id),
         cache_root=config.cache_dir,
         daily_call_limit=config.daily_call_limit,
+        prior_charged_call_count=budget_state.charged_call_count,
         terms_version=config.terms_version,
     )
-    return _market_data_plan_to_dict(plan, config)
+    return _market_data_plan_to_dict(
+        plan,
+        config,
+        budget_date=budget_date.isoformat(),
+    )
 
 
 def run_google_access_smoke_command(
@@ -538,6 +551,8 @@ def run_google_sheets_bootstrap_command(
 def _market_data_plan_to_dict(
     plan: MarketDataEnrichmentPlan,
     config: MarketDataPlanningConfig,
+    *,
+    budget_date: str | None = None,
 ) -> dict[str, object]:
     return {
         "dryRun": plan.dry_run,
@@ -548,9 +563,12 @@ def _market_data_plan_to_dict(
         "credentialConfigured": config.credential_configured,
         "networkAccess": plan.network_access,
         "cacheDir": str(config.cache_dir),
+        "budgetDir": str(config.budget_dir),
+        "budgetDate": budget_date,
         "termsVersion": config.terms_version,
         "dailyCallLimit": plan.daily_call_limit,
         "plannedCallCount": plan.planned_call_count,
+        "priorChargedCallCount": plan.prior_charged_call_count,
         "chargedCallCount": plan.charged_call_count,
         "cacheHitCount": plan.cache_hit_count,
         "deniedCallCount": plan.denied_call_count,

@@ -199,6 +199,7 @@ recommendations, target prices, stop prices, or WKN/source fields.
 - `scripts/stock-analyst market-data-plan --env-file .env --symbol AAPL`
   supports dry-run planning from local env files. It recognizes
   `FMP_API_KEY`, `STOCK_ANALYST_MARKET_DATA_CACHE_DIR`,
+  `STOCK_ANALYST_MARKET_DATA_BUDGET_DIR`,
   `STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT`, and
   `STOCK_ANALYST_MARKET_DATA_TERMS_VERSION`, but command output exposes only
   whether credentials are configured.
@@ -225,3 +226,6 @@ recommendations, target prices, stop prices, or WKN/source fields.
 - Live network adapters remain disabled until persistent cache storage, request
   accounting, response-header limit capture, and endpoint-specific credit
   weights are implemented.
+- Dry-run planning now reads a provider/day budget ledger from
+  `STOCK_ANALYST_MARKET_DATA_BUDGET_DIR` and counts prior local usage against
+  the same daily cap. Missing ledgers default to zero prior usage.

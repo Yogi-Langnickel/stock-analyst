@@ -26,6 +26,7 @@ small summary JSON file. It uses these defaults:
 | Env file | `.env` |
 | Market-data symbol file | `data/private/enrichment-symbols.txt` |
 | Run output | `data/local-runs` |
+| Market-data budget ledger | `data/market-cache/_budgets` |
 
 Override any path with environment variables:
 
@@ -55,12 +56,15 @@ FMP_API_KEY=...
 STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp
 STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=235
 STOCK_ANALYST_MARKET_DATA_CACHE_DIR=./data/market-cache
+STOCK_ANALYST_MARKET_DATA_BUDGET_DIR=./data/market-cache/_budgets
 STOCK_ANALYST_MARKET_DATA_TERMS_VERSION=fmp-personal-basic-reviewed-2026-05-17
 ```
 
-The monthly 512MB bandwidth ceiling is tracked as a planning constraint. Live
-FMP calls remain blocked until cached response storage, request accounting, and
-bandwidth accounting are implemented.
+The planner reads the local provider/day budget ledger before planning requests,
+so prior same-day usage counts against the hard daily cap. The monthly 512MB
+bandwidth ceiling is tracked as a planning constraint. Live FMP calls remain
+blocked until cached response storage, request accounting, and bandwidth
+accounting are implemented.
 
 Other accepted local keys are `ALPHAVANTAGE_API_KEY`, `FINNHUB_API_KEY`,
 `FINNHUB_SECRET`, and `TWELVEDATA_API_KEY`. When enrichment later moves to AWS
