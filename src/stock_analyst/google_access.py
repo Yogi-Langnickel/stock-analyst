@@ -424,10 +424,10 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         "Normalized quick-check table rows.",
         frozen_columns=3,
         layout_notes=(
-            "Currently audit-hinted, not row-emitted.",
+            "Parser-backed for Aktien im Quick-Check table rows.",
             "Keep full publisher quick-check table here; surface only reviewed summary in Stocks.",
         ),
-        parser_status="audit_hint",
+        parser_status="parser_backed",
     ),
     GoogleSheetTabSpec(
         "Statistics Context",

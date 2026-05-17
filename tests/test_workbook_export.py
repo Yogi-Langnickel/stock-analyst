@@ -9,6 +9,7 @@ from stock_analyst.derivative_tables import DerivativeOverviewRow
 from stock_analyst.extraction import RawPageText
 from stock_analyst.google_access import DEFAULT_SHEET_TABS
 from stock_analyst.recommendation_cards import RecommendationCard
+from stock_analyst.quickcheck import QuickcheckRow
 from stock_analyst.schemas import InstrumentType, ReviewStatus
 from stock_analyst.section_inventory import (
     MagazineSectionCandidate,
@@ -766,6 +767,39 @@ class WorkbookExportPlanTest(unittest.TestCase):
 
         self.assertEqual(result["rowsByTab"], {"Extraction Audit": 1})
         self.assertTrue(all(row["tab"] != "Stocks" for row in result["rows"]))
+
+    def test_routes_quickcheck_rows_to_dedicated_tab(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            quickcheck_rows=(
+                QuickcheckRow(
+                    issue_id="2026-W03",
+                    page=90,
+                    instrument="2G Energy",
+                    wkn="A0HL8N",
+                    current_price="36,70 EUR",
+                    recommendation_price="34,80 EUR",
+                    recommended_issue="52/25",
+                    performance_since_recommendation="+5,5 %",
+                    target="52,50 EUR",
+                    stop="27,50 EUR !",
+                    comment="Die Aktie hat zum Jahresstart ihren Aufwärtstrend wieder aufgenommen.",
+                ),
+            ),
+        )
+
+        row = plan.to_dict()["rows"][0]
+
+        self.assertEqual(row["tab"], "Stock Quickcheck")
+        self.assertEqual(row["rowKind"], "stock_quickcheck")
+        self.assertEqual(row["values"][2], "2G Energy")
+        self.assertEqual(row["values"][3], "A0HL8N")
+        self.assertEqual(row["values"][4], "+5,5 %")
+        self.assertIn("target=52,50 EUR", row["values"][5])
+        self.assertIn("recommended=34,80 EUR", row["values"][5])
+        self.assertIn("Aufwärtstrend", row["values"][6])
+        self.assertEqual(len(row["values"]), len(headers_for("Stock Quickcheck")))
 
 
 class _SingleStockExtractor:

@@ -46,6 +46,7 @@ from stock_analyst.pipeline import (
     calculate_processing_steps,
 )
 from stock_analyst.quality_report import build_extraction_quality_report
+from stock_analyst.quickcheck import extract_quickcheck_rows_from_page_lines
 from stock_analyst.recommendation_cards import extract_recommendation_cards_from_pdf
 from stock_analyst.review_queue import build_review_queue_from_manifest
 from stock_analyst.section_inventory import build_section_inventory_from_pdf
@@ -190,6 +191,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
     )
     dividend_strategy.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    quick_check = subcommands.add_parser(
+        "quick-check",
+        help="Extract local draft Aktien im Quick-Check rows from embedded PDF text.",
+    )
+    quick_check.add_argument("pdf", type=Path)
+    quick_check.add_argument(
+        "--issue-id",
+        default=None,
+        help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
+    )
+    quick_check.add_argument(
         "--min-embedded-chars",
         type=int,
         default=40,
@@ -592,6 +610,30 @@ def run_dividend_strategy(
     return extraction.to_dict()
 
 
+def run_quick_check(
+    pdf_path: Path,
+    *,
+    issue_id: str | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    from stock_analyst.extraction import extract_pdf_text
+    from stock_analyst.workbook_export import _issue_id_from_filename
+
+    extraction = extract_pdf_text(pdf_path, min_embedded_chars=min_embedded_chars)
+    resolved_issue_id = issue_id or _issue_id_from_filename(pdf_path)
+    rows = extract_quickcheck_rows_from_page_lines(
+        tuple((page.page_number, page.text.splitlines()) for page in extraction.pages),
+        issue_id=resolved_issue_id,
+    )
+    return {
+        "issueId": resolved_issue_id,
+        "pdfPath": str(pdf_path),
+        "pageCount": extraction.page_count,
+        "externalServicesEnabled": False,
+        "rows": [row.to_dict() for row in rows],
+    }
+
+
 def run_workbook_export_plan(
     pdf_path: Path,
     *,
@@ -884,6 +926,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "dividend-strategy":
             result = run_dividend_strategy(
+                args.pdf,
+                issue_id=args.issue_id,
+                min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "quick-check":
+            result = run_quick_check(
                 args.pdf,
                 issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,

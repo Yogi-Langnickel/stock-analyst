@@ -148,7 +148,7 @@ the live Sheet; those should be added only after this layout is accepted.
 | `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot. |
 | `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks. |
 | `Chart Check` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Section inventory detects pages; reviewed signals should later link back to stock WKNs. |
-| `Stock Quickcheck` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here; surface only reviewed summary in `Stocks`. |
+| `Stock Quickcheck` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here; surface only reviewed summary in `Stocks`. |
 | `Statistics Context` | `audit_hint` | 1 row, 3 cols | `A1` | Header row | Context only. It must never create recommendation rows by itself. |
 | `Dividend Focus` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Multi-period dividend context; concise decision fields may surface in `Stocks`. |
 | `Extraction Audit` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | First stop for parser warnings and planned-tab surfaces before row emitters exist. |
@@ -270,7 +270,7 @@ tabs:
 | `aktionaer_depot_positions` | `AKTIONAER Depot` | Model-depot position snapshot. |
 | `aktionaer_depot_transactions` | `Depot Transactions` | Transaction ledger/no-transaction weeks. |
 | `chart_check` | `Chart Check` | Chart-check stocks and technical context. |
-| `quick_check` | `Stock Quickcheck` | Publisher quick-check evaluations. |
+| `quick_check` | `Stock Quickcheck` | Parser-backed publisher quick-check evaluations. |
 | `statistics_context` | `Statistics Context` | Context-only statistics tables. |
 | `low_priority_back_matter` | `Extraction Audit` | Back matter after statistics. |
 <!-- markdownlint-enable MD013 -->

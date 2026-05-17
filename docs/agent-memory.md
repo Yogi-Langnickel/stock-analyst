@@ -41,6 +41,9 @@ Created: 2026-05-15
   AKTIONAER depot positions, depot transactions, chart-check pages,
   quick-check tables, statistics context, and low-priority back matter with
   suggested Google Sheet destinations.
+- `Aktien im Quick-Check` rows are parser-backed into `Stock Quickcheck`.
+  They remain review-only context and must not fan out into `Stocks` until a
+  reviewed attach/update rule exists.
 - A local workbook export-plan command can route draft recommendation cards,
   derivative cards, derivative overview rows, dividend strategy rows, AKTIONAER
   depot positions, depot transaction/no-transaction rows, and section-inventory

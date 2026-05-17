@@ -364,6 +364,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(tab_status["AKTIONAER Depot"], "parser_backed")
         self.assertEqual(tab_status["Depot Transactions"], "parser_backed")
         self.assertEqual(tab_status["Chart Check"], "audit_hint")
+        self.assertEqual(tab_status["Stock Quickcheck"], "parser_backed")
         self.assertEqual(tab_status["Navigation Dashboard"], "layout_only")
         for tab in result["tabs"]:
             self.assertGreaterEqual(tab["frozenRows"], 1)
