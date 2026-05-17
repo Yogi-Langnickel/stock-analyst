@@ -43,7 +43,7 @@ SUMMARY_FILE="${RUN_DIR}/${STAMP}.summary.json"
       --env-file "${ENV_FILE}" \
       --symbol-file "${SYMBOL_FILE}"
   else
-    printf 'Skipping FMP dry-run plan; env file or symbol file is missing.\n'
+    printf 'Skipping market-data dry-run plan; env file or symbol file is missing.\n'
   fi
 } >"${LOG_FILE}" 2>&1
 

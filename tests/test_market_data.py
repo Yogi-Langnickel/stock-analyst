@@ -14,6 +14,7 @@ from stock_analyst.market_data import (
     load_market_data_symbol_file,
     market_data_disabled,
     plan_fmp_enrichment_requests,
+    plan_market_data_enrichment_requests,
     parse_stooq_daily_csv,
 )
 from stock_analyst.cli import run_market_data_plan_command
@@ -27,11 +28,18 @@ class MarketDataTest(unittest.TestCase):
         self.assertIn("stooq_csv", providers)
         self.assertIn("alpha_vantage", providers)
         self.assertIn("twelve_data", providers)
+        self.assertIn("finnhub", providers)
         self.assertIn("fmp", providers)
         self.assertIn("sec_companyfacts", providers)
         self.assertFalse(any(provider.network_access for provider in providers.values()))
         self.assertTrue(providers["alpha_vantage"].cache_required_before_live)
         self.assertTrue(providers["alpha_vantage"].rate_limit_notes)
+        self.assertEqual(providers["alpha_vantage"].credential_env_var, "ALPHAVANTAGE_API_KEY")
+        self.assertEqual(providers["alpha_vantage"].daily_call_budget, 25)
+        self.assertEqual(providers["twelve_data"].credential_env_var, "TWELVEDATA_API_KEY")
+        self.assertEqual(providers["twelve_data"].daily_call_budget, 800)
+        self.assertEqual(providers["finnhub"].credential_env_var, "FINNHUB_API_KEY")
+        self.assertEqual(providers["finnhub"].daily_call_budget, 500)
         self.assertEqual(providers["fmp"].credential_env_var, "FMP_API_KEY")
         self.assertEqual(providers["fmp"].daily_call_budget, 235)
         self.assertIn("512MB/month", providers["fmp"].bandwidth_notes[0])
@@ -65,19 +73,50 @@ class MarketDataTest(unittest.TestCase):
         self.assertFalse(config.enabled)
         self.assertEqual(
             config.reason,
-            "missing credential environment variable: ALPHA_VANTAGE_API_KEY",
+            "missing credential environment variable: ALPHAVANTAGE_API_KEY",
         )
 
     def test_key_based_provider_with_credentials_is_still_metadata_only(self) -> None:
         config = load_market_data_config(
             {
                 "STOCK_ANALYST_MARKET_DATA_PROVIDER": "twelve_data",
-                "TWELVE_DATA_API_KEY": "test-key",
+                "TWELVEDATA_API_KEY": "test-key",
             }
         )
 
         self.assertEqual(config.provider.provider_id, "twelve_data")
         self.assertFalse(config.enabled)
+        self.assertEqual(config.reason, "live provider adapter is not implemented")
+
+    def test_key_based_provider_accepts_legacy_credential_aliases(self) -> None:
+        alpha_config = load_market_data_config(
+            {
+                "STOCK_ANALYST_MARKET_DATA_PROVIDER": "alpha_vantage",
+                "ALPHA_VANTAGE_API_KEY": "test-key",
+            }
+        )
+        twelve_config = load_market_data_config(
+            {
+                "STOCK_ANALYST_MARKET_DATA_PROVIDER": "twelve_data",
+                "TWELVE_DATA_API_KEY": "test-key",
+            }
+        )
+
+        self.assertEqual(alpha_config.reason, "live provider adapter is not implemented")
+        self.assertEqual(twelve_config.reason, "live provider adapter is not implemented")
+
+    def test_finnhub_provider_with_key_is_still_metadata_only(self) -> None:
+        config = load_market_data_config(
+            {
+                "STOCK_ANALYST_MARKET_DATA_PROVIDER": "finnhub",
+                "FINNHUB_API_KEY": "test-key",
+                "FINNHUB_SECRET": "test-secret",
+            }
+        )
+
+        self.assertEqual(config.provider.provider_id, "finnhub")
+        self.assertFalse(config.enabled)
+        self.assertFalse(config.provider.network_access)
         self.assertEqual(config.reason, "live provider adapter is not implemented")
 
     def test_fmp_provider_with_credentials_is_still_metadata_only(self) -> None:
@@ -345,6 +384,48 @@ class MarketDataTest(unittest.TestCase):
         self.assertFalse(plan.requests[0].consumes_budget)
         self.assertEqual(plan.requests[1].budget_action, "charge")
 
+    def test_alpha_vantage_dry_run_enrichment_planner_uses_25_call_budget(self) -> None:
+        symbols = tuple(f"TICKER{i}" for i in range(26))
+
+        plan = plan_market_data_enrichment_requests(
+            "alpha_vantage",
+            symbols,
+            endpoints=("global-quote",),
+        )
+
+        self.assertEqual(plan.provider, "alpha_vantage")
+        self.assertEqual(plan.status, "over_budget")
+        self.assertEqual(plan.daily_call_limit, 25)
+        self.assertEqual(plan.charged_call_count, 25)
+        self.assertEqual(plan.denied_call_count, 1)
+        self.assertFalse(plan.network_access)
+
+    def test_twelve_data_dry_run_enrichment_planner_uses_800_credit_budget(self) -> None:
+        plan = plan_market_data_enrichment_requests(
+            "twelve_data",
+            ("AAPL", "MSFT"),
+            endpoints=("price", "quote"),
+        )
+
+        self.assertEqual(plan.provider, "twelve_data")
+        self.assertEqual(plan.status, "planned")
+        self.assertEqual(plan.daily_call_limit, 800)
+        self.assertEqual(plan.planned_call_count, 4)
+        self.assertEqual(plan.remaining_daily_call_budget, 796)
+
+    def test_finnhub_dry_run_enrichment_planner_uses_local_default_budget(self) -> None:
+        plan = plan_market_data_enrichment_requests(
+            "finnhub",
+            ("AAPL",),
+            endpoints=("quote", "recommendation-trends", "insider-sentiment"),
+        )
+
+        self.assertEqual(plan.provider, "finnhub")
+        self.assertEqual(plan.status, "planned")
+        self.assertEqual(plan.daily_call_limit, 500)
+        self.assertEqual(plan.planned_call_count, 3)
+        self.assertFalse(plan.network_access)
+
     def test_market_data_plan_command_uses_env_file_and_redacts_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -403,6 +484,58 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(result["chargedCallCount"], 2)
         self.assertEqual(result["requests"][0]["symbol"], "AAPL")
         self.assertEqual(result["requests"][1]["symbol"], "MSFT")
+
+    def test_market_data_plan_command_supports_alpha_vantage_env_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env_file = root / ".env"
+            env_file.write_text(
+                "\n".join(
+                    (
+                        "STOCK_ANALYST_MARKET_DATA_PROVIDER=alpha_vantage",
+                        "ALPHAVANTAGE_API_KEY=test-secret-key",
+                        f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_market_data_plan_command(
+                env_file=env_file,
+                symbols=("AAPL",),
+                endpoints=("overview",),
+            )
+
+        self.assertEqual(result["provider"], "alpha_vantage")
+        self.assertEqual(result["dailyCallLimit"], 25)
+        self.assertTrue(result["credentialConfigured"])
+        self.assertNotIn("test-secret-key", repr(result))
+
+    def test_market_data_plan_command_supports_twelve_data_env_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env_file = root / ".env"
+            env_file.write_text(
+                "\n".join(
+                    (
+                        "STOCK_ANALYST_MARKET_DATA_PROVIDER=twelve_data",
+                        "TWELVEDATA_API_KEY=test-secret-key",
+                        f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_market_data_plan_command(
+                env_file=env_file,
+                symbols=("AAPL",),
+                endpoints=("price",),
+            )
+
+        self.assertEqual(result["provider"], "twelve_data")
+        self.assertEqual(result["dailyCallLimit"], 800)
+        self.assertTrue(result["credentialConfigured"])
+        self.assertNotIn("test-secret-key", repr(result))
 
 
 if __name__ == "__main__":

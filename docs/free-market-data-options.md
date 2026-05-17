@@ -2,7 +2,7 @@
 
 Status: active plan
 Created: 2026-05-15
-Last checked: 2026-05-15
+Last checked: 2026-05-17
 
 Market data is enrichment only. It can help reviewers validate context, stale
 prices, symbols, and broad market moves, but it must not overwrite magazine
@@ -14,8 +14,9 @@ source fields or fill missing recommendation details.
 | --- | --- | --- | --- | --- |
 | `disabled` | Available default | None | No | Tests, local PDF intake, family review |
 | `stooq_csv` | Local CSV parser only | None | No | First deterministic price-context parser |
-| `alpha_vantage` | Metadata only | `ALPHA_VANTAGE_API_KEY` | No | Optional future key-based daily and cross-asset context |
-| `twelve_data` | Metadata only | `TWELVE_DATA_API_KEY` | No | Optional future quote/time-series/reference context |
+| `alpha_vantage` | Metadata and dry-run planner only | `ALPHAVANTAGE_API_KEY`; legacy alias `ALPHA_VANTAGE_API_KEY` | No | Sparse fallback fundamentals, intelligence, commodities, forex, and indicators under 25/day |
+| `twelve_data` | Metadata and dry-run planner only | `TWELVEDATA_API_KEY`; legacy alias `TWELVE_DATA_API_KEY` | No | Bulk quote, technical, reference, and limited analysis planning under 800/day |
+| `finnhub` | Metadata and dry-run planner only | `FINNHUB_API_KEY`; `FINNHUB_SECRET` kept private but unused by REST planner | No | Analyst, insider, earnings, quote, news, and sentiment context planning |
 | `fmp` | Metadata and dry-run planner only | `FMP_API_KEY` | No | Optional future Financial Modeling Prep quote/profile/fundamentals context |
 | `sec_companyfacts` | Metadata only | No key; `SEC_USER_AGENT` before live access | No | Optional future US issuer fundamentals and filing metadata |
 
@@ -37,19 +38,29 @@ because adapters, cache policy, throttling, and terms checks are not complete.
    - Use explicit reviewer-provided ticker symbols until ticker/ISIN/WKN
      normalization exists.
 
-3. Alpha Vantage
-   - Good optional key-based source for daily equities, symbol search, forex,
-     crypto, commodities, economic indicators, and technical indicators.
-   - Free-key quotas are tight, so cache responses and keep batch/background
-     enrichment opt-in.
+3. Twelve Data
+   - Best first broad daily enrichment candidate because the free tier gives
+     800 daily credits and supports batch requests.
+   - Use for current price, quote snapshots, technical indicators, market
+     metadata, and some fundamentals/analysis where the free plan allows it.
+   - Treat endpoint credit weights as budget debits, not raw request counts.
 
-4. Twelve Data
-   - Useful later for real-time or near-real-time quote and time-series
-     exploration under a free Basic plan.
-   - Treat as optional because it requires a key and has per-minute credit
-     limits.
+4. Finnhub
+   - Best candidate for analyst recommendation trends, insider activity,
+     earnings surprise, company news, and quote fallback.
+   - Free-tier daily limits were not confirmed in official docs during review;
+     common references report 60 calls/minute. Keep a local default cap of
+     500/day until live response headers are inspected and documented.
 
-5. Financial Modeling Prep
+5. Alpha Vantage
+   - Useful as a sparse fallback for company overview, quote, technical
+     indicators, commodities, forex, crypto, economic indicators, news
+     sentiment, and insider transactions.
+   - Hard quota is only 25 calls/day, so do not use it for broad watchlist
+     polling. Reserve it for high-confidence ticker enrichments or gaps from
+     Twelve Data/Finnhub/FMP.
+
+6. Financial Modeling Prep
    - Useful later for quote, profile, and fundamentals exploration.
    - Current implementation is metadata-only plus a dry-run request planner.
    - `FMP_API_KEY` is the expected future credential, but the planner does not
@@ -59,7 +70,7 @@ because adapters, cache policy, throttling, and terms checks are not complete.
    - Keep a hard planning budget of 235 calls/day and plan against a
      512MB/month bandwidth ceiling before live access.
 
-6. SEC companyfacts and filings
+7. SEC companyfacts and filings
    - Official free source for US fundamentals and filing metadata.
    - Use for issuer/company context, not price validation.
 
@@ -71,9 +82,22 @@ because adapters, cache policy, throttling, and terms checks are not complete.
   separate commercial-use path. Source:
   <https://www.alphavantage.co/support/> and
   <https://www.alphavantage.co/terms_of_service/>.
+  The official documentation covers daily time series, quote, symbol search,
+  company overview, dividends, earnings, news sentiment, insider transactions,
+  commodities, forex, crypto, economic indicators, and technical indicators.
+  Source: <https://www.alphavantage.co/documentation/>.
 - Twelve Data: Basic is listed as free with 8 API credits per minute and 800 per
-  day, with endpoint-specific credit weights. Source:
-  <https://twelvedata.com/pricing>.
+  day, with endpoint-specific credit weights. The docs cover quote/price,
+  time series, reference data, dividends, earnings, statistics, analyst ratings,
+  recommendations, price targets, insider transactions, batches, and API usage.
+  Sources: <https://twelvedata.com/docs> and <https://twelvedata.com/pricing>.
+- Finnhub: REST authentication uses an API key via token query parameter or
+  header. Useful documented endpoint families include quote, recommendations,
+  insider activity, earnings, company news, sentiment, and fundamentals.
+  Official docs were reviewed at <https://finnhub.io/docs/api/introduction>.
+  Public references commonly report a free-tier limit of 60 calls/minute; keep
+  the project cap conservative until live response headers confirm account
+  limits.
 - Financial Modeling Prep: first project slice is bounded to metadata and
   dry-run planning only. Treat the configured limit as a hard 235 calls/day
   budget with a 512MB/month bandwidth planning note until live terms, endpoint
@@ -105,6 +129,22 @@ because adapters, cache policy, throttling, and terms checks are not complete.
 6. Mark unavailable or ambiguous market rows as `needs_review`; never infer a
    missing price, stop loss, target, ticker, ISIN, WKN, or recommendation.
 7. Add provider terms/rate-limit notes before enabling network calls.
+
+## Enrichment Signal Plan
+
+These signals are reviewer context only. They must never overwrite magazine
+recommendations, target prices, stop prices, or WKN/source fields.
+
+| Signal | Primary source | Fallback source | Notes |
+| --- | --- | --- | --- |
+| Analyst consensus | Finnhub recommendation trends; Twelve Data recommendations/analyst ratings | Alpha Vantage analyst/intelligence endpoints if quota allows | Store consensus date and source; stale consensus is still useful but must be labelled. |
+| Insider buying | Finnhub insider sentiment or insider transactions | Alpha Vantage insider transactions; Twelve Data insider transactions if plan allows | Summarize recent net buying/selling, not individual advice. |
+| Earnings surprise | Finnhub earnings surprises; Twelve Data earnings | Alpha Vantage earnings history/calendar | Keep estimate, actual, surprise percent, and event date. |
+| Sentiment trend | Finnhub company news/sentiment; Alpha Vantage news sentiment | Local magazine mention trend | Cache aggressively; do not call news endpoints for every stock daily. |
+| Volatility regime | Twelve Data ATR/standard deviation/time series | Alpha Vantage technical indicators | Can be calculated locally from cached OHLCV. |
+| Momentum score | Twelve Data RSI/MACD/rate-of-change/time series | Alpha Vantage RSI/MACD/ROC | Prefer local calculation once OHLCV cache exists. |
+| Valuation score | FMP/profile/fundamentals; Twelve Data statistics | Alpha Vantage company overview | Use transparent component fields such as PE, PS, market cap, growth. |
+| Quality score | FMP/fundamentals; SEC companyfacts for US issuers | Twelve Data fundamentals | Keep as slow-moving weekly/monthly enrichment. |
 
 ## First Slice Implemented
 
@@ -167,3 +207,21 @@ because adapters, cache policy, throttling, and terms checks are not complete.
 - `scripts/stock-analyst-local-run` can run PDF import, extraction quality
   reporting, and FMP dry-run planning from the local machine without enabling
   live market-data network access.
+
+## Sixth Slice Implemented
+
+- Alpha Vantage provider metadata now matches the local env name
+  `ALPHAVANTAGE_API_KEY`, while still accepting the legacy
+  `ALPHA_VANTAGE_API_KEY` alias.
+- Twelve Data provider metadata now matches the local env name
+  `TWELVEDATA_API_KEY`, while still accepting the legacy `TWELVE_DATA_API_KEY`
+  alias.
+- Finnhub provider metadata is available as `finnhub` with `FINNHUB_API_KEY`.
+  `FINNHUB_SECRET` may exist in `.env` but is not used by the dry-run REST
+  planner.
+- `market-data-plan` can dry-run request budgets for `alpha_vantage`,
+  `twelve_data`, `finnhub`, and `fmp` with provider-specific default endpoint
+  sets and budgets.
+- Live network adapters remain disabled until persistent cache storage, request
+  accounting, response-header limit capture, and endpoint-specific credit
+  weights are implemented.

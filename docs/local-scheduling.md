@@ -5,8 +5,8 @@ Last updated: 2026-05-17
 
 The first scheduled Stock Analyst runner stays local-first and dry-run for
 external services. It can import PDFs from private local storage, refresh the
-local extraction quality report, and plan FMP enrichment requests without
-making live FMP calls.
+local extraction quality report, and plan market-data enrichment requests
+without making live provider calls.
 
 ## Local Runner
 
@@ -24,7 +24,7 @@ small summary JSON file. It uses these defaults:
 | Issues folder | `data/private/issues` |
 | Upload folder | `data/uploads` |
 | Env file | `.env` |
-| FMP symbol file | `data/private/enrichment-symbols.txt` |
+| Market-data symbol file | `data/private/enrichment-symbols.txt` |
 | Run output | `data/local-runs` |
 
 Override any path with environment variables:
@@ -44,11 +44,11 @@ AAPL
 MSFT, NVDA
 ```
 
-## FMP Budget
+## Provider Budgets
 
 The local runner calls `market-data-plan`, not a live adapter. The planner uses
-the local `.env` values and enforces the hard daily planning budget before any
-future network adapter can be enabled:
+the local `.env` values and enforces provider-specific hard daily planning
+budgets before any future network adapter can be enabled. Example FMP config:
 
 ```sh
 FMP_API_KEY=...
@@ -62,8 +62,10 @@ The monthly 512MB bandwidth ceiling is tracked as a planning constraint. Live
 FMP calls remain blocked until cached response storage, request accounting, and
 bandwidth accounting are implemented.
 
-When enrichment later moves to AWS Lambda, copy `FMP_API_KEY` into AWS Secrets
-Manager instead of storing it in Lambda environment variables.
+Other accepted local keys are `ALPHAVANTAGE_API_KEY`, `FINNHUB_API_KEY`,
+`FINNHUB_SECRET`, and `TWELVEDATA_API_KEY`. When enrichment later moves to AWS
+Lambda, copy all provider keys into AWS Secrets Manager instead of storing them
+in Lambda environment variables.
 
 ## macOS launchd Example
 

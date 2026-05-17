@@ -20,8 +20,26 @@ DEFAULT_MARKET_CACHE_DIR = Path("data/market-cache")
 MARKET_CACHE_DIR_ENV = "STOCK_ANALYST_MARKET_DATA_CACHE_DIR"
 MARKET_DAILY_CALL_LIMIT_ENV = "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT"
 MARKET_TERMS_VERSION_ENV = "STOCK_ANALYST_MARKET_DATA_TERMS_VERSION"
+DEFAULT_ALPHA_VANTAGE_DAILY_CALL_LIMIT = 25
 DEFAULT_FMP_DAILY_CALL_LIMIT = 235
+DEFAULT_TWELVE_DATA_DAILY_CALL_LIMIT = 800
+DEFAULT_FINNHUB_DAILY_CALL_LIMIT = 500
+DEFAULT_ALPHA_VANTAGE_ENDPOINTS = ("global-quote", "overview")
 DEFAULT_FMP_ENDPOINTS = ("batch-quote-short", "profile", "dividends")
+DEFAULT_TWELVE_DATA_ENDPOINTS = ("price", "quote", "statistics")
+DEFAULT_FINNHUB_ENDPOINTS = (
+    "quote",
+    "recommendation-trends",
+    "insider-sentiment",
+    "earnings-surprises",
+    "company-news",
+)
+DEFAULT_PROVIDER_ENDPOINTS = {
+    "alpha_vantage": DEFAULT_ALPHA_VANTAGE_ENDPOINTS,
+    "fmp": DEFAULT_FMP_ENDPOINTS,
+    "twelve_data": DEFAULT_TWELVE_DATA_ENDPOINTS,
+    "finnhub": DEFAULT_FINNHUB_ENDPOINTS,
+}
 SECRET_PARAM_MARKERS = ("authorization", "credential", "key", "password", "secret", "token")
 
 
@@ -33,6 +51,7 @@ class ProviderMetadata:
     credentials_required: bool
     network_access: bool
     credential_env_var: str | None = None
+    credential_env_aliases: tuple[str, ...] = ()
     user_agent_env_var: str | None = None
     purpose: str = ""
     safety_notes: tuple[str, ...] = ()
@@ -92,13 +111,22 @@ PROVIDER_METADATA: dict[str, ProviderMetadata] = {
         status="metadata_only",
         credentials_required=True,
         network_access=False,
-        credential_env_var="ALPHA_VANTAGE_API_KEY",
-        purpose="Optional future daily quote, forex, crypto, and indicator context.",
+        credential_env_var="ALPHAVANTAGE_API_KEY",
+        credential_env_aliases=("ALPHA_VANTAGE_API_KEY",),
+        purpose=(
+            "Optional future daily quote, symbol search, fundamental, intelligence, "
+            "forex, commodity, and indicator context."
+        ),
         safety_notes=(
             "Adapter is not implemented.",
+            "Use only high-value sparse enrichment because the free quota is 25 calls/day.",
             "Cache and quota controls are required before live calls.",
         ),
-        rate_limit_notes=("Free-key quota is tight; cache and background opt-in are required.",),
+        rate_limit_notes=(
+            "Hard dry-run planning budget: 25 calls per day.",
+            "Use for fallback fundamentals or sparse signals, not broad daily polling.",
+        ),
+        daily_call_budget=DEFAULT_ALPHA_VANTAGE_DAILY_CALL_LIMIT,
     ),
     "twelve_data": ProviderMetadata(
         provider_id="twelve_data",
@@ -106,13 +134,44 @@ PROVIDER_METADATA: dict[str, ProviderMetadata] = {
         status="metadata_only",
         credentials_required=True,
         network_access=False,
-        credential_env_var="TWELVE_DATA_API_KEY",
-        purpose="Optional future quote, time-series, reference, and indicator context.",
+        credential_env_var="TWELVEDATA_API_KEY",
+        credential_env_aliases=("TWELVE_DATA_API_KEY",),
+        purpose=(
+            "Optional future bulk quote, time-series, reference, fundamentals, "
+            "analysis, regulatory, and indicator context."
+        ),
         safety_notes=(
             "Adapter is not implemented.",
             "Credit accounting is required before live calls.",
         ),
-        rate_limit_notes=("Credit accounting is required before any live request scheduling.",),
+        rate_limit_notes=(
+            "Free tier has 8 API credits per minute and 800 per day.",
+            "Endpoint credit weights must be honored before live calls.",
+        ),
+        daily_call_budget=DEFAULT_TWELVE_DATA_DAILY_CALL_LIMIT,
+    ),
+    "finnhub": ProviderMetadata(
+        provider_id="finnhub",
+        display_name="Finnhub",
+        status="metadata_only",
+        credentials_required=True,
+        network_access=False,
+        credential_env_var="FINNHUB_API_KEY",
+        credential_env_aliases=("FINNHUB_TOKEN",),
+        purpose=(
+            "Optional future quote, analyst recommendation, insider, earnings, "
+            "news sentiment, and company fundamental context."
+        ),
+        safety_notes=(
+            "Adapter is not implemented.",
+            "FINNHUB_SECRET is recorded as a private local value but is not required for REST planning.",
+            "Cache and quota controls are required before live calls.",
+        ),
+        rate_limit_notes=(
+            "Free-tier references commonly report 60 calls per minute.",
+            "No project-wide daily cap has been confirmed, so the local default planning cap is 500/day.",
+        ),
+        daily_call_budget=DEFAULT_FINNHUB_DAILY_CALL_LIMIT,
     ),
     "fmp": ProviderMetadata(
         provider_id="fmp",
@@ -267,28 +326,40 @@ def describe_market_data_request(
     )
 
 
-def plan_fmp_enrichment_requests(
+def plan_market_data_enrichment_requests(
+    provider_id: str,
     symbols: tuple[str, ...],
     *,
-    endpoints: tuple[str, ...] = DEFAULT_FMP_ENDPOINTS,
+    endpoints: tuple[str, ...] | None = None,
     cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
-    daily_call_limit: int = DEFAULT_FMP_DAILY_CALL_LIMIT,
+    daily_call_limit: int | None = None,
     terms_version: str | None = None,
 ) -> MarketDataEnrichmentPlan:
-    """Plan FMP enrichment descriptors without reading secrets or making network calls."""
+    """Plan provider enrichment descriptors without secrets or network calls."""
 
-    provider = PROVIDER_METADATA["fmp"]
-    if daily_call_limit <= 0:
-        raise ValueError("FMP daily call limit must be positive")
+    normalized_provider_id = provider_id.strip().lower()
+    provider = PROVIDER_METADATA.get(normalized_provider_id)
+    if provider is None:
+        raise ValueError(f"unknown market data provider: {normalized_provider_id}")
+
+    resolved_limit = daily_call_limit or provider.daily_call_budget
+    if resolved_limit is None:
+        raise ValueError(f"{provider.provider_id} daily call limit must be configured")
+    if resolved_limit <= 0:
+        raise ValueError(f"{provider.provider_id} daily call limit must be positive")
 
     normalized_symbols = _normalize_unique_symbols(symbols)
-    normalized_endpoints = _normalize_unique_endpoints(endpoints)
+    normalized_endpoints = _normalize_unique_endpoints(
+        endpoints or DEFAULT_PROVIDER_ENDPOINTS.get(provider.provider_id, ())
+    )
+    if not normalized_endpoints:
+        raise ValueError(f"{provider.provider_id} has no dry-run endpoints configured")
     planned_call_count = len(normalized_symbols) * len(normalized_endpoints)
     bandwidth_note = provider.bandwidth_notes[0] if provider.bandwidth_notes else ""
 
     if not normalized_symbols:
         ledger = MarketDataBudgetLedger(
-            daily_call_limit=daily_call_limit,
+            daily_call_limit=resolved_limit,
             charged_call_count=0,
             cache_hit_count=0,
             denied_call_count=0,
@@ -298,7 +369,7 @@ def plan_fmp_enrichment_requests(
             status="empty",
             dry_run=True,
             network_access=False,
-            daily_call_limit=daily_call_limit,
+            daily_call_limit=resolved_limit,
             planned_call_count=0,
             charged_call_count=0,
             cache_hit_count=0,
@@ -306,7 +377,7 @@ def plan_fmp_enrichment_requests(
             remaining_daily_call_budget=ledger.remaining_daily_call_budget,
             bandwidth_note=bandwidth_note,
             ledger=ledger,
-            reason="no symbols were supplied for FMP enrichment planning",
+            reason=f"no symbols were supplied for {provider.display_name} enrichment planning",
         )
 
     requests: list[MarketDataPlannedRequest] = []
@@ -343,7 +414,7 @@ def plan_fmp_enrichment_requests(
                 )
                 continue
 
-            if charged_call_count >= daily_call_limit:
+            if charged_call_count >= resolved_limit:
                 denied_call_count += 1
                 requests.append(
                     MarketDataPlannedRequest(
@@ -353,7 +424,8 @@ def plan_fmp_enrichment_requests(
                         budget_action="denied",
                         consumes_budget=False,
                         reason=(
-                            f"hard daily FMP call limit reached at {daily_call_limit} calls; "
+                            f"hard daily {provider.display_name} call limit reached at "
+                            f"{resolved_limit} calls; "
                             "live calls remain disabled"
                         ),
                     )
@@ -372,15 +444,15 @@ def plan_fmp_enrichment_requests(
             )
 
     ledger = MarketDataBudgetLedger(
-        daily_call_limit=daily_call_limit,
+        daily_call_limit=resolved_limit,
         charged_call_count=charged_call_count,
         cache_hit_count=cache_hit_count,
         denied_call_count=denied_call_count,
     )
     status = "over_budget" if denied_call_count else "planned"
     reason = (
-        "planned FMP enrichment requests exceed the hard daily "
-        f"limit of {daily_call_limit} calls"
+        f"planned {provider.display_name} enrichment requests exceed the hard daily "
+        f"limit of {resolved_limit} calls"
         if denied_call_count
         else None
     )
@@ -390,7 +462,7 @@ def plan_fmp_enrichment_requests(
         status=status,
         dry_run=True,
         network_access=False,
-        daily_call_limit=daily_call_limit,
+        daily_call_limit=resolved_limit,
         planned_call_count=planned_call_count,
         charged_call_count=charged_call_count,
         cache_hit_count=cache_hit_count,
@@ -400,6 +472,26 @@ def plan_fmp_enrichment_requests(
         ledger=ledger,
         requests=tuple(requests),
         reason=reason,
+    )
+
+
+def plan_fmp_enrichment_requests(
+    symbols: tuple[str, ...],
+    *,
+    endpoints: tuple[str, ...] = DEFAULT_FMP_ENDPOINTS,
+    cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
+    daily_call_limit: int = DEFAULT_FMP_DAILY_CALL_LIMIT,
+    terms_version: str | None = None,
+) -> MarketDataEnrichmentPlan:
+    """Plan FMP enrichment descriptors without reading secrets or making network calls."""
+
+    return plan_market_data_enrichment_requests(
+        "fmp",
+        symbols,
+        endpoints=endpoints,
+        cache_root=cache_root,
+        daily_call_limit=daily_call_limit,
+        terms_version=terms_version,
     )
 
 
@@ -488,7 +580,8 @@ def load_market_data_config(env: Mapping[str, str] | None = None) -> MarketDataC
             reason="local parser is available for caller-supplied fixture text only",
         )
 
-    if provider.credential_env_var and not source.get(provider.credential_env_var):
+    credential_env_var = _configured_credential_env_var(provider, source)
+    if provider.credential_env_var and credential_env_var is None:
         return MarketDataConfig(
             requested_provider=requested_provider,
             provider=provider,
@@ -560,6 +653,16 @@ def load_market_data_symbol_file(path: Path) -> tuple[str, ...]:
     return _normalize_unique_symbols(tuple(symbols))
 
 
+def _configured_credential_env_var(
+    provider: ProviderMetadata,
+    source: Mapping[str, str],
+) -> str | None:
+    for name in (provider.credential_env_var, *provider.credential_env_aliases):
+        if name and source.get(name):
+            return name
+    return None
+
+
 def load_market_data_planning_config(
     *,
     env: Mapping[str, str] | None = None,
@@ -583,8 +686,10 @@ def load_market_data_planning_config(
     cache_dir = Path(source.get(MARKET_CACHE_DIR_ENV, str(DEFAULT_MARKET_CACHE_DIR))).expanduser()
     terms_version = source.get(MARKET_TERMS_VERSION_ENV)
     normalized_terms_version = terms_version.strip() if terms_version else None
-    credential_env_var = provider_config.provider.credential_env_var
-    credential_configured = bool(credential_env_var and source.get(credential_env_var))
+    credential_configured = _configured_credential_env_var(
+        provider_config.provider,
+        source,
+    ) is not None
 
     return MarketDataPlanningConfig(
         provider_config=provider_config,

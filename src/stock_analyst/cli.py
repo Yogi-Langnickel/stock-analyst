@@ -24,13 +24,12 @@ from stock_analyst.intake import (
     store_pdf_upload,
 )
 from stock_analyst.market_data import (
-    DEFAULT_FMP_ENDPOINTS,
-    DEFAULT_PROVIDER_ENV,
+    DEFAULT_PROVIDER_ENDPOINTS,
     MarketDataEnrichmentPlan,
     MarketDataPlanningConfig,
     load_market_data_symbol_file,
     load_market_data_planning_config,
-    plan_fmp_enrichment_requests,
+    plan_market_data_enrichment_requests,
 )
 from stock_analyst.pipeline import (
     PdfProcessingError,
@@ -235,8 +234,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         help=(
-            "Dry-run endpoint to plan. Defaults to "
-            f"{', '.join(DEFAULT_FMP_ENDPOINTS)}."
+            "Dry-run endpoint to plan. Defaults depend on "
+            "STOCK_ANALYST_MARKET_DATA_PROVIDER."
         ),
     )
 
@@ -488,19 +487,16 @@ def run_market_data_plan_command(
         env_file=env_file,
         default_provider="fmp",
     )
-    if config.provider_config.provider.provider_id != "fmp":
-        raise ValueError(
-            "only the FMP dry-run market-data planner is implemented; "
-            f"{DEFAULT_PROVIDER_ENV}=fmp is required"
-        )
+    provider_id = config.provider_config.provider.provider_id
 
     all_symbols = list(symbols)
     for symbol_file in symbol_files:
         all_symbols.extend(load_market_data_symbol_file(symbol_file))
 
-    plan = plan_fmp_enrichment_requests(
+    plan = plan_market_data_enrichment_requests(
+        provider_id,
         tuple(all_symbols),
-        endpoints=endpoints or DEFAULT_FMP_ENDPOINTS,
+        endpoints=endpoints or DEFAULT_PROVIDER_ENDPOINTS.get(provider_id),
         cache_root=config.cache_dir,
         daily_call_limit=config.daily_call_limit,
         terms_version=config.terms_version,
