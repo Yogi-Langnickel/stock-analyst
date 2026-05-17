@@ -872,6 +872,18 @@ class WorkbookExportPlanTest(unittest.TestCase):
                     wkn="938914",
                     sector="Luft- und Raumfahrt (NLD)",
                     signal="Luft- und Raumfahrt (NLD); Der Trend zeigt nach oben.",
+                    current_price="199,00 EUR",
+                    recommendation_price="278,00 EUR",
+                    recommended_issue="37/25 03.09.25",
+                    performance_since_recommendation="+39,7 %",
+                    target="310,00 EUR",
+                    stop="224,00 EUR",
+                    dividend_yield="1,4 %",
+                    next_report_date="Quartalszahlen 16.01.26",
+                    high_52w="284,50 EUR",
+                    low_52w="114,00 EUR",
+                    performance_1y="+34,1 %",
+                    performance_5y="+224,8 %",
                 ),
             ),
         )
@@ -882,8 +894,22 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["rowKind"], "chart_check")
         self.assertEqual(row["values"][2], "Airbus")
         self.assertEqual(row["values"][3], "938914")
-        self.assertIn("Trend zeigt nach oben", row["values"][4])
-        self.assertEqual(row["values"][5], "needs_review")
+        self.assertEqual(row["values"][4], "Luft- und Raumfahrt (NLD)")
+        self.assertIn("Trend zeigt nach oben", row["values"][5])
+        self.assertEqual(row["values"][6], "199,00 EUR")
+        self.assertEqual(row["values"][7], "278,00 EUR")
+        self.assertEqual(row["values"][8], "37/25 03.09.25")
+        self.assertEqual(row["values"][9], "+39,7 %")
+        self.assertEqual(row["values"][10], "310,00 EUR")
+        self.assertEqual(row["values"][11], "224,00 EUR")
+        self.assertEqual(row["values"][12], "1,4 %")
+        self.assertEqual(row["values"][13], "Quartalszahlen 16.01.26")
+        self.assertEqual(row["values"][14], "284,50 EUR")
+        self.assertEqual(row["values"][15], "114,00 EUR")
+        self.assertEqual(row["values"][16], "+34,1 %")
+        self.assertEqual(row["values"][17], "+224,8 %")
+        self.assertEqual(row["values"][18], "needs_review")
+        self.assertEqual(row["values"][-1], ReviewStatus.NEEDS_REVIEW.value)
         self.assertEqual(len(row["values"]), len(headers_for("Chart Check")))
 
 

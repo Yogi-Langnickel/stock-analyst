@@ -45,9 +45,10 @@ Created: 2026-05-15
   also surface in `Stocks` as previous-recommendation stock rows with split
   current price, price at recommendation, target, stop, and comment fields.
 - `Chart-Check` pages are parser-backed into `Chart Check` as explicit
-  instrument/WKN rows with the publisher bullet summary and table fields. They
-  also surface into `Stocks` by WKN/normalized company, remain `needs_review`,
-  and must not invent missing values.
+  instrument/WKN rows with the publisher bullet summary and parsed table fields
+  such as price, target, stop, 52-week range, performance, dividend yield, and
+  next report date. They also surface into `Stocks` by WKN/normalized company,
+  remain `needs_review`, and must not invent missing values.
 - A local workbook export-plan command can route draft recommendation cards,
   derivative cards, derivative overview rows, dividend strategy rows, AKTIONAER
   depot positions, depot transaction/no-transaction rows, and section-inventory

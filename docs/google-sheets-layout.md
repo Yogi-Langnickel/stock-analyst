@@ -59,9 +59,11 @@ long/short products, certificates, and derivative overview rows all use
    the same positive/negative conditional formatting as the depot tab.
 
 6. `Chart Check`
-   Dedicated traceability export for chart-check source rows. Parsed fields
-   also surface into the matching `Stocks` row by WKN/normalized company while
-   remaining `needs_review`.
+   Dedicated traceability export for chart-check source rows, including the
+   parsed table fields for current price, recommendation price, target, stop,
+   52-week range, performance, dividend yield, and next report date. Parsed
+   fields also surface into the matching `Stocks` row by WKN/normalized company
+   while remaining `needs_review`.
 
 7. `Stock Quickcheck`
    Dedicated normalized quick-check table. Parsed rows also update the matching
@@ -84,7 +86,7 @@ the live Sheet; those should be added only after this layout is accepted.
 | `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Source ID stays in row metadata; visible provenance is trailing issue/page columns. |
 | `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; performance cells are green for positive values and red for negative values. |
 | `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks; performance cells use positive/negative conditional formatting. |
-| `Chart Check` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full chart-check traceability here while also merging parsed stock fields into `Stocks`. |
+| `Chart Check` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full chart-check traceability here, including parsed table fields, while also merging parsed stock fields into `Stocks`. |
 | `Stock Quickcheck` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here with split price/target/stop fields; also surface each row in `Stocks`. |
 | `Dividend Focus` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Multi-period dividend context including ex/cum date, pay date, and payout frequency; concise decision fields may surface in `Stocks`. |
 | `Extraction Audit` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | First stop for parser warnings and planned-tab surfaces before row emitters exist. |
