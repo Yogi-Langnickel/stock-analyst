@@ -48,6 +48,7 @@ from stock_analyst.quality_report import build_extraction_quality_report
 from stock_analyst.recommendation_cards import extract_recommendation_cards_from_pdf
 from stock_analyst.review_queue import build_review_queue_from_manifest
 from stock_analyst.section_inventory import build_section_inventory_from_pdf
+from stock_analyst.visual_ocr import build_visual_ocr_bundle, parse_page_selection
 from stock_analyst.workbook_export import build_workbook_export_plan_from_pdf
 
 
@@ -209,6 +210,56 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=40,
         help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    visual_ocr = subcommands.add_parser(
+        "visual-ocr-review",
+        help="Plan or run local page rendering/OCR for private visual review.",
+    )
+    visual_ocr.add_argument("pdf", type=Path)
+    visual_ocr.add_argument(
+        "--page",
+        type=int,
+        action="append",
+        default=[],
+        help="1-based page number to review. Repeat for multiple pages.",
+    )
+    visual_ocr.add_argument(
+        "--pages",
+        default=None,
+        help="Comma-separated 1-based pages/ranges to review, for example 22,62-63.",
+    )
+    visual_ocr.add_argument(
+        "--render",
+        action="store_true",
+        help="Accepted for clarity; selected pages are rendered by this command.",
+    )
+    visual_ocr.add_argument(
+        "--ocr",
+        action="store_true",
+        help="Run local Tesseract OCR against rendered page images.",
+    )
+    visual_ocr.add_argument(
+        "--write-ocr-text",
+        action="store_true",
+        help="Write OCR text to private output files; result only reports path/hash/count.",
+    )
+    visual_ocr.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data/private/visual-ocr"),
+        help="Private output directory for rendered pages and optional OCR text.",
+    )
+    visual_ocr.add_argument(
+        "--dpi",
+        type=int,
+        default=180,
+        help="Render DPI for page images.",
+    )
+    visual_ocr.add_argument(
+        "--ocr-language",
+        default="deu+eng",
+        help="Tesseract language string used with --ocr.",
     )
 
     market_data_plan = subcommands.add_parser(
@@ -540,6 +591,28 @@ def run_workbook_export_plan(
     return plan.to_dict()
 
 
+def run_visual_ocr_review(
+    pdf_path: Path,
+    *,
+    pages: tuple[int, ...] | None = None,
+    ocr: bool = False,
+    write_ocr_text: bool = False,
+    output_dir: Path = Path("data/private/visual-ocr"),
+    dpi: int = 180,
+    ocr_language: str = "deu+eng",
+) -> dict[str, object]:
+    bundle = build_visual_ocr_bundle(
+        pdf_path,
+        pages=pages,
+        run_ocr=ocr,
+        write_ocr_text=write_ocr_text,
+        output_dir=output_dir,
+        dpi=dpi,
+        ocr_language=ocr_language,
+    )
+    return bundle.to_dict()
+
+
 def run_market_data_plan_command(
     *,
     env_file: Path | None = None,
@@ -794,6 +867,19 @@ def main(argv: list[str] | None = None) -> int:
                 args.pdf,
                 issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "visual-ocr-review":
+            selected_pages = parse_page_selection(args.pages)
+            if args.page:
+                selected_pages = tuple(dict.fromkeys((selected_pages or ()) + tuple(args.page)))
+            result = run_visual_ocr_review(
+                args.pdf,
+                pages=selected_pages,
+                ocr=args.ocr,
+                write_ocr_text=args.write_ocr_text,
+                output_dir=args.output_dir,
+                dpi=args.dpi,
+                ocr_language=args.ocr_language,
             )
         elif args.command == "market-data-plan":
             result = run_market_data_plan_command(

@@ -12,15 +12,21 @@ dependencies = [
   "uvicorn[standard]>=0.30",
   "pydantic>=2.7",
   "sqlalchemy>=2.0",
-  "pymupdf>=1.24",
-  "pdfplumber>=0.11",
-  "pytesseract>=0.3",
   "google-api-python-client>=2.130",
   "google-auth>=2.30",
   "scrapling>=0.2",
 ]
 
 [project.optional-dependencies]
+pdf = [
+  "pymupdf>=1.24",
+  "pdfplumber>=0.11",
+]
+ocr = [
+  "pillow>=10",
+  "pymupdf>=1.24",
+  "pytesseract>=0.3",
+]
 dev = [
   "pytest>=8.2",
   "ruff>=0.5",

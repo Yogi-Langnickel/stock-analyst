@@ -21,6 +21,10 @@ Created: 2026-05-15
 - Imported PDF manifests can also produce a local review queue with
   draft-review, restore-missing-file, local-OCR, and rerun-extraction actions.
   The queue is metadata-only and does not expose extracted page text.
+- Local visual/OCR review can render selected PDF pages into ignored private
+  storage and optionally run local Tesseract. The command reports artifact
+  paths, statuses, hashes, and counts, but not OCR text; missing local tools
+  degrade to dependency/status output with no remote OCR or enrichment.
 - Configured Google Drive folders can be listed for PDF metadata only. The
   Drive listing does not download PDFs or inspect PDF content, and optional
   JSONL manifests must stay in ignored private storage because they include
@@ -58,6 +62,13 @@ Created: 2026-05-15
 - A page-by-page extraction map would help define which pages/sections populate
   which tabs and fields. Treat it as parser training/review guidance, not
   manual data entry.
+- Local visual review is available through `scripts/stock-analyst
+  visual-ocr-review`. It renders selected pages to ignored private PNG
+  artifacts using PyMuPDF and can optionally run local Tesseract OCR. Command
+  output must stay privacy-safe: paths, dimensions, hashes, counts, statuses,
+  and failure reasons only; no OCR text in JSON output. On 2026-05-17 rendering
+  worked for `DA_2026_03` pages 22, 62, and 63; local OCR was blocked by a
+  missing `tesseract` binary.
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
 - Live enrichment must wait until magazine extraction has populated workbook
@@ -121,6 +132,8 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --dry-run ./data/private/issues`
 - `PYTHONPATH=src python3 -m stock_analyst.cli extraction-quality-report ./data/uploads/uploads.jsonl`
 - `PYTHONPATH=src python3 -m stock_analyst.cli review-queue ./data/uploads/uploads.jsonl`
+- `PYTHONPATH=src python3 -m stock_analyst.cli visual-ocr-review ./data/private/issues/DA_2026_03.pdf --pages 22,62-63`
+- `PYTHONPATH=src python3 -m stock_analyst.cli visual-ocr-review ./data/private/issues/DA_2026_03.pdf --page 22 --ocr --write-ocr-text`
 - `PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli dividend-strategy ./data/private/issues/DA_2026_03.pdf`
