@@ -19,6 +19,15 @@ from stock_analyst.dividend_strategy import (
     DividendStrategyRow,
     extract_dividend_strategy_rows_from_page_lines,
 )
+from stock_analyst.depot_tables import (
+    DepotPositionRow,
+    DepotTransactionRow,
+    extract_depot_rows_from_page_lines,
+)
+from stock_analyst.derivative_tables import (
+    DerivativeOverviewRow,
+    extract_derivative_overview_rows_from_page_lines,
+)
 from stock_analyst.extraction import RawTextExtractor, extract_pdf_text
 from stock_analyst.google_access import DEFAULT_SHEET_TABS
 from stock_analyst.intake import guess_issue_date
@@ -152,11 +161,22 @@ def build_workbook_export_plan_from_pdf(
         pages,
         issue_id=resolved_issue_id,
     )
+    derivative_overview_rows = extract_derivative_overview_rows_from_page_lines(
+        pages,
+        issue_id=resolved_issue_id,
+    )
+    depot_positions, depot_transactions = extract_depot_rows_from_page_lines(
+        pages,
+        issue_id=resolved_issue_id,
+    )
     return build_workbook_export_plan(
         pdf_path=pdf_path,
         issue_id=resolved_issue_id,
         recommendation_cards=tuple(cards),
         dividend_strategy=dividends,
+        derivative_overview=derivative_overview_rows,
+        depot_positions=depot_positions,
+        depot_transactions=depot_transactions,
         section_inventory=tuple(sections),
         stock_update_date=stock_update_date,
     )
@@ -168,19 +188,40 @@ def build_workbook_export_plan(
     issue_id: str,
     recommendation_cards: RecommendationCardExtraction | Sequence[RecommendationCard] = (),
     dividend_strategy: DividendStrategyExtraction | Sequence[DividendStrategyRow] = (),
+    derivative_overview: Sequence[DerivativeOverviewRow] = (),
+    depot_positions: Sequence[DepotPositionRow] = (),
+    depot_transactions: Sequence[DepotTransactionRow] = (),
     section_inventory: MagazineSectionInventory | Sequence[MagazineSectionCandidate] = (),
     stock_update_date: date | str | None = None,
 ) -> WorkbookExportPlan:
     """Convert local extraction outputs into reviewer-gated workbook rows."""
 
     resolved_stock_update_date = _date_cell_value(stock_update_date) or _current_utc_date()
+    dividend_yield_by_wkn = {
+        row.wkn: row.dividend_yield
+        for row in _dividend_rows_from(dividend_strategy)
+        if row.wkn and row.dividend_yield
+    }
     rows = tuple(
         _card_rows(
             _cards_from(recommendation_cards),
             stock_update_date=resolved_stock_update_date,
+            dividend_yield_by_wkn=dividend_yield_by_wkn,
         )
         + _dividend_rows(
             _dividend_rows_from(dividend_strategy),
+            instrument_update_date=resolved_stock_update_date,
+        )
+        + _derivative_overview_rows(
+            derivative_overview,
+            instrument_update_date=resolved_stock_update_date,
+        )
+        + _depot_position_rows(
+            depot_positions,
+            instrument_update_date=resolved_stock_update_date,
+        )
+        + _depot_transaction_rows(
+            depot_transactions,
             instrument_update_date=resolved_stock_update_date,
         )
         + _section_audit_rows(_sections_from(section_inventory))
@@ -198,13 +239,22 @@ def _card_rows(
     cards: Sequence[RecommendationCard],
     *,
     stock_update_date: str,
+    dividend_yield_by_wkn: dict[str, str],
 ) -> list[WorkbookDraftRow]:
     rows: list[WorkbookDraftRow] = []
     for card in cards:
         if card.instrument_type == InstrumentType.DERIVATIVE:
             rows.append(_derivative_card_row(card, instrument_update_date=stock_update_date))
         elif card.instrument_type == InstrumentType.STOCK:
-            rows.append(_recommendation_card_row(card, stock_update_date=stock_update_date))
+            rows.append(
+                _recommendation_card_row(
+                    card,
+                    stock_update_date=stock_update_date,
+                    dividend_yield=card.dividend_yield
+                    or dividend_yield_by_wkn.get(card.wkn or "")
+                    or "",
+                )
+            )
         elif card.instrument_type in {InstrumentType.ETF, InstrumentType.FUND}:
             rows.append(_etf_card_row(card, instrument_update_date=stock_update_date))
         elif card.instrument_type == InstrumentType.COMMODITY:
@@ -222,8 +272,8 @@ def _recommendation_card_row(
     card: RecommendationCard,
     *,
     stock_update_date: str,
+    dividend_yield: str = "",
 ) -> WorkbookDraftRow:
-    dividend = _join_non_empty((card.dividend_yield, card.dividend_per_share_trend))
     return WorkbookDraftRow(
         tab="Stocks",
         row_kind="stock_recommendation",
@@ -237,7 +287,7 @@ def _recommendation_card_row(
             card.wkn or "",
             "",
             card.current_price or "",
-            dividend,
+            dividend_yield,
             card.target or "",
             card.stop or "",
             card.recommendation_status or "",
@@ -254,6 +304,7 @@ def _derivative_card_row(
     instrument_update_date: str,
 ) -> WorkbookDraftRow:
     source_id = _source_id("derivative", card.issue_id, card.page, card.wkn)
+    product, direction = _split_derivative_direction(card.instrument_name)
     return WorkbookDraftRow(
         tab="Derivative Tips",
         row_kind="derivative_card",
@@ -263,18 +314,24 @@ def _derivative_card_row(
         review_status=ReviewStatus.NEEDS_REVIEW,
         source_block="manual_review_pending",
         values=(
-            source_id,
             card.issue_id,
             str(card.page),
             "",
-            card.instrument_name,
+            product,
+            direction,
             card.wkn or "",
+            "",
+            "",
             card.underlying_price or "",
             card.base_price or "",
             card.omega_hebel or "",
             card.runtime or "",
+            card.current_price or "",
+            "",
+            "",
             card.target or "",
             card.stop or "",
+            card.recommendation_status or "",
             ReviewStatus.NEEDS_REVIEW.value,
             instrument_update_date,
         ),
@@ -455,6 +512,127 @@ def _dividend_rows(
     return draft_rows
 
 
+def _derivative_overview_rows(
+    rows: Sequence[DerivativeOverviewRow],
+    *,
+    instrument_update_date: str,
+) -> list[WorkbookDraftRow]:
+    draft_rows: list[WorkbookDraftRow] = []
+    for row in rows:
+        source_id = _source_id("derivative-overview", row.issue_id, row.page, row.wkn)
+        draft_rows.append(
+            WorkbookDraftRow(
+                tab="Derivative Tips",
+                row_kind="derivative_overview",
+                source_id=source_id,
+                issue_id=row.issue_id,
+                page=row.page,
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="manual_review_pending",
+                values=(
+                    row.issue_id,
+                    str(row.page),
+                    row.underlying,
+                    row.product,
+                    row.direction,
+                    row.wkn,
+                    row.issuer,
+                    row.ratio,
+                    "",
+                    row.strike_cap,
+                    row.omega_hebel,
+                    row.runtime,
+                    row.entry_price,
+                    row.current_price,
+                    row.performance_since_recommendation,
+                    row.target,
+                    row.stop,
+                    row.recommendation,
+                    ReviewStatus.NEEDS_REVIEW.value,
+                    instrument_update_date,
+                ),
+            )
+        )
+    return draft_rows
+
+
+def _depot_position_rows(
+    rows: Sequence[DepotPositionRow],
+    *,
+    instrument_update_date: str,
+) -> list[WorkbookDraftRow]:
+    draft_rows: list[WorkbookDraftRow] = []
+    for row in rows:
+        source_id = _source_id("aktionaer-depot", row.issue_id, row.page, row.wkn)
+        draft_rows.append(
+            WorkbookDraftRow(
+                tab="AKTIONAER Depot",
+                row_kind="aktionaer_depot_position",
+                source_id=source_id,
+                issue_id=row.issue_id,
+                page=row.page,
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="manual_review_pending",
+                values=(
+                    row.issue_id,
+                    str(row.page),
+                    row.instrument,
+                    row.wkn,
+                    row.quantity,
+                    row.buy_date,
+                    row.buy_price,
+                    row.current_price,
+                    row.value,
+                    row.performance_since_buy,
+                    row.stop,
+                    ReviewStatus.NEEDS_REVIEW.value,
+                    instrument_update_date,
+                ),
+            )
+        )
+    return draft_rows
+
+
+def _depot_transaction_rows(
+    rows: Sequence[DepotTransactionRow],
+    *,
+    instrument_update_date: str,
+) -> list[WorkbookDraftRow]:
+    draft_rows: list[WorkbookDraftRow] = []
+    for row in rows:
+        source_id = _source_id(
+            "depot-transaction",
+            row.issue_id,
+            row.page,
+            row.wkn or row.action,
+        )
+        draft_rows.append(
+            WorkbookDraftRow(
+                tab="Depot Transactions",
+                row_kind="depot_transaction",
+                source_id=source_id,
+                issue_id=row.issue_id,
+                page=row.page,
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="manual_review_pending",
+                values=(
+                    row.issue_id,
+                    str(row.page),
+                    row.action,
+                    row.instrument,
+                    row.wkn,
+                    row.quantity,
+                    row.transaction_date,
+                    row.price,
+                    row.performance_since_buy,
+                    ReviewStatus.NEEDS_REVIEW.value,
+                    instrument_update_date,
+                ),
+            )
+        )
+    return draft_rows
+
+
 def _section_audit_rows(sections: Sequence[MagazineSectionCandidate]) -> list[WorkbookDraftRow]:
     rows: list[WorkbookDraftRow] = []
     for section in sections:
@@ -521,6 +699,26 @@ def _source_id(prefix: str, issue_id: str, page: int, stable_key: str | None) ->
     digest = sha256(f"{prefix}|{issue_id}|{page}|{key}".encode("utf-8")).hexdigest()[:10]
     visible_key = key if stable_key else "review"
     return f"{prefix}:{issue_id}:p{page}:{visible_key}:{digest}"
+
+
+def _split_derivative_direction(name: str) -> tuple[str, str]:
+    normalized = " ".join(name.split())
+    for direction in (
+        "Discount-Call",
+        "Discount-Put",
+        "Turbo-Call",
+        "Turbo-Put",
+        "Index-Zertifikat",
+        "Call",
+        "Put",
+        "Zertifikat",
+    ):
+        suffix = f" {direction}"
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)].strip(), direction
+        if normalized == direction:
+            return "", direction
+    return normalized, ""
 
 
 def _private_source_id(pdf_path: Path, issue_id: str) -> str:

@@ -7,18 +7,24 @@
       "rowKind": "derivative_card",
       "page": 37,
       "values": [
-        "derivative:2026-W03:p37:MM7PJ4:db1652cb91",
         "2026-W03",
         "37",
         "",
-        "Baidu Call",
+        "Baidu",
+        "Call",
         "MM7PJ4",
+        "",
+        "",
         "146,42 USD",
         "150,00 USD",
         "3,1",
         "18.09.26 (8,5 Monate)",
+        "2,15 EUR",
+        "",
+        "",
         "4,00 EUR",
         "1,30 EUR",
+        "",
         "needs_review",
         "2026-05-17"
       ]
@@ -28,18 +34,24 @@
       "rowKind": "derivative_card",
       "page": 78,
       "values": [
-        "derivative:2026-W03:p78:MM4M60:14b8bbd9e9",
         "2026-W03",
         "78",
         "",
-        "Gold Discount-Call",
+        "Gold",
+        "Discount-Call",
         "MM4M60",
+        "",
+        "",
         "4.458,58 USD",
         "4.350 USD",
         "",
         "20.03.2026",
+        "",
+        "",
+        "",
         "13,50 EUR",
         "6,50 EUR",
+        "",
         "needs_review",
         "2026-05-17"
       ]
@@ -137,8 +149,6 @@
     }
   ],
   "plannedButNotYetParsedAsRows": [
-    "AKTIONAER Depot",
-    "Depot Transactions",
     "Chart Check",
     "Stock Quickcheck",
     "Statistics Context"

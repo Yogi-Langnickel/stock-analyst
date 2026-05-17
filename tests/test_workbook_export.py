@@ -4,6 +4,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from stock_analyst.dividend_strategy import DividendStrategyRow
+from stock_analyst.depot_tables import DepotPositionRow, DepotTransactionRow
+from stock_analyst.derivative_tables import DerivativeOverviewRow
 from stock_analyst.extraction import RawPageText
 from stock_analyst.google_access import DEFAULT_SHEET_TABS
 from stock_analyst.recommendation_cards import RecommendationCard
@@ -200,6 +202,47 @@ class WorkbookExportPlanTest(unittest.TestCase):
 
         self.assertEqual(stock_row["values"][-1], "2026-05-16")
 
+    def test_stock_dividend_prefers_current_yield_over_per_share_trend(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            stock_update_date="2026-05-17",
+            recommendation_cards=(
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=22,
+                    instrument_name="Banco Sabadell",
+                    instrument_type=InstrumentType.STOCK,
+                    wkn="A0MRD4",
+                    current_price="3,33 EUR",
+                    target="4,30 EUR",
+                    stop="2,70 EUR",
+                    chance=5,
+                    risk=5,
+                    recommendation_status="new_recommendation",
+                    dividend_per_share_trend="2023: 0,04; 2024: 0,11; 2025e: 0,36",
+                ),
+            ),
+            dividend_strategy=(
+                DividendStrategyRow(
+                    issue_id="2026-W03",
+                    page=18,
+                    month="März",
+                    company="Banco Sabadell",
+                    wkn="A0MRD4",
+                    current_price="3,33 EUR",
+                    market_cap_billions_eur="16,8",
+                    dividend_yield="18,6 %",
+                    kgv_2026e="10",
+                ),
+            ),
+        )
+
+        stock_row = next(row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks")
+
+        self.assertEqual(stock_row["values"][4], "18,6 %")
+        self.assertNotIn("2023", stock_row["values"][4])
+
     def test_routes_derivative_cards_without_putting_name_in_source_id(self) -> None:
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
@@ -231,7 +274,8 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["tab"], "Derivative Tips")
         self.assertEqual(row["rowKind"], "derivative_card")
         self.assertEqual(len(row["values"]), len(headers_for("Derivative Tips")))
-        self.assertEqual(row["values"][4], "Baidu Call")
+        self.assertEqual(row["values"][3], "Baidu")
+        self.assertEqual(row["values"][4], "Call")
         self.assertNotIn("Baidu Call", row["sourceId"])
 
     def test_routes_explicit_asset_class_cards_to_dedicated_tabs(self) -> None:
@@ -374,6 +418,73 @@ class WorkbookExportPlanTest(unittest.TestCase):
             self.assertEqual(len(row["values"]), len(headers_for("Derivative Tips")))
             self.assertEqual(row["values"][-2], ReviewStatus.NEEDS_REVIEW.value)
             self.assertTrue(row["values"][-1])
+
+    def test_routes_derivative_overview_and_depot_tables_to_dedicated_tabs(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            stock_update_date="2026-05-17",
+            derivative_overview=(
+                DerivativeOverviewRow(
+                    issue_id="2026-W03",
+                    page=62,
+                    underlying="Bayer",
+                    product="Bayer",
+                    direction="Discount-Call",
+                    wkn="UG8QQ9",
+                    issuer="UniCredit",
+                    ratio="1,00",
+                    strike_cap="33,00 EUR",
+                    omega_hebel="",
+                    runtime="17.06.26 (5,3 Monate)",
+                    entry_price="1,03 EUR",
+                    current_price="1,94 EUR",
+                    performance_since_recommendation="+88,3 %",
+                    target="3,00 EUR",
+                    stop="1,40 EUR",
+                    recommendation="Dabei- bleiben",
+                ),
+            ),
+            depot_positions=(
+                DepotPositionRow(
+                    issue_id="2026-W03",
+                    page=66,
+                    instrument="Amazon",
+                    wkn="906866",
+                    quantity="60",
+                    buy_date="31.03.20",
+                    buy_price="89,85 EUR",
+                    current_price="205,25 EUR",
+                    value="12.315,00 EUR",
+                    performance_since_buy="+128,4 %",
+                    stop="",
+                ),
+            ),
+            depot_transactions=(
+                DepotTransactionRow(
+                    issue_id="2026-W03",
+                    page=66,
+                    action="Keine Transaktionen",
+                ),
+            ),
+        )
+
+        rows = {row["tab"]: row for row in plan.to_dict()["rows"]}
+
+        self.assertEqual(rows["Derivative Tips"]["rowKind"], "derivative_overview")
+        self.assertEqual(rows["Derivative Tips"]["values"][3], "Bayer")
+        self.assertEqual(rows["Derivative Tips"]["values"][4], "Discount-Call")
+        self.assertEqual(rows["Derivative Tips"]["values"][14], "+88,3 %")
+        self.assertEqual(len(rows["Derivative Tips"]["values"]), len(headers_for("Derivative Tips")))
+        self.assertEqual(rows["AKTIONAER Depot"]["rowKind"], "aktionaer_depot_position")
+        self.assertEqual(rows["AKTIONAER Depot"]["values"][2], "Amazon")
+        self.assertEqual(len(rows["AKTIONAER Depot"]["values"]), len(headers_for("AKTIONAER Depot")))
+        self.assertEqual(rows["Depot Transactions"]["rowKind"], "depot_transaction")
+        self.assertEqual(rows["Depot Transactions"]["values"][2], "Keine Transaktionen")
+        self.assertEqual(
+            len(rows["Depot Transactions"]["values"]),
+            len(headers_for("Depot Transactions")),
+        )
 
     def test_routes_dividend_rows_to_dividend_focus(self) -> None:
         plan = build_workbook_export_plan(

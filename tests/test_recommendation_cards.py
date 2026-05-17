@@ -180,6 +180,35 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(card.omega_hebel, "3,1")
         self.assertEqual(card.runtime, "18.09.26 (8,5 Monate)")
 
+    def test_extracts_derivative_omega_label_without_hebel_suffix(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "ConocoPhillips Call",
+                "WKN",
+                "MM5GDA",
+                "Akt. Kurs",
+                "0,47 €",
+                "Ziel",
+                "1,10 €",
+                "Stopp",
+                "0,25 €",
+                "Kurs Basiswert",
+                "97,11 $",
+                "Basispreis",
+                "110,00 $",
+                "Omega",
+                "6,5",
+                "Laufzeit",
+                "18.09.26",
+                "8,4 Monate",
+            ),
+            issue_id="2026-W03",
+            page_number=61,
+        )
+
+        self.assertEqual(cards[0].instrument_name, "ConocoPhillips Call")
+        self.assertEqual(cards[0].omega_hebel, "6,5")
+
     def test_extracts_explicit_non_stock_instrument_types(self) -> None:
         examples = (
             ("ETF", "MSCI World ETF", "A0RPWH", InstrumentType.ETF),

@@ -356,7 +356,8 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(tab_status["Derivative Tips"], "parser_backed")
         self.assertEqual(tab_status["Dividend Focus"], "parser_backed")
         self.assertEqual(tab_status["Extraction Audit"], "parser_backed")
-        self.assertEqual(tab_status["AKTIONAER Depot"], "audit_hint")
+        self.assertEqual(tab_status["AKTIONAER Depot"], "parser_backed")
+        self.assertEqual(tab_status["Depot Transactions"], "parser_backed")
         self.assertEqual(tab_status["Chart Check"], "audit_hint")
         self.assertEqual(tab_status["Navigation Dashboard"], "layout_only")
         for tab in result["tabs"]:

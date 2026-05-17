@@ -28,7 +28,7 @@ WORKBOOK_INSTRUMENT_TABS = {
     "Crypto": (0, 1),
     "Forex": (0, None),
     "Dividend Focus": (2, 3),
-    "Derivative Tips": (4, 5),
+    "Derivative Tips": (3, 5),
 }
 DEFAULT_ALPHA_VANTAGE_DAILY_CALL_LIMIT = 25
 DEFAULT_FMP_DAILY_CALL_LIMIT = 235
@@ -1379,7 +1379,7 @@ def _row_issue_value(values: list[object], tab: str) -> str:
     if tab == "Dividend Focus":
         return _row_value(values, 0)
     if tab == "Derivative Tips":
-        return _row_value(values, 1)
+        return _row_value(values, 0)
     if tab in {"Stocks", "Commodities", "Crypto", "Forex"}:
         return _row_value(values, -3)
     if tab == "ETF":
@@ -1391,7 +1391,7 @@ def _row_page_value(values: list[object], tab: str) -> str:
     if tab == "Dividend Focus":
         return _row_value(values, 1)
     if tab == "Derivative Tips":
-        return _row_value(values, 2)
+        return _row_value(values, 1)
     if tab in {"Stocks", "Commodities", "Crypto", "Forex"}:
         return _row_value(values, -2)
     if tab == "ETF":

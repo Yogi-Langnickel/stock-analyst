@@ -27,6 +27,7 @@ LABEL_ALIASES = {
     "Kurs Basiswert": "underlying_price",
     "Basispreis": "base_price",
     "Omega / Hebel": "omega_hebel",
+    "Omega": "omega_hebel",
     "Laufzeit": "runtime",
 }
 
@@ -354,8 +355,8 @@ def _combined_label(lines: Sequence[str], index: int) -> tuple[str, int]:
             return "Empfohlen in Ausgabe", 2
         if lines[index + 1] == "in" and lines[index + 2] == "Ausgabe":
             return "Empfohlen in Ausgabe", 3
-    if line == "Omega / Hebel":
-        return "Omega / Hebel", 1
+    if line in {"Omega / Hebel", "Omega"}:
+        return line, 1
     if line == "KUV" and index + 1 < len(lines) and lines[index + 1] == "26e":
         return "KUV 26e", 2
     if line == "KGV" and index + 1 < len(lines) and lines[index + 1] == "26e":
