@@ -223,6 +223,11 @@ The command does not call Google Sheets and does not write export files. Planned
 rows are draft reviewer infrastructure only: `exportable=false`,
 `requiresManualReview=true`, and `approvedRows=0`.
 
+The `google-sheets-export-plan` command writes those draft reviewer rows into
+the configured Google Sheet. It bootstraps headers first, replaces existing rows
+for the same issue in affected tabs by default, preserves rows from other
+issues, and makes no enrichment provider calls.
+
 Broad index, statistics, quick-check, chart-check, or constituent-table context
 must not fan out into individual `Stocks` rows. Only explicitly mentioned stock
 recommendation cards or reviewed explicit stock mentions may create rows in the

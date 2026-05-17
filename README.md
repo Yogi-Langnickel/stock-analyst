@@ -155,6 +155,15 @@ PYTHONPATH=src python3 -m stock_analyst.cli google-sheets-bootstrap --env-file .
 Use `--skip-headers` if you only want to create missing tabs and preserve
 existing first-row labels.
 
+Write reviewer-gated workbook-plan rows into the configured Google Sheet:
+
+```sh
+scripts/stock-analyst google-sheets-export-plan ./data/private/workbook-plan.json --env-file .env
+```
+
+By default this replaces existing rows for the same issue in the affected tabs,
+preserves rows from other issues, and makes no enrichment provider calls.
+
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.

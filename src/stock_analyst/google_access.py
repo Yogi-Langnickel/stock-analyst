@@ -636,6 +636,133 @@ def bootstrap_google_sheet(
     }
 
 
+def write_workbook_plan_to_google_sheet(
+    config: GoogleAccessConfig,
+    workbook_plan: Mapping[str, object],
+    *,
+    sheets_service_factory=None,
+    tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
+    replace_issue: bool = True,
+) -> dict[str, object]:
+    """Write reviewer-gated workbook-plan rows to configured Google Sheet.
+
+    This only writes rows already produced by local magazine extraction. It does
+    not call enrichment providers and does not mark rows as approved.
+    """
+
+    if sheets_service_factory is None:
+        _drive_service_factory, sheets_service_factory = _google_service_factories(config)
+
+    issue_id = str(workbook_plan.get("issueId") or "").strip()
+    raw_rows = workbook_plan.get("rows")
+    if not issue_id:
+        raise GoogleAccessError("workbook plan is missing issueId")
+    if not isinstance(raw_rows, list):
+        raise GoogleAccessError("workbook plan is missing rows list")
+
+    specs_by_title = {spec.title: spec for spec in tab_specs}
+    rows_by_tab: dict[str, list[list[str]]] = {}
+    skipped_count = 0
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            skipped_count += 1
+            continue
+        tab = str(raw_row.get("tab") or "").strip()
+        spec = specs_by_title.get(tab)
+        values = raw_row.get("values")
+        if spec is None or not isinstance(values, list):
+            skipped_count += 1
+            continue
+        normalized_values = _normalize_sheet_row_values(values, width=len(spec.headers))
+        rows_by_tab.setdefault(tab, []).append(normalized_values)
+
+    sheets = sheets_service_factory()
+    bootstrap_result = bootstrap_google_sheet(
+        config,
+        sheets_service_factory=sheets_service_factory,
+        tab_specs=tab_specs,
+        write_headers=True,
+    )
+    try:
+        write_ranges: list[dict[str, object]] = []
+        cleared_tabs: list[str] = []
+        restored_existing_count = 0
+        for tab, new_rows in rows_by_tab.items():
+            spec = specs_by_title[tab]
+            body_start = spec.header_row + 1
+            body_range = (
+                f"{_quote_sheet_title(tab)}!A{body_start}:"
+                f"{_column_letter(len(spec.headers))}"
+            )
+            existing_rows = _sheet_values_get(
+                sheets,
+                spreadsheet_id=config.sheets_spreadsheet_id,
+                range_name=body_range,
+            )
+            kept_rows = (
+                [
+                    _normalize_sheet_row_values(row, width=len(spec.headers))
+                    for row in existing_rows
+                    if _row_issue_id(row, spec) != issue_id
+                ]
+                if replace_issue
+                else [
+                    _normalize_sheet_row_values(row, width=len(spec.headers))
+                    for row in existing_rows
+                ]
+            )
+            restored_existing_count += len(kept_rows)
+            combined_rows = kept_rows + new_rows
+            if replace_issue:
+                sheets.spreadsheets().values().clear(
+                    spreadsheetId=config.sheets_spreadsheet_id,
+                    range=body_range,
+                    body={},
+                ).execute()
+                cleared_tabs.append(tab)
+            if combined_rows:
+                write_ranges.append(
+                    {
+                        "range": (
+                            f"{_quote_sheet_title(tab)}!A{body_start}:"
+                            f"{_column_letter(len(spec.headers))}"
+                            f"{body_start + len(combined_rows) - 1}"
+                        ),
+                        "values": combined_rows,
+                    }
+                )
+
+        if write_ranges:
+            sheets.spreadsheets().values().batchUpdate(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                body={
+                    "valueInputOption": "RAW",
+                    "data": write_ranges,
+                },
+            ).execute()
+    except Exception as error:
+        raise GoogleAccessError(
+            "Google Sheets workbook row export failed. Verify network access, "
+            "API enablement, service-account sheet sharing, and configured spreadsheet ID."
+        ) from error
+
+    written_count = sum(len(rows) for rows in rows_by_tab.values())
+    return {
+        "ok": True,
+        "externalServicesEnabled": True,
+        "enrichmentProviderCalls": 0,
+        "spreadsheetId": config.sheets_spreadsheet_id,
+        "issueId": issue_id,
+        "replaceIssue": replace_issue,
+        "tabsWritten": sorted(rows_by_tab),
+        "rowsWritten": written_count,
+        "rowsSkipped": skipped_count,
+        "clearedTabs": sorted(cleared_tabs),
+        "restoredExistingRows": restored_existing_count,
+        "bootstrap": bootstrap_result,
+    }
+
+
 def list_drive_pdf_metadata(
     config: GoogleAccessConfig,
     *,
@@ -756,6 +883,43 @@ def _build_sheet_header_ranges(
         for spec in tab_specs
     )
     return metadata_ranges + header_ranges
+
+
+def _sheet_values_get(
+    sheets,
+    *,
+    spreadsheet_id: str,
+    range_name: str,
+) -> list[list[object]]:
+    response = (
+        sheets.spreadsheets()
+        .values()
+        .get(spreadsheetId=spreadsheet_id, range=range_name)
+        .execute()
+    )
+    values = response.get("values", [])
+    return values if isinstance(values, list) else []
+
+
+def _normalize_sheet_row_values(values: list[object], *, width: int) -> list[str]:
+    row = [str(value) if value is not None else "" for value in values[:width]]
+    if len(row) < width:
+        row.extend("" for _ in range(width - len(row)))
+    return row
+
+
+def _row_issue_id(row: list[object], spec: GoogleSheetTabSpec) -> str:
+    issue_index = _issue_column_index(spec)
+    if issue_index is None or issue_index >= len(row):
+        return ""
+    return str(row[issue_index] or "").strip()
+
+
+def _issue_column_index(spec: GoogleSheetTabSpec) -> int | None:
+    for index, header in enumerate(spec.headers):
+        if header.strip().lower() == "issue":
+            return index
+    return None
 
 
 def _quote_sheet_title(title: str) -> str:

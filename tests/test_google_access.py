@@ -10,6 +10,7 @@ from stock_analyst.google_access import (
     load_env_file,
     load_google_access_config,
     run_google_access_smoke,
+    write_workbook_plan_to_google_sheet,
     write_drive_pdf_metadata_manifest,
 )
 
@@ -70,10 +71,21 @@ class _FakeSpreadsheets:
 class _FakeValues:
     def __init__(self):
         self.batch_update_requests = []
+        self.clear_requests = []
+        self.get_requests = []
+        self.values_by_range = {}
 
     def batchUpdate(self, **kwargs):
         self.batch_update_requests.append(kwargs)
         return _FakeExecute({"updated": True})
+
+    def clear(self, **kwargs):
+        self.clear_requests.append(kwargs)
+        return _FakeExecute({"clearedRange": kwargs.get("range")})
+
+    def get(self, **kwargs):
+        self.get_requests.append(kwargs)
+        return _FakeExecute({"values": self.values_by_range.get(kwargs.get("range"), [])})
 
 
 class _FakeSheets:
@@ -392,6 +404,112 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertEqual(result["headerRowsWritten"], 0)
         self.assertEqual(sheets.spreadsheets_resource.values_resource.batch_update_requests, [])
+
+    def test_google_sheet_export_writes_workbook_rows_and_replaces_same_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {"properties": {"title": "Stocks"}},
+                        {"properties": {"title": "Dividend Focus"}},
+                    ],
+                }
+            )
+            sheets.spreadsheets_resource.values_resource.values_by_range[
+                "'Stocks'!A4:K"
+            ] = [
+                [
+                    "Old Same Issue",
+                    "OLD",
+                    "",
+                    "1 EUR",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "2026-W03",
+                    "1",
+                    "2026-05-17",
+                ],
+                [
+                    "Keep Different Issue",
+                    "KEEP",
+                    "",
+                    "2 EUR",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "2026-W02",
+                    "1",
+                    "2026-05-10",
+                ],
+            ]
+            workbook_plan = {
+                "issueId": "2026-W03",
+                "rows": [
+                    {
+                        "tab": "Stocks",
+                        "values": [
+                            "Banco Sabadell",
+                            "A0MRD4",
+                            "",
+                            "3,33 EUR",
+                            "",
+                            "4,30 EUR",
+                            "2,70 EUR",
+                            "new_recommendation",
+                            "2026-W03",
+                            "22",
+                            "2026-05-17",
+                        ],
+                    },
+                    {
+                        "tab": "Dividend Focus",
+                        "values": [
+                            "2026-W03",
+                            "18",
+                            "Banco Sabadell",
+                            "A0MRD4",
+                            "",
+                            "18,6 %",
+                            "Maerz",
+                            "",
+                            "needs_review",
+                            "2026-05-17",
+                        ],
+                    },
+                ],
+            }
+
+            result = write_workbook_plan_to_google_sheet(
+                config,
+                workbook_plan,
+                sheets_service_factory=lambda: sheets,
+            )
+
+        values_resource = sheets.spreadsheets_resource.values_resource
+        data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
+        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:K5")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["enrichmentProviderCalls"], 0)
+        self.assertEqual(result["rowsWritten"], 2)
+        self.assertIn("Stocks", result["clearedTabs"])
+        self.assertIn("Dividend Focus", result["clearedTabs"])
+        self.assertEqual(stocks_write["values"][0][0], "Keep Different Issue")
+        self.assertEqual(stocks_write["values"][1][0], "Banco Sabadell")
+        self.assertIn("'Stocks'!A4:K", [request["range"] for request in values_resource.clear_requests])
 
 
 if __name__ == "__main__":

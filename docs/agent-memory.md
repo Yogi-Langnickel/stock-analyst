@@ -99,6 +99,10 @@ Created: 2026-05-15
   ./data/private/workbook-plan.json --output
   ./data/private/market-symbol-map.csv`: refresh the private mapping workfile
   from magazine rows without provider calls; existing symbols are preserved.
+- `scripts/stock-analyst google-sheets-export-plan
+  ./data/private/workbook-plan.json --env-file .env`: write reviewer-gated
+  workbook-plan rows to Google Sheets, replacing rows for the same issue in
+  affected tabs by default and making no enrichment provider calls.
 - `PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests`
 - `PYTHONPATH=src python3 -m unittest discover tests`
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`

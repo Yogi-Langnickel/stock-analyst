@@ -16,6 +16,7 @@ from stock_analyst.google_access import (
     build_drive_pdf_metadata_result,
     load_google_access_config,
     run_google_access_smoke,
+    write_workbook_plan_to_google_sheet,
     write_drive_pdf_metadata_manifest,
 )
 from stock_analyst.intake import (
@@ -331,6 +332,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create missing tabs without writing header rows.",
     )
 
+    google_sheets_export_plan = subcommands.add_parser(
+        "google-sheets-export-plan",
+        help="Write reviewer-gated workbook-plan rows into the configured Sheet.",
+    )
+    google_sheets_export_plan.add_argument(
+        "workbook_plan_file",
+        type=Path,
+        help="JSON workbook-export-plan produced from local magazine extraction.",
+    )
+    google_sheets_export_plan.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Optional local env file with GOOGLE_* config. Do not commit it.",
+    )
+    google_sheets_export_plan.add_argument(
+        "--append",
+        action="store_true",
+        help="Append rows instead of replacing existing rows for the same issue.",
+    )
+
     return parser
 
 
@@ -639,6 +661,23 @@ def run_google_sheets_bootstrap_command(
     return bootstrap_google_sheet(config, write_headers=write_headers)
 
 
+def run_google_sheets_export_plan_command(
+    workbook_plan_file: Path,
+    *,
+    env_file: Path | None = None,
+    replace_issue: bool = True,
+) -> dict[str, object]:
+    config = load_google_access_config(env_file=env_file)
+    payload = json.loads(workbook_plan_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"workbook plan file is not a JSON object: {workbook_plan_file}")
+    return write_workbook_plan_to_google_sheet(
+        config,
+        payload,
+        replace_issue=replace_issue,
+    )
+
+
 def _market_data_plan_to_dict(
     plan: MarketDataEnrichmentPlan,
     config: MarketDataPlanningConfig,
@@ -782,6 +821,12 @@ def main(argv: list[str] | None = None) -> int:
             result = run_google_sheets_bootstrap_command(
                 env_file=args.env_file,
                 write_headers=not args.skip_headers,
+            )
+        elif args.command == "google-sheets-export-plan":
+            result = run_google_sheets_export_plan_command(
+                args.workbook_plan_file,
+                env_file=args.env_file,
+                replace_issue=not args.append,
             )
         else:
             parser.error(f"Unsupported command: {args.command}")
