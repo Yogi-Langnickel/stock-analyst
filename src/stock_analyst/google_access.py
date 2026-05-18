@@ -307,7 +307,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "WKN",
             "ISIN",
             "Recommendation",
-            "Current price",
+            "Magazine Price",
             "Target",
             "Stop",
             "Approved by",
@@ -330,7 +330,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "WKN",
             "Chance/Risk",
             "Recommendation type",
-            "Current price",
+            "Magazine Price",
             "Target",
             "Stop",
             "Market cap",
@@ -360,8 +360,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Strike/Cap",
             "Omega/Hebel",
             "Runtime",
-            "Entry price",
-            "Current price",
+            "Magazine Entry Price",
+            "Magazine Current Price",
             "Performance",
             "Target",
             "Stop",
@@ -387,8 +387,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "WKN",
             "Quantity",
             "Buy date",
-            "Buy price",
-            "Current price",
+            "Magazine Buy Price",
+            "Magazine Current Price",
             "Value",
             "Performance since buy",
             "Stop",
@@ -414,7 +414,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "WKN",
             "Quantity",
             "Transaction date",
-            "Price",
+            "Magazine Transaction Price",
             "Performance since buy",
             "Review status",
             "Issue",
@@ -439,8 +439,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "WKN",
             "Sector",
             "Signal",
-            "Current price",
-            "Price at recommendation",
+            "Magazine Price",
+            "Magazine Price at Recommendation",
             "Recommended issue",
             "Performance since recommendation",
             "Target",
@@ -471,8 +471,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Page",
             "Instrument",
             "WKN",
-            "Current price",
-            "Price at recommendation",
+            "Magazine Price",
+            "Magazine Price at Recommendation",
             "Recommended issue",
             "Performance since recommendation",
             "Target",
@@ -505,7 +505,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Instrument",
             "WKN",
             "Period",
-            "Current Price",
+            "Magazine Price",
             "Market Cap EUR bn",
             "Dividend Yield",
             "P/E Ratio 26e",
@@ -865,6 +865,7 @@ def write_workbook_plan_to_google_sheet(
         if spec is None or not isinstance(values, list):
             skipped_count += 1
             continue
+        _validate_sheet_row_width(tab, values, width=len(spec.headers))
         normalized_values = _normalize_sheet_row_values(values, width=len(spec.headers))
         rows_by_tab.setdefault(tab, []).append(normalized_values)
 
@@ -1209,6 +1210,14 @@ def _normalize_sheet_row_values(values: list[object], *, width: int) -> list[str
     if len(row) < width:
         row.extend("" for _ in range(width - len(row)))
     return row
+
+
+def _validate_sheet_row_width(tab: str, values: list[object], *, width: int) -> None:
+    actual_width = len(values)
+    if actual_width != width:
+        raise GoogleAccessError(
+            f"workbook plan row for {tab} must contain {width} values, got {actual_width}"
+        )
 
 
 def _row_issue_id(row: list[object], spec: GoogleSheetTabSpec) -> str:

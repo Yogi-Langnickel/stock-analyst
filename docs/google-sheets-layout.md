@@ -40,9 +40,9 @@ long/short products, certificates, and derivative overview rows all use
 
 2. `Derivative Tips`
    Unified detailed options/derivatives table. Issue and page are trailing
-   provenance columns. New derivative recommendations use the printed magazine
-   price as both `Entry price` and `Current price` until enrichment updates the
-   current price.
+   provenance columns. New derivative recommendations use printed magazine
+   values in `Magazine Entry Price` and `Magazine Current Price`; enrichment
+   must not overwrite those source fields.
 
 3. `Dividend Focus`
    Dedicated dividend section for table-based dividend data, including dividend
@@ -62,14 +62,14 @@ long/short products, certificates, and derivative overview rows all use
 
 6. `Chart Check`
    Dedicated traceability export for chart-check source rows, including the
-   parsed table fields for current price, recommendation price, target, stop,
-   52-week range, performance, dividend yield, and next report date. Parsed
-   fields also surface into the matching `Stocks` row by WKN/normalized company
-   while remaining `needs_review`.
+   parsed table fields for magazine price, magazine recommendation price,
+   target, stop, 52-week range, performance, dividend yield, and next report
+   date. Parsed fields also surface into the matching `Stocks` row by
+   WKN/normalized company while remaining `needs_review`.
 
 7. `Stock Quickcheck`
-   Dedicated normalized quick-check table. Parsed rows also update the matching
-   `Stocks` row by WKN/normalized company.
+   Dedicated normalized quick-check table with printed magazine price labels.
+   Parsed rows also update the matching `Stocks` row by WKN/normalized company.
 
 8. `Extraction Audit`
    Internal audit tab for skipped pages, low-priority back matter, OCR-needed
@@ -85,12 +85,12 @@ the live Sheet; those should be added only after this layout is accepted.
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current Price*` is reserved for provider-backed enrichment and remains blank in local magazine-only plans; `Magazine Price` and `Magazine Price As Of` preserve the latest printed source price; `Price at Recommendation` preserves the printed recommendation price where available; includes market cap, P/S ratio, P/E ratio, Chance/Risk, dividend yield, chart fields, and comments where available; `date updated` is the last row field. |
-| `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Source ID stays in row metadata; visible provenance is trailing issue/page columns. |
-| `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; performance cells are green for positive values and red for negative values. |
-| `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks; performance cells use positive/negative conditional formatting. |
-| `Chart Check` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full chart-check traceability here, including parsed table fields, while also merging parsed stock fields into `Stocks`. |
-| `Stock Quickcheck` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here with split price/target/stop fields; also surface each row in `Stocks`. |
-| `Dividend Focus` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Multi-period dividend context including ex/cum date, pay date, and payout frequency; concise decision fields may surface in `Stocks`. |
+| `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Printed source prices use `Magazine Entry Price` and `Magazine Current Price`; source ID stays in row metadata; visible provenance is trailing issue/page columns. |
+| `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; printed source prices use `Magazine Buy Price` and `Magazine Current Price`; performance cells are green for positive values and red for negative values. |
+| `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks; printed source transaction prices use `Magazine Transaction Price`; performance cells use positive/negative conditional formatting. |
+| `Chart Check` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full chart-check traceability here, including `Magazine Price` and `Magazine Price at Recommendation`, while also merging parsed stock fields into `Stocks`. |
+| `Stock Quickcheck` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here with split `Magazine Price`, `Magazine Price at Recommendation`, target, and stop fields; also surface each row in `Stocks`. |
+| `Dividend Focus` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Multi-period dividend context including `Magazine Price`, ex/cum date, pay date, and payout frequency; concise decision fields may surface in `Stocks`. |
 | `Extraction Audit` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | First stop for parser warnings and planned-tab surfaces before row emitters exist. |
 <!-- markdownlint-enable MD013 -->
 

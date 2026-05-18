@@ -32,6 +32,47 @@ from stock_analyst.market_data import (
 from stock_analyst.cli import run_market_data_plan_command, run_market_symbol_map_template_command
 
 
+def stock_values(
+    name: str,
+    wkn: str,
+    *,
+    magazine_price: str = "",
+    price_at_recommendation: str = "",
+    target: str = "",
+    stop: str = "",
+    recommendation: str = "",
+    issue: str = "2026-W03",
+    page: str = "22",
+    updated: str = "2026-05-17",
+) -> list[str]:
+    return [
+        name,
+        wkn,
+        "",
+        magazine_price,
+        updated if magazine_price else "",
+        price_at_recommendation,
+        "",
+        "",
+        "",
+        "",
+        "",
+        target,
+        stop,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        recommendation,
+        "",
+        issue,
+        page,
+        updated,
+    ]
+
+
 class MarketDataTest(unittest.TestCase):
     def test_provider_metadata_documents_free_options_without_live_network(self) -> None:
         providers = {provider.provider_id: provider for provider in available_provider_metadata()}
@@ -257,19 +298,15 @@ class MarketDataTest(unittest.TestCase):
                     "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
                     "issueId": "2026-W03",
                     "page": 22,
-                    "values": [
+                    "values": stock_values(
                         "Banco Sabadell",
                         "A0MRD4",
-                        "",
-                        "3,33 EUR",
-                        "",
-                        "4,30 EUR",
-                        "2,70 EUR",
-                        "new_recommendation",
-                        "2026-W03",
-                        "22",
-                        "2026-05-17",
-                    ],
+                        magazine_price="3,33 EUR",
+                        price_at_recommendation="3,33 EUR",
+                        target="4,30 EUR",
+                        stop="2,70 EUR",
+                        recommendation="new_recommendation",
+                    ),
                 },
                 {
                     "tab": "Dividend Focus",
@@ -296,19 +333,15 @@ class MarketDataTest(unittest.TestCase):
                     "sourceId": "stock:2026-W03:p42:A1CX3T:ghi",
                     "issueId": "2026-W03",
                     "page": 42,
-                    "values": [
+                    "values": stock_values(
                         "Tesla",
                         "A1CX3T",
-                        "",
-                        "381,15 EUR",
-                        "0,0 %",
-                        "480,00 EUR",
-                        "295,00 EUR",
-                        "follow_up",
-                        "2026-W03",
-                        "42",
-                        "2026-05-17",
-                    ],
+                        magazine_price="381,15 EUR",
+                        target="480,00 EUR",
+                        stop="295,00 EUR",
+                        recommendation="follow_up",
+                        page="42",
+                    ),
                 },
             ]
         }
@@ -340,19 +373,14 @@ class MarketDataTest(unittest.TestCase):
                     "tab": "Stocks",
                     "rowKind": "stock_recommendation",
                     "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
-                    "values": [
+                    "values": stock_values(
                         "Banco Sabadell",
                         "A0MRD4",
-                        "",
-                        "3,33 EUR",
-                        "",
-                        "4,30 EUR",
-                        "2,70 EUR",
-                        "new_recommendation",
-                        "2026-W03",
-                        "22",
-                        "2026-05-17",
-                    ],
+                        magazine_price="3,33 EUR",
+                        target="4,30 EUR",
+                        stop="2,70 EUR",
+                        recommendation="new_recommendation",
+                    ),
                 },
                 {
                     "tab": "Extraction Audit",
@@ -373,7 +401,7 @@ class MarketDataTest(unittest.TestCase):
         self.assertIsNone(candidates[0].symbol)
         self.assertEqual(ready_market_data_symbols_from_workbook_candidates(candidates), ())
 
-    def test_workbook_plan_candidates_only_plan_mapped_sheet_instruments(self) -> None:
+    def test_workbook_plan_candidates_reject_old_short_stock_rows(self) -> None:
         payload = {
             "rows": [
                 {
@@ -394,20 +422,75 @@ class MarketDataTest(unittest.TestCase):
                         "2026-05-17",
                     ],
                 },
+            ]
+        }
+
+        with self.assertRaisesRegex(ValueError, "Stocks.*24 values.*got 11"):
+            market_data_candidates_from_workbook_plan(payload)
+
+    def test_workbook_plan_candidates_only_plan_mapped_stock_rows(self) -> None:
+        payload = {
+            "rows": [
                 {
-                    "tab": "Crypto",
-                    "rowKind": "crypto_recommendation",
-                    "sourceId": "crypto:2026-W03:p40:review:def",
+                    "tab": "Stocks",
+                    "rowKind": "stock_recommendation",
+                    "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
+                    "values": stock_values(
+                        "Banco Sabadell",
+                        "A0MRD4",
+                        magazine_price="3,33 EUR",
+                        target="4,30 EUR",
+                        stop="2,70 EUR",
+                        recommendation="new_recommendation",
+                    ),
+                },
+                {
+                    "tab": "Dividend Focus",
+                    "rowKind": "dividend_strategy",
+                    "sourceId": "dividend:2026-W03:p18:A0MRD4:def",
                     "values": [
-                        "Bitcoin",
-                        "",
-                        "",
-                        "90000 USD",
-                        "watch",
-                        "",
-                        "2026-W03",
-                        "40",
+                        "Banco Sabadell",
+                        "A0MRD4",
+                        "April",
+                        "3,33 EUR",
+                        "4,78",
+                        "7,7 %",
+                        "9,1",
+                        "2",
+                        "14.04.26",
+                        "17.04.26",
+                        "4,30 EUR",
+                        "2,70 EUR",
                         "needs_review",
+                        "2026-W03",
+                        "18",
+                        "2026-05-17",
+                    ],
+                },
+                {
+                    "tab": "Derivative Tips",
+                    "rowKind": "derivative_overview",
+                    "sourceId": "derivative-overview:2026-W03:p62:AA00AA:ghi",
+                    "values": [
+                        "Bayer",
+                        "Bayer Discount-Call",
+                        "Discount-Call",
+                        "AA00AA",
+                        "Example Issuer",
+                        "1,0",
+                        "",
+                        "25,00 EUR",
+                        "2,1",
+                        "12/26",
+                        "1,90 EUR",
+                        "2,10 EUR",
+                        "+10,5 %",
+                        "3,00 EUR",
+                        "1,40 EUR",
+                        "watch",
+                        "needs_review",
+                        "2026-W03",
+                        "62",
                         "2026-05-17",
                     ],
                 },
@@ -418,16 +501,16 @@ class MarketDataTest(unittest.TestCase):
             payload,
             symbol_map={
                 "wkn:A0MRD4": "SAB.MC",
-                "name:bitcoin": "BTC/USD",
+                "wkn:AA00AA": "SHOULD.NOT.PLAN",
             },
         )
 
         self.assertEqual(
             ready_market_data_symbols_from_workbook_candidates(candidates),
-            ("SAB.MC", "BTC/USD"),
+            ("SAB.MC",),
         )
+        self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].status, "ready")
-        self.assertEqual(candidates[1].status, "ready")
 
     def test_market_data_is_disabled_by_default(self) -> None:
         result = market_data_disabled("AAPL.US")
@@ -874,19 +957,14 @@ class MarketDataTest(unittest.TestCase):
                                 "tab": "Stocks",
                                 "rowKind": "stock_recommendation",
                                 "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
-                                "values": [
+                                "values": stock_values(
                                     "Banco Sabadell",
                                     "A0MRD4",
-                                    "",
-                                    "3,33 EUR",
-                                    "",
-                                    "4,30 EUR",
-                                    "2,70 EUR",
-                                    "new_recommendation",
-                                    "2026-W03",
-                                    "22",
-                                    "2026-05-17",
-                                ],
+                                    magazine_price="3,33 EUR",
+                                    target="4,30 EUR",
+                                    stop="2,70 EUR",
+                                    recommendation="new_recommendation",
+                                ),
                             },
                             {
                                 "tab": "ETF",
@@ -929,12 +1007,11 @@ class MarketDataTest(unittest.TestCase):
 
         self.assertEqual(result["sourceMode"], "workbook_plan")
         self.assertTrue(result["sheetRowsRequiredBeforeLiveCalls"])
-        self.assertEqual(result["candidateCount"], 2)
+        self.assertEqual(result["candidateCount"], 1)
         self.assertEqual(result["readyCandidateCount"], 1)
-        self.assertEqual(result["blockedCandidateCount"], 1)
+        self.assertEqual(result["blockedCandidateCount"], 0)
         self.assertEqual(result["plannedCallCount"], 1)
         self.assertEqual(result["requests"][0]["symbol"], "SAB.MC")
-        self.assertEqual(result["workbookCandidates"][1]["status"], "needs_symbol_mapping")
 
     def test_market_symbol_map_template_command_writes_private_template(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -951,19 +1028,14 @@ class MarketDataTest(unittest.TestCase):
                                 "sourceId": "stock:2026-W03:p22:A0MRD4:abc",
                                 "issueId": "2026-W03",
                                 "page": 22,
-                                "values": [
+                                "values": stock_values(
                                     "Banco Sabadell",
                                     "A0MRD4",
-                                    "",
-                                    "3,33 EUR",
-                                    "",
-                                    "4,30 EUR",
-                                    "2,70 EUR",
-                                    "new_recommendation",
-                                    "2026-W03",
-                                    "22",
-                                    "2026-05-17",
-                                ],
+                                    magazine_price="3,33 EUR",
+                                    target="4,30 EUR",
+                                    stop="2,70 EUR",
+                                    recommendation="new_recommendation",
+                                ),
                             }
                         ]
                     }

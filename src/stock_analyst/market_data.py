@@ -14,6 +14,8 @@ from pathlib import Path
 import re
 from typing import Mapping
 
+from stock_analyst.google_access import DEFAULT_SHEET_TABS
+
 
 DEFAULT_PROVIDER_ENV = "STOCK_ANALYST_MARKET_DATA_PROVIDER"
 DEFAULT_MARKET_CACHE_DIR = Path("data/market-cache")
@@ -21,15 +23,7 @@ MARKET_CACHE_DIR_ENV = "STOCK_ANALYST_MARKET_DATA_CACHE_DIR"
 MARKET_BUDGET_DIR_ENV = "STOCK_ANALYST_MARKET_DATA_BUDGET_DIR"
 MARKET_DAILY_CALL_LIMIT_ENV = "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT"
 MARKET_TERMS_VERSION_ENV = "STOCK_ANALYST_MARKET_DATA_TERMS_VERSION"
-WORKBOOK_INSTRUMENT_TABS = {
-    "Stocks": (0, 1),
-    "ETF": (0, 1),
-    "Commodities": (0, 1),
-    "Crypto": (0, 1),
-    "Forex": (0, None),
-    "Dividend Focus": (2, 3),
-    "Derivative Tips": (3, 5),
-}
+WORKBOOK_MARKET_DATA_CANDIDATE_TABS = ("Stocks",)
 DEFAULT_ALPHA_VANTAGE_DAILY_CALL_LIMIT = 25
 DEFAULT_FMP_DAILY_CALL_LIMIT = 235
 DEFAULT_TWELVE_DATA_DAILY_CALL_LIMIT = 800
@@ -920,7 +914,7 @@ def build_market_data_symbol_map_template_csv(
     *,
     existing_csv_text: str = "",
 ) -> str:
-    """Build or refresh a private CSV template from workbook-backed instruments."""
+    """Build or refresh a private CSV template from safe workbook stock rows."""
 
     existing_symbols = _existing_symbol_map_from_template_text(existing_csv_text)
     candidates = market_data_candidates_from_workbook_plan(payload)
@@ -931,11 +925,12 @@ def build_market_data_symbol_map_template_csv(
         if not isinstance(raw_row, Mapping):
             continue
         tab = str(raw_row.get("tab") or "")
-        if tab not in WORKBOOK_INSTRUMENT_TABS:
+        if tab not in WORKBOOK_MARKET_DATA_CANDIDATE_TABS:
             continue
         raw_values = raw_row.get("values")
         if not isinstance(raw_values, list):
             continue
+        _validate_workbook_candidate_width(tab, raw_values)
         source_id = str(raw_row.get("sourceId") or "")
         candidate = _candidate_by_source_id(candidates, source_id)
         if candidate is None:
@@ -980,7 +975,7 @@ def market_data_candidates_from_workbook_plan(
     *,
     symbol_map: Mapping[str, str] | None = None,
 ) -> tuple[MarketDataWorkbookCandidate, ...]:
-    """Extract enrichment candidates from magazine-backed workbook rows only."""
+    """Extract enrichment candidates from safe magazine-backed stock rows only."""
 
     raw_rows = payload.get("rows")
     if not isinstance(raw_rows, list):
@@ -992,14 +987,14 @@ def market_data_candidates_from_workbook_plan(
         if not isinstance(raw_row, Mapping):
             continue
         tab = str(raw_row.get("tab") or "")
-        indexes = WORKBOOK_INSTRUMENT_TABS.get(tab)
-        if indexes is None:
+        if tab not in WORKBOOK_MARKET_DATA_CANDIDATE_TABS:
             continue
         raw_values = raw_row.get("values")
         if not isinstance(raw_values, list):
             continue
 
-        name_index, wkn_index = indexes
+        _validate_workbook_candidate_width(tab, raw_values)
+        name_index, wkn_index = _workbook_candidate_indexes(tab)
         name = _row_value(raw_values, name_index)
         wkn = _row_value(raw_values, wkn_index) if wkn_index is not None else ""
         source_id = str(raw_row.get("sourceId") or "")
@@ -1020,7 +1015,7 @@ def market_data_candidates_from_workbook_plan(
                     wkn=wkn,
                     symbol=symbol,
                     status="ready",
-                    reason="provider symbol mapped from workbook-backed instrument row",
+                    reason="provider symbol mapped from workbook-backed stock row",
                 )
             )
         else:
@@ -1041,6 +1036,30 @@ def market_data_candidates_from_workbook_plan(
             )
 
     return tuple(candidates)
+
+
+def _workbook_candidate_headers(tab: str) -> tuple[str, ...]:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == tab:
+            return spec.headers
+    raise ValueError(f"unsupported market data workbook candidate tab: {tab}")
+
+
+def _workbook_candidate_indexes(tab: str) -> tuple[int, int | None]:
+    headers = _workbook_candidate_headers(tab)
+    if tab == "Stocks":
+        return headers.index("Company"), headers.index("WKN")
+    raise ValueError(f"unsupported market data workbook candidate tab: {tab}")
+
+
+def _validate_workbook_candidate_width(tab: str, values: list[object]) -> None:
+    expected_width = len(_workbook_candidate_headers(tab))
+    actual_width = len(values)
+    if actual_width != expected_width:
+        raise ValueError(
+            f"workbook plan row for {tab} must contain {expected_width} values, "
+            f"got {actual_width}"
+        )
 
 
 def ready_market_data_symbols_from_workbook_candidates(

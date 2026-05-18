@@ -85,6 +85,13 @@ Created: 2026-05-15
   stays blank in local magazine-only workbook plans. Printed source values go
   to `Magazine Price` with `Magazine Price As Of`; `Price at Recommendation`
   remains the printed recommendation price when available.
+- Source-specific review tabs use printed-price labels such as
+  `Magazine Price`, `Magazine Current Price`, and
+  `Magazine Price at Recommendation` so they are not mistaken for live
+  provider-backed prices.
+- Workbook export writes now require each planned row to exactly match the
+  configured tab width; stale short rows fail before any Google write path can
+  pad or truncate them.
 - Future currency display should preserve printed source prices and add a
   dashboard/display toggle for `EUR`, `USD`, and `AUD`. Converted values must
   be derived enrichment fields with FX date/source metadata, not replacements
@@ -103,9 +110,12 @@ Created: 2026-05-15
 - Market data enrichment is disabled by default. Stooq CSV parsing exists only
   as fixture-driven enrichment and cannot overwrite magazine source values.
 - Live enrichment must wait until magazine extraction has populated workbook
-  rows. Provider symbols must be derived from those workbook rows, usually via a
-  private `source_id,wkn,name,symbol` map; arbitrary watchlist symbols are not
-  an approved live-enrichment source.
+  rows. Provider symbols must currently be derived from exact-width `Stocks`
+  rows only, using a private `source_id,wkn,name,symbol` map; source-specific
+  tabs such as `Dividend Focus` and `Derivative Tips` are not enrichment
+  candidate sources until their provider-symbol semantics are deliberately
+  designed. Arbitrary watchlist symbols are not an approved live-enrichment
+  source.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
   Vantage, Twelve Data, FMP, and SEC companyfacts, but live adapters are not
   implemented. Cache request metadata and FMP dry-run request plans can be

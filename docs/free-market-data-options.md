@@ -39,7 +39,9 @@ because adapters, cache policy, throttling, and terms checks are not complete.
 
 2. Workbook-backed enrichment candidates
    - First populate rows from the magazine into the workbook/export flow.
-   - Build enrichment candidates from those rows only.
+   - Build enrichment candidates from exact-width `Stocks` rows only for now.
+     Source-specific tabs such as `Dividend Focus` and `Derivative Tips` are
+     review surfaces, not provider-symbol sources.
    - Use a private symbol map for provider ticker translations. Do not enrich
      arbitrary watchlist symbols that are not in the workbook.
 
@@ -226,13 +228,13 @@ recommendations, target prices, stop prices, or WKN/source fields.
   reviewer-controlled ticker lists for local development dry runs only. It is
   not an approved live-enrichment source.
 - `--workbook-plan-file ./data/private/workbook-plan.json` is the preferred
-  enrichment-planning source. It reads magazine-backed workbook rows and only
-  plans provider requests for rows with a matching entry in a private
-  `--symbol-map-file` CSV containing `source_id,wkn,name,symbol`.
+  enrichment-planning source. It reads exact-width magazine-backed `Stocks`
+  rows and only plans provider requests for rows with a matching entry in a
+  private `--symbol-map-file` CSV containing `source_id,wkn,name,symbol`.
 - `scripts/stock-analyst market-symbol-map-template --workbook-plan-file
   ./data/private/workbook-plan.json --output
   ./data/private/market-symbol-map.csv` creates or refreshes the private symbol
-  map from magazine-backed rows. Existing nonblank `symbol` values are
+  map from magazine-backed `Stocks` rows. Existing nonblank `symbol` values are
   preserved; new rows are marked `needs_symbol_lookup`. This command uses no
   network calls.
 - `scripts/stock-analyst-local-run` can run PDF import, extraction quality

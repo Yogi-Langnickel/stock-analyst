@@ -386,6 +386,20 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(tab_status["Chart Check"], "parser_backed")
         self.assertEqual(tab_status["Stock Quickcheck"], "parser_backed")
         self.assertNotIn("Navigation Dashboard", tab_status)
+        headers_by_tab = {tab["title"]: tab["headers"] for tab in result["tabs"]}
+        self.assertEqual(headers_by_tab["Derivative Tips"][10], "Magazine Entry Price")
+        self.assertEqual(headers_by_tab["Derivative Tips"][11], "Magazine Current Price")
+        self.assertEqual(headers_by_tab["AKTIONAER Depot"][4], "Magazine Buy Price")
+        self.assertEqual(headers_by_tab["AKTIONAER Depot"][5], "Magazine Current Price")
+        self.assertEqual(headers_by_tab["Depot Transactions"][5], "Magazine Transaction Price")
+        self.assertEqual(headers_by_tab["Chart Check"][6], "Magazine Price")
+        self.assertEqual(headers_by_tab["Chart Check"][7], "Magazine Price at Recommendation")
+        self.assertEqual(headers_by_tab["Stock Quickcheck"][4], "Magazine Price")
+        self.assertEqual(
+            headers_by_tab["Stock Quickcheck"][5],
+            "Magazine Price at Recommendation",
+        )
+        self.assertEqual(headers_by_tab["Dividend Focus"][3], "Magazine Price")
         for tab in result["tabs"]:
             self.assertGreaterEqual(tab["frozenRows"], 1)
             self.assertIn("layoutNotes", tab)
@@ -649,8 +663,6 @@ class GoogleAccessTest(unittest.TestCase):
                             "",
                             "",
                             "",
-                            "",
-                            "",
                             "new_recommendation",
                             "",
                             "2026-W03",
@@ -667,6 +679,7 @@ class GoogleAccessTest(unittest.TestCase):
                             "3,33 EUR",
                             "",
                             "18,6 %",
+                            "",
                             "",
                             "",
                             "",
@@ -699,6 +712,47 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(stocks_write["values"][0][0], "Keep Different Issue")
         self.assertEqual(stocks_write["values"][1][0], "Banco Sabadell")
         self.assertIn("'Stocks'!A4:X", [request["range"] for request in values_resource.clear_requests])
+
+    def test_google_sheet_export_rejects_short_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets({"spreadsheetId": config.sheets_spreadsheet_id, "sheets": []})
+            workbook_plan = {
+                "issueId": "2026-W03",
+                "rows": [
+                    {
+                        "tab": "Stocks",
+                        "values": [
+                            "Banco Sabadell",
+                            "A0MRD4",
+                            "",
+                            "3,33 EUR",
+                            "",
+                            "4,30 EUR",
+                            "2,70 EUR",
+                            "new_recommendation",
+                            "2026-W03",
+                            "22",
+                            "2026-05-17",
+                        ],
+                    }
+                ],
+            }
+
+            with self.assertRaisesRegex(GoogleAccessError, "Stocks.*24 values.*got 11"):
+                write_workbook_plan_to_google_sheet(
+                    config,
+                    workbook_plan,
+                    sheets_service_factory=lambda: sheets,
+                )
 
 
 if __name__ == "__main__":

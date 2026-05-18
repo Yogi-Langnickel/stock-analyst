@@ -37,9 +37,10 @@ STOCK_ANALYST_WORKBOOK_PLAN_FILE=/path/to/workbook-plan.json \
 scripts/stock-analyst-local-run
 ```
 
-The symbol map is private CSV that translates existing workbook rows to provider
-symbols. The accepted columns are `source_id`, `wkn`, `name`, and `symbol`.
-At least one of `source_id`, `wkn`, or `name` must be present per row:
+The symbol map is private CSV that translates existing exact-width `Stocks`
+workbook rows to provider symbols. The accepted columns are `source_id`, `wkn`,
+`name`, and `symbol`. At least one of `source_id`, `wkn`, or `name` must be
+present per row:
 
 ```csv
 source_id,wkn,name,symbol
@@ -47,7 +48,9 @@ source_id,wkn,name,symbol
 ```
 
 Do not use free-form symbol files for live enrichment. Enrichment must be scoped
-to instruments already populated from the magazine into the workbook flow.
+to instruments already populated from the magazine into `Stocks`; source tabs
+such as `Dividend Focus` and `Derivative Tips` remain review surfaces until
+their enrichment semantics are deliberately designed.
 
 Refresh the private mapping workfile from a workbook plan:
 
