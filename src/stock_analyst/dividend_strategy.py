@@ -31,6 +31,7 @@ PRICE_RE = re.compile(r"^\d+(?:,\d+)?\s*€$")
 PERCENT_RE = re.compile(r"^\d+(?:,\d+)?\s*%$")
 NUMBER_RE = re.compile(r"^\d+(?:,\d+)?$")
 DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{2,4}$")
+MISSING_VALUE_MARKERS = {"-", "–", "—", "k.A.", "k. A.", "n/a", "N/A"}
 
 
 @dataclass(frozen=True)
@@ -41,9 +42,9 @@ class DividendStrategyRow:
     company: str
     wkn: str
     current_price: str
-    market_cap_billions_eur: str
+    market_cap_billions_eur: str | None
     dividend_yield: str
-    kgv_2026e: str
+    kgv_2026e: str | None
     payout_count: str | None = None
     next_cum_day: str | None = None
     next_pay_day: str | None = None
@@ -243,9 +244,9 @@ def _extract_row_major_rows(
         if not (
             WKN_RE.match(wkn)
             and PRICE_RE.match(current_price)
-            and NUMBER_RE.match(market_cap)
+            and _valid_optional_number(market_cap)
             and PERCENT_RE.match(dividend_yield)
-            and NUMBER_RE.match(kgv)
+            and _valid_optional_number(kgv)
         ):
             continue
 
@@ -257,9 +258,9 @@ def _extract_row_major_rows(
                 company=company,
                 wkn=wkn,
                 current_price=_normalize_currency(current_price),
-                market_cap_billions_eur=market_cap,
+                market_cap_billions_eur=_normalize_optional_number(market_cap),
                 dividend_yield=dividend_yield,
-                kgv_2026e=kgv,
+                kgv_2026e=_normalize_optional_number(kgv),
             )
         )
 
@@ -295,9 +296,9 @@ def _extract_column_major_rows(
             months[index] in MONTHS
             and WKN_RE.match(wkns[index])
             and PRICE_RE.match(prices[index])
-            and NUMBER_RE.match(market_caps[index])
+            and _valid_optional_number(market_caps[index])
             and PERCENT_RE.match(dividend_yields[index])
-            and NUMBER_RE.match(kgvs[index])
+            and _valid_optional_number(kgvs[index])
         ):
             continue
 
@@ -309,9 +310,9 @@ def _extract_column_major_rows(
                 company=companies[index],
                 wkn=wkns[index],
                 current_price=_normalize_currency(prices[index]),
-                market_cap_billions_eur=market_caps[index],
+                market_cap_billions_eur=_normalize_optional_number(market_caps[index]),
                 dividend_yield=dividend_yields[index],
-                kgv_2026e=kgvs[index],
+                kgv_2026e=_normalize_optional_number(kgvs[index]),
                 extraction_notes=("column_major_text_order",),
             )
         )
@@ -362,6 +363,16 @@ def _row_key(month: str, company: str) -> tuple[str, str]:
 
 def _normalize_currency(value: str) -> str:
     return value.replace(" €", " EUR").replace("€", "EUR")
+
+
+def _valid_optional_number(value: str) -> bool:
+    return bool(NUMBER_RE.match(value) or value in MISSING_VALUE_MARKERS)
+
+
+def _normalize_optional_number(value: str) -> str:
+    if value in MISSING_VALUE_MARKERS:
+        return ""
+    return value
 
 
 def _clean_line(line: str) -> str:

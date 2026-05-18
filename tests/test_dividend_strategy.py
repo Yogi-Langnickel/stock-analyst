@@ -80,6 +80,35 @@ class DividendStrategyTest(unittest.TestCase):
         self.assertEqual(rows[1].company, "Blackstone")
         self.assertEqual(rows[1].extraction_notes, ("column_major_text_order",))
 
+    def test_keeps_rows_with_dash_optional_valuation_cells(self) -> None:
+        rows = extract_dividend_strategy_rows_from_lines(
+            (
+                "Dividende ohne Ende",
+                "Monat",
+                "Unternehmen",
+                "WKN",
+                "Aktueller Kurs",
+                "Marktkap. in Milliarden €",
+                "Dividendenrendite",
+                "KGV 2026e",
+                "Mai",
+                "RTL Group",
+                "861149",
+                "34,80 €",
+                "–",
+                "20,1 %",
+                "k. A.",
+            ),
+            issue_id="2026-W03",
+            page_number=18,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].company, "RTL Group")
+        self.assertEqual(rows[0].market_cap_billions_eur, "")
+        self.assertEqual(rows[0].dividend_yield, "20,1 %")
+        self.assertEqual(rows[0].kgv_2026e, "")
+
     def test_enriches_rows_from_following_page_continuation(self) -> None:
         rows = extract_dividend_strategy_rows_from_page_lines(
             (

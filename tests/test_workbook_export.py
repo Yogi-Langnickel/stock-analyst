@@ -575,6 +575,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         for row in actual_rows:
             self.assertEqual(len(row["values"]), len(headers_for("Dividend Focus")))
             self.assertIn("%", row["values"][5])
+            self.assertTrue(all(value is not None for value in row["values"]))
 
     def test_workbook_plan_downgrades_preapproved_inputs_to_needs_review(self) -> None:
         plan = build_workbook_export_plan(
@@ -641,6 +642,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
                     row["values"][review_status_index],
                     ReviewStatus.NEEDS_REVIEW.value,
                 )
+            self.assertTrue(all(value is not None for value in row["values"]))
 
     def test_routes_section_inventory_to_extraction_audit_with_suggested_sheet(self) -> None:
         plan = build_workbook_export_plan(

@@ -55,6 +55,9 @@ Created: 2026-05-15
   audit hints into Google Sheet tab row DTOs without writing to Sheets. Every
   planned row remains `needs_review`, non-exportable, and marked
   manual-review-required.
+- Dividend strategy rows preserve otherwise complete high-yield table entries
+  when optional market-cap or P/E cells are printed as dash-like missing values;
+  those cells normalize to blank workbook cells rather than dropping the row.
 - Instrument dry-run rows must populate row-level `date updated` as the last
   field. Stocks initialize it from an explicit import/issue date when
   available, otherwise from the command's current UTC date. Section inventories,
