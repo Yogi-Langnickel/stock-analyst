@@ -91,6 +91,7 @@ class ReviewQueueTest(unittest.TestCase):
         self.assertEqual(queue.ocr_needed_page_count, 1)
         self.assertEqual(queue.items[0].action, "queue_local_ocr")
         self.assertEqual(queue.items[0].ocr_needed_page_count, 1)
+        self.assertEqual(queue.items[0].to_dict()["ocrNeededPageCount"], 1)
         self.assertIn("OCR should be queued", queue.items[0].reasons[0])
 
     def test_queue_marks_parse_failures_for_local_extraction_rerun(self) -> None:

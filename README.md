@@ -115,6 +115,7 @@ Render pages for private visual review and optional local OCR:
 scripts/stock-analyst visual-ocr-review ./data/private/issues/DA_2026_03.pdf --pages 22,62-63 --render
 scripts/stock-analyst visual-ocr-review ./data/private/issues/DA_2026_03.pdf --page 22 --ocr --write-ocr-text
 scripts/stock-analyst ocr-fixture-plan --pdf ./data/private/issues/DA_2026_03.pdf --artifact-dir ./data/private/visual-ocr
+scripts/stock-analyst ocr-needed ./data/uploads/uploads.jsonl
 ```
 
 The command writes rendered page PNGs, and optionally OCR text, under ignored

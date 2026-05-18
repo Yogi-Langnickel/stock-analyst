@@ -29,6 +29,7 @@ class ExtractionQualityItem:
     page_count: int
     extracted_page_count: int
     ocr_needed_page_count: int
+    ocr_needed_pages: tuple[int, ...]
     blocking_reasons: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
@@ -39,6 +40,7 @@ class ExtractionQualityItem:
             "pageCount": self.page_count,
             "extractedPageCount": self.extracted_page_count,
             "ocrNeededPageCount": self.ocr_needed_page_count,
+            "ocrNeededPages": list(self.ocr_needed_pages),
             "blockingReasons": list(self.blocking_reasons),
         }
 
@@ -181,6 +183,7 @@ def _quality_item_from_record(
             page_count=0,
             extracted_page_count=0,
             ocr_needed_page_count=0,
+            ocr_needed_pages=(),
             blocking_reasons=("stored PDF file is missing",),
         )
 
@@ -201,6 +204,9 @@ def _quality_item_from_record(
     )
     ocr_needed_pages = sum(
         1 for page in extraction.pages if page.ocr_status == OcrStatus.NEEDED
+    )
+    ocr_needed_page_numbers = tuple(
+        page.page_number for page in extraction.pages if page.ocr_status == OcrStatus.NEEDED
     )
     extraction_status = (
         TextExtractionStatus.EXTRACTION_FAILED.value
@@ -227,6 +233,7 @@ def _quality_item_from_record(
         page_count=extraction.page_count,
         extracted_page_count=extracted_pages,
         ocr_needed_page_count=ocr_needed_pages,
+        ocr_needed_pages=ocr_needed_page_numbers,
         blocking_reasons=blocking_reasons,
     )
 

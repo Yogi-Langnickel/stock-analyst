@@ -120,6 +120,9 @@ Smoke result on 2026-05-17:
 
 1. Add an `ocr-needed` report listing pages below the embedded-text threshold
    or pages where required fixture fields are missing.
+   - Implemented locally for imported PDF manifests. The report lists PDFs and
+     page numbers below the embedded-text threshold, emits metadata-only
+     `visual-ocr-review` commands, and never returns OCR text or article text.
 2. Add a remote OCR queue contract without implementing Google calls yet.
 3. Only after review, add a Google Vision adapter that processes selected pages,
    not complete issues by default.

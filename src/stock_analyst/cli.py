@@ -42,6 +42,7 @@ from stock_analyst.market_data import (
     ready_market_data_symbols_from_workbook_candidates,
 )
 from stock_analyst.ocr_fixtures import build_ocr_fixture_review_plan
+from stock_analyst.ocr_needed import build_ocr_needed_report_from_manifest
 from stock_analyst.pipeline import (
     PdfProcessingError,
     build_draft_review_status,
@@ -146,6 +147,34 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=40,
         help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    ocr_needed = subcommands.add_parser(
+        "ocr-needed",
+        help="List imported PDF pages that need local OCR before draft review.",
+    )
+    ocr_needed.add_argument(
+        "manifest",
+        type=Path,
+        help="Local JSONL upload manifest created by import-pdf-folder.",
+    )
+    ocr_needed.add_argument(
+        "--upload-dir",
+        type=Path,
+        default=None,
+        help="Private local upload directory. Defaults to the manifest parent.",
+    )
+    ocr_needed.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+    ocr_needed.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data/private/visual-ocr"),
+        help="Private output directory to use in suggested local OCR commands.",
     )
 
     recommendation_cards = subcommands.add_parser(
@@ -615,6 +644,22 @@ def run_review_queue(
     return queue.to_dict()
 
 
+def run_ocr_needed(
+    manifest_path: Path,
+    *,
+    upload_dir: Path | None = None,
+    min_embedded_chars: int = 40,
+    output_dir: Path = Path("data/private/visual-ocr"),
+) -> dict[str, object]:
+    report = build_ocr_needed_report_from_manifest(
+        manifest_path,
+        upload_dir=upload_dir,
+        min_embedded_chars=min_embedded_chars,
+        output_dir=output_dir,
+    )
+    return report.to_dict()
+
+
 def run_recommendation_cards(
     pdf_path: Path,
     *,
@@ -998,6 +1043,13 @@ def main(argv: list[str] | None = None) -> int:
                 args.manifest,
                 upload_dir=args.upload_dir,
                 min_embedded_chars=args.min_embedded_chars,
+            )
+        elif args.command == "ocr-needed":
+            result = run_ocr_needed(
+                args.manifest,
+                upload_dir=args.upload_dir,
+                min_embedded_chars=args.min_embedded_chars,
+                output_dir=args.output_dir,
             )
         elif args.command == "recommendation-cards":
             result = run_recommendation_cards(

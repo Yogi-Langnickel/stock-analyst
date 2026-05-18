@@ -81,6 +81,7 @@ class QualityReportTest(unittest.TestCase):
         self.assertEqual(report.needs_review_count, 1)
         self.assertEqual(report.ocr_needed_page_count, 1)
         self.assertEqual(report.items[0].ocr_needed_page_count, 1)
+        self.assertEqual(report.items[0].ocr_needed_pages, (1,))
         self.assertIn("OCR should be queued", report.items[0].blocking_reasons[0])
 
     def test_report_surfaces_missing_stored_pdf_without_processing(self) -> None:
