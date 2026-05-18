@@ -58,6 +58,10 @@ Created: 2026-05-15
 - Dividend strategy rows preserve otherwise complete high-yield table entries
   when optional market-cap or P/E cells are printed as dash-like missing values;
   those cells normalize to blank workbook cells rather than dropping the row.
+- Dividend OCR line normalization can split collapsed OCR table lines into the
+  existing strict row-major and continuation parser shapes. Rows touched by
+  that helper carry `ocr_line_normalized` in `extractionNotes` and still remain
+  `needs_review`.
 - Derivative overview rows apply retrospective entry/current/performance/
   target/stop/recommendation metrics only when the parsed base-row count and
   retrospective-row count match exactly. On mismatch, keep the base rows and

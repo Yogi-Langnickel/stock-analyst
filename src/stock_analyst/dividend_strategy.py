@@ -30,7 +30,7 @@ WKN_RE = re.compile(r"^[A-Z0-9]{6}$")
 PRICE_RE = re.compile(r"^\d+(?:,\d+)?\s*€$")
 PERCENT_RE = re.compile(r"^\d+(?:,\d+)?\s*%$")
 NUMBER_RE = re.compile(r"^\d+(?:,\d+)?$")
-DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{2,4}$")
+DATE_RE = re.compile(r"^\d{1,2}\.\d{2}\.\d{2,4}$")
 MISSING_VALUE_MARKERS = {"-", "–", "—", "k.A.", "k. A.", "n/a", "N/A"}
 
 
@@ -108,6 +108,13 @@ class _DividendContinuation:
     next_pay_day: str | None = None
     target: str | None = None
     stop: str | None = None
+    extraction_notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _NormalizedDividendLines:
+    lines: tuple[str, ...]
+    ocr_line_normalized: bool = False
 
 
 def build_dividend_strategy_from_pdf(
@@ -169,38 +176,39 @@ def extract_dividend_strategy_rows_from_lines(
     issue_id: str,
     page_number: int,
 ) -> tuple[DividendStrategyRow, ...]:
-    normalized_lines = tuple(_clean_line(line) for line in lines if _clean_line(line))
+    normalized = _normalize_dividend_table_lines(lines)
     rows = _extract_row_major_rows(
-        normalized_lines,
+        normalized.lines,
         issue_id=issue_id,
         page_number=page_number,
     )
     if rows:
-        return rows
+        return _tag_ocr_normalized_rows(rows, normalized.ocr_line_normalized)
 
-    return _extract_column_major_rows(
-        normalized_lines,
+    rows = _extract_column_major_rows(
+        normalized.lines,
         issue_id=issue_id,
         page_number=page_number,
     )
+    return _tag_ocr_normalized_rows(rows, normalized.ocr_line_normalized)
 
 
 def extract_dividend_strategy_continuations_from_lines(
     lines: Sequence[str],
 ) -> tuple[_DividendContinuation, ...]:
-    normalized_lines = tuple(_clean_line(line) for line in lines if _clean_line(line))
+    normalized = _normalize_dividend_table_lines(lines)
     continuations: list[_DividendContinuation] = []
 
-    for index, line in enumerate(normalized_lines):
-        if line not in MONTHS or index + 6 >= len(normalized_lines):
+    for index, line in enumerate(normalized.lines):
+        if line not in MONTHS or index + 6 >= len(normalized.lines):
             continue
 
-        company = normalized_lines[index + 1]
-        payout_count = normalized_lines[index + 2]
-        next_cum_day = normalized_lines[index + 3]
-        next_pay_day = normalized_lines[index + 4]
-        target = normalized_lines[index + 5]
-        stop = normalized_lines[index + 6]
+        company = normalized.lines[index + 1]
+        payout_count = normalized.lines[index + 2]
+        next_cum_day = normalized.lines[index + 3]
+        next_pay_day = normalized.lines[index + 4]
+        target = normalized.lines[index + 5]
+        stop = normalized.lines[index + 6]
         if (
             NUMBER_RE.match(payout_count)
             and DATE_RE.match(next_cum_day)
@@ -217,6 +225,9 @@ def extract_dividend_strategy_continuations_from_lines(
                     next_pay_day=next_pay_day,
                     target=_normalize_currency(target),
                     stop=_normalize_currency(stop),
+                    extraction_notes=("ocr_line_normalized",)
+                    if normalized.ocr_line_normalized
+                    else (),
                 )
             )
 
@@ -259,7 +270,7 @@ def _extract_row_major_rows(
                 wkn=wkn,
                 current_price=_normalize_currency(current_price),
                 market_cap_billions_eur=_normalize_optional_number(market_cap),
-                dividend_yield=dividend_yield,
+                dividend_yield=_normalize_percent(dividend_yield),
                 kgv_2026e=_normalize_optional_number(kgv),
             )
         )
@@ -311,7 +322,7 @@ def _extract_column_major_rows(
                 wkn=wkns[index],
                 current_price=_normalize_currency(prices[index]),
                 market_cap_billions_eur=_normalize_optional_number(market_caps[index]),
-                dividend_yield=dividend_yields[index],
+                dividend_yield=_normalize_percent(dividend_yields[index]),
                 kgv_2026e=_normalize_optional_number(kgvs[index]),
                 extraction_notes=("column_major_text_order",),
             )
@@ -354,15 +365,52 @@ def _apply_continuation(
         next_pay_day=continuation.next_pay_day,
         target=continuation.target,
         stop=continuation.stop,
+        extraction_notes=_append_extraction_notes(
+            row.extraction_notes,
+            continuation.extraction_notes,
+        ),
     )
 
 
+def _tag_ocr_normalized_rows(
+    rows: Sequence[DividendStrategyRow],
+    ocr_line_normalized: bool,
+) -> tuple[DividendStrategyRow, ...]:
+    if not ocr_line_normalized:
+        return tuple(rows)
+    return tuple(
+        replace(
+            row,
+            extraction_notes=_append_extraction_notes(
+                row.extraction_notes,
+                ("ocr_line_normalized",),
+            ),
+        )
+        for row in rows
+    )
+
+
+def _append_extraction_notes(
+    existing: Sequence[str],
+    additions: Sequence[str],
+) -> tuple[str, ...]:
+    notes = list(existing)
+    for note in additions:
+        if note not in notes:
+            notes.append(note)
+    return tuple(notes)
+
+
 def _row_key(month: str, company: str) -> tuple[str, str]:
-    return (month, company.casefold())
+    return (month, "".join(company.casefold().split()))
 
 
 def _normalize_currency(value: str) -> str:
-    return value.replace(" €", " EUR").replace("€", "EUR")
+    return re.sub(r"\s*€$", " EUR", value)
+
+
+def _normalize_percent(value: str) -> str:
+    return re.sub(r"\s*%$", " %", value)
 
 
 def _valid_optional_number(value: str) -> bool:
@@ -377,6 +425,104 @@ def _normalize_optional_number(value: str) -> str:
 
 def _clean_line(line: str) -> str:
     return " ".join(line.strip().split())
+
+
+def _normalize_dividend_table_lines(lines: Sequence[str]) -> _NormalizedDividendLines:
+    """Convert OCR-collapsed dividend table lines into strict parser input cells."""
+
+    normalized: list[str] = []
+    ocr_line_normalized = False
+    for raw_line in lines:
+        line = _clean_line(raw_line)
+        if not line:
+            continue
+        expanded = _expand_inline_dividend_line(line)
+        if expanded:
+            normalized.extend(expanded)
+            ocr_line_normalized = True
+        else:
+            normalized.append(line)
+    return _NormalizedDividendLines(tuple(normalized), ocr_line_normalized)
+
+
+def _expand_inline_dividend_line(line: str) -> tuple[str, ...]:
+    tokens = tuple(line.split())
+    return (
+        _expand_inline_dividend_base_row(tokens)
+        or _expand_inline_dividend_continuation_row(tokens)
+        or ()
+    )
+
+
+def _expand_inline_dividend_base_row(tokens: Sequence[str]) -> tuple[str, ...]:
+    if len(tokens) < 7 or tokens[0] not in MONTHS:
+        return ()
+
+    wkn_index = _first_wkn_token_index(tokens, start=2)
+    if wkn_index is None or wkn_index + 5 != len(tokens):
+        return ()
+
+    price = tokens[wkn_index + 1]
+    market_cap = tokens[wkn_index + 2]
+    dividend_yield = tokens[wkn_index + 3]
+    kgv = tokens[wkn_index + 4]
+    if not (
+        PRICE_RE.match(price)
+        and _valid_optional_number(market_cap)
+        and PERCENT_RE.match(dividend_yield)
+        and _valid_optional_number(kgv)
+    ):
+        return ()
+
+    company = " ".join(tokens[1:wkn_index])
+    if not company:
+        return ()
+
+    return (
+        tokens[0],
+        company,
+        tokens[wkn_index],
+        price,
+        market_cap,
+        dividend_yield,
+        kgv,
+    )
+
+
+def _expand_inline_dividend_continuation_row(tokens: Sequence[str]) -> tuple[str, ...]:
+    if len(tokens) < 7 or tokens[-1] not in MONTHS:
+        return ()
+
+    payout_count, next_cum_day, next_pay_day, target, stop = tokens[:5]
+    if not (
+        NUMBER_RE.match(payout_count)
+        and DATE_RE.match(next_cum_day)
+        and DATE_RE.match(next_pay_day)
+        and PRICE_RE.match(target)
+        and PRICE_RE.match(stop)
+    ):
+        return ()
+
+    company = " ".join(tokens[5:-1])
+    if not company:
+        return ()
+
+    return (
+        tokens[-1],
+        company,
+        payout_count,
+        next_cum_day,
+        next_pay_day,
+        target,
+        stop,
+    )
+
+
+def _first_wkn_token_index(tokens: Sequence[str], *, start: int) -> int | None:
+    for index in range(start, len(tokens)):
+        if WKN_RE.match(tokens[index]):
+            return index
+    return None
 
 
 def _issue_id_from_filename(pdf_path: Path) -> str:

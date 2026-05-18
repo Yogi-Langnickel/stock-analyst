@@ -80,6 +80,26 @@ class DividendStrategyTest(unittest.TestCase):
         self.assertEqual(rows[1].company, "Blackstone")
         self.assertEqual(rows[1].extraction_notes, ("column_major_text_order",))
 
+    def test_extracts_inline_ocr_table_rows(self) -> None:
+        rows = extract_dividend_strategy_rows_from_lines(
+            (
+                "Monat Unternehmen WKN Aktueller Marktkap. Dividenden- KGV",
+                "Kurs in Milliarden € rendite 2026e",
+                "März Banco Sabadell A0MRD4 3,33€ 16,8 18,6% 10",
+                "Mai RTL Group 861149 34,80€ 5,4 20,1% 14",
+            ),
+            issue_id="2026-W03",
+            page_number=18,
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].company, "Banco Sabadell")
+        self.assertEqual(rows[0].current_price, "3,33 EUR")
+        self.assertEqual(rows[0].dividend_yield, "18,6 %")
+        self.assertEqual(rows[0].extraction_notes, ("ocr_line_normalized",))
+        self.assertEqual(rows[1].company, "RTL Group")
+        self.assertEqual(rows[1].wkn, "861149")
+
     def test_keeps_rows_with_dash_optional_valuation_cells(self) -> None:
         rows = extract_dividend_strategy_rows_from_lines(
             (
@@ -146,6 +166,32 @@ class DividendStrategyTest(unittest.TestCase):
         self.assertEqual(rows[0].next_pay_day, "17.04.26")
         self.assertEqual(rows[0].target, "4,30 EUR")
         self.assertEqual(rows[0].stop, "2,70 EUR")
+
+    def test_enriches_rows_from_inline_ocr_continuation(self) -> None:
+        rows = extract_dividend_strategy_rows_from_page_lines(
+            (
+                (
+                    18,
+                    (
+                        "März Banco Sabadell A0MRD4 3,33€ 16,8 18,6% 10",
+                    ),
+                ),
+                (
+                    19,
+                    (
+                        "1 5.04.26 27.04.26 5,00€ 2,80€ BancoSabadell März",
+                    ),
+                ),
+            ),
+            issue_id="2026-W03",
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].payout_count, "1")
+        self.assertEqual(rows[0].next_cum_day, "5.04.26")
+        self.assertEqual(rows[0].target, "5,00 EUR")
+        self.assertEqual(rows[0].stop, "2,80 EUR")
+        self.assertEqual(rows[0].extraction_notes, ("ocr_line_normalized",))
 
     def test_ignores_nearby_article_lines_without_valid_table_shape(self) -> None:
         rows = extract_dividend_strategy_rows_from_lines(
