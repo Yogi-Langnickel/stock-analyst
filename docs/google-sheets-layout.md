@@ -30,11 +30,13 @@ long/short products, certificates, and derivative overview rows all use
    `Aktien im Quick-Check`, and `Chart-Check` rows all surface here, with
    duplicate mentions consolidated and non-empty fields merged. The stock table
    header starts on row 3 with `Company`, `WKN`, `Current Price*`,
-   `Price at Recommendation`, `Dividend Yield`, `Market Cap`, `Chance/Risk`,
-   `P/S Ratio 26e`, `P/E Ratio 26e`, `Target`, `Stop`,
-   `Performance since Recommendation`, `52w High`, `52w Low`,
-   `1Y Performance`, `5Y Performance`, `Next Report`, `Recommendation`,
-   `Comment`, `issue`, `page`, and `date updated`.
+   `Magazine Price`, `Magazine Price As Of`, `Price at Recommendation`,
+   `Dividend Yield`, `Market Cap`, `Chance/Risk`, `P/S Ratio 26e`,
+   `P/E Ratio 26e`, `Target`, `Stop`, `Performance since Recommendation`,
+   `52w High`, `52w Low`, `1Y Performance`, `5Y Performance`,
+   `Next Report`, `Recommendation`, `Comment`, `issue`, `page`, and
+   `date updated`. `Current Price*` stays blank until a future enrichment job
+   writes a provider-backed value.
 
 2. `Derivative Tips`
    Unified detailed options/derivatives table. Issue and page are trailing
@@ -82,7 +84,7 @@ the live Sheet; those should be added only after this layout is accepted.
 <!-- markdownlint-disable MD013 -->
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current Price*` comes from the latest source/enrichment value; `Price at Recommendation` is the printed magazine source value; includes market cap, P/S ratio, P/E ratio, Chance/Risk, dividend yield, chart fields, and comments where available; `date updated` is the last row field. |
+| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current Price*` is reserved for provider-backed enrichment and remains blank in local magazine-only plans; `Magazine Price` and `Magazine Price As Of` preserve the latest printed source price; `Price at Recommendation` preserves the printed recommendation price where available; includes market cap, P/S ratio, P/E ratio, Chance/Risk, dividend yield, chart fields, and comments where available; `date updated` is the last row field. |
 | `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Source ID stays in row metadata; visible provenance is trailing issue/page columns. |
 | `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; performance cells are green for positive values and red for negative values. |
 | `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks; performance cells use positive/negative conditional formatting. |
@@ -117,8 +119,8 @@ manual review.
 ## Currency Display
 
 Preserve every magazine-source price in its printed currency. Do not overwrite
-`Price at Recommendation`, `Target`, `Stop`, derivative strike/base values, or
-publisher portfolio values during currency conversion.
+`Magazine Price`, `Price at Recommendation`, `Target`, `Stop`, derivative
+strike/base values, or publisher portfolio values during currency conversion.
 
 Add a display-currency control to the dashboard layer once daily enrichment is
 active:

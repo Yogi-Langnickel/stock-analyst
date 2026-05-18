@@ -120,6 +120,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Company",
             "WKN",
             "Current Price*",
+            "Magazine Price",
+            "Magazine Price As Of",
             "Price at Recommendation",
             "Dividend Yield",
             "Market Cap",
@@ -148,7 +150,8 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         layout_notes=(
             "Only explicit stock mentions become rows; do not fan out index constituents.",
             "Quick-check and chart-check stock rows also surface here with split source fields.",
-            "Current Price* is daily enrichment; Price at Recommendation is the magazine source value.",
+            "Current Price* is daily enrichment and stays blank until enrichment writes it.",
+            "Magazine Price and Price at Recommendation preserve printed magazine source values.",
             "Row-level date updated is the last field and advances on enrichment or newer mention.",
         ),
         parser_status="parser_backed",

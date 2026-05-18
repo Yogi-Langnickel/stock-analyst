@@ -334,7 +334,9 @@ def _recommendation_card_row(
         values=(
             card.instrument_name,
             card.wkn or "",
+            "",
             card.current_price or "",
+            stock_update_date if card.current_price else "",
             card.current_price if card.recommendation_status == "new_recommendation" else "",
             dividend_yield,
             card.market_cap or "",
@@ -751,7 +753,9 @@ def _quickcheck_stock_rows(
                 values=(
                     row.instrument,
                     row.wkn,
+                    "",
                     row.current_price,
+                    stock_update_date if row.current_price else "",
                     row.recommendation_price,
                     "",
                     "",
@@ -797,7 +801,9 @@ def _chart_check_stock_rows(
                 values=(
                     row.instrument,
                     row.wkn,
+                    "",
                     row.current_price,
+                    stock_update_date if row.current_price else "",
                     row.recommendation_price,
                     row.dividend_yield,
                     "",
@@ -849,8 +855,8 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
     incoming_values = list(incoming.values)
     _ensure_width(values, len(incoming_values))
 
-    latest_wins_indexes = {2, 3, 9, 10, 11, 12, 13, 14, 15, 16}
-    fill_only_indexes = {0, 1, 4, 5, 6, 7, 8, 17, 21}
+    latest_wins_indexes = {2, 3, 4, 5, 11, 12, 13, 14, 15, 16, 17, 18}
+    fill_only_indexes = {0, 1, 6, 7, 8, 9, 10, 19, 23}
     for index in latest_wins_indexes:
         if index < len(incoming_values) and incoming_values[index]:
             values[index] = incoming_values[index]
@@ -858,23 +864,23 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
         if index < len(incoming_values) and incoming_values[index] and not values[index]:
             values[index] = incoming_values[index]
 
-    recommendation_index = 17
+    recommendation_index = 19
     if recommendation_index < len(incoming_values) and incoming_values[recommendation_index]:
         current = values[recommendation_index]
         candidate = incoming_values[recommendation_index]
         if not current or _looks_like_richer_recommendation(candidate, current):
             values[recommendation_index] = candidate
 
-    comment_parts = _split_comment(values[18]) if len(values) > 18 else []
-    if len(incoming_values) > 18 and incoming_values[18]:
-        comment_parts.append(incoming_values[18])
-    if len(values) > 18:
-        values[18] = _join_unique(comment_parts)
+    comment_parts = _split_comment(values[20]) if len(values) > 20 else []
+    if len(incoming_values) > 20 and incoming_values[20]:
+        comment_parts.append(incoming_values[20])
+    if len(values) > 20:
+        values[20] = _join_unique(comment_parts)
 
-    if len(values) > 19 and len(incoming_values) > 19:
-        values[19] = _join_unique((values[19], incoming_values[19]))
-    if len(values) > 20 and len(incoming_values) > 20:
-        values[20] = _join_unique((values[20], incoming_values[20]), separator=", ")
+    if len(values) > 21 and len(incoming_values) > 21:
+        values[21] = _join_unique((values[21], incoming_values[21]))
+    if len(values) > 22 and len(incoming_values) > 22:
+        values[22] = _join_unique((values[22], incoming_values[22]), separator=", ")
 
     return WorkbookDraftRow(
         tab="Stocks",

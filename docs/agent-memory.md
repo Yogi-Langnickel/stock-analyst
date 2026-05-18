@@ -81,6 +81,10 @@ Created: 2026-05-15
   `P/E Ratio 26e`, `Marktkap.` / `Marktkapitalisierung` maps to `Market Cap`,
   and the printed chance/risk dot ratings map to `Chance/Risk`. `Kein Kauf`
   maps to `recommendation_status=no_buy`.
+- In `Stocks`, `Current Price*` is reserved for provider-backed enrichment and
+  stays blank in local magazine-only workbook plans. Printed source values go
+  to `Magazine Price` with `Magazine Price As Of`; `Price at Recommendation`
+  remains the printed recommendation price when available.
 - Future currency display should preserve printed source prices and add a
   dashboard/display toggle for `EUR`, `USD`, and `AUD`. Converted values must
   be derived enrichment fields with FX date/source metadata, not replacements
