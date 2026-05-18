@@ -80,6 +80,30 @@ Behavior:
 - The package exposes PDF/OCR dependencies as optional extras so core tests and
   planning commands can run without local OCR tooling installed.
 
+## Metadata-Only Fixture Planning
+
+High-value OCR/page fixtures can be reviewed without committing OCR text,
+article text, screenshots, or private artifacts:
+
+```sh
+scripts/stock-analyst ocr-fixture-plan
+scripts/stock-analyst ocr-fixture-plan --pdf ./data/private/issues/DA_2026_03.pdf --artifact-dir ./data/private/visual-ocr
+```
+
+Behavior:
+
+- Ships a default metadata fixture plan for `DA_2026_03` pages 18-19, 22, 37,
+  61-63, 66, and 78-89.
+- Records page numbers, expected section labels, intended workbook/extraction
+  targets, and priority/notes.
+- If a private PDF and visual-OCR artifact directory are provided, reports PDF
+  checksum plus render/OCR artifact paths, availability, SHA-256 hashes, byte
+  counts, and OCR character counts.
+- Never returns OCR text or private extracted article text.
+- Allows an optional private JSON fixture manifest, but rejects text-bearing
+  keys such as `text`, `ocrText`, `sourceText`, `rawText`, and `lines`.
+- Uses no network, no enrichment provider, and no Google API.
+
 Smoke result on 2026-05-17:
 
 - Rendering pages 22, 62, and 63 of `DA_2026_03.pdf` succeeded locally.
@@ -89,9 +113,8 @@ Smoke result on 2026-05-17:
 
 ## Next Implementation Slice
 
-1. Add visual review fixtures for important magazine pages and tables.
-2. Add an `ocr-needed` report listing pages below the embedded-text threshold
+1. Add an `ocr-needed` report listing pages below the embedded-text threshold
    or pages where required fixture fields are missing.
-3. Add a remote OCR queue contract without implementing Google calls yet.
-4. Only after review, add a Google Vision adapter that processes selected pages,
+2. Add a remote OCR queue contract without implementing Google calls yet.
+3. Only after review, add a Google Vision adapter that processes selected pages,
    not complete issues by default.

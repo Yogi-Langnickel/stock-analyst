@@ -41,6 +41,7 @@ from stock_analyst.market_data import (
     plan_market_data_enrichment_requests,
     ready_market_data_symbols_from_workbook_candidates,
 )
+from stock_analyst.ocr_fixtures import build_ocr_fixture_review_plan
 from stock_analyst.pipeline import (
     PdfProcessingError,
     build_draft_review_status,
@@ -297,6 +298,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--ocr-language",
         default="deu+eng",
         help="Tesseract language string used with --ocr.",
+    )
+
+    ocr_fixture_plan = subcommands.add_parser(
+        "ocr-fixture-plan",
+        help="Review metadata-only OCR/page fixture coverage and local artifacts.",
+    )
+    ocr_fixture_plan.add_argument(
+        "--issue-id",
+        default=None,
+        help="Issue ID to review. Defaults to the fixture manifest/default issue.",
+    )
+    ocr_fixture_plan.add_argument(
+        "--pdf",
+        type=Path,
+        default=None,
+        help="Optional private PDF path used only for checksum and artifact path matching.",
+    )
+    ocr_fixture_plan.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=Path("data/private/visual-ocr"),
+        help="Private local visual-ocr artifact directory to inspect for hashes/counts.",
+    )
+    ocr_fixture_plan.add_argument(
+        "--fixture-manifest",
+        type=Path,
+        default=None,
+        help="Optional metadata-only JSON fixture manifest. Must not contain OCR text.",
     )
 
     market_data_plan = subcommands.add_parser(
@@ -714,6 +743,22 @@ def run_visual_ocr_review(
     return bundle.to_dict()
 
 
+def run_ocr_fixture_plan_command(
+    *,
+    issue_id: str | None = None,
+    pdf_path: Path | None = None,
+    artifact_dir: Path | None = Path("data/private/visual-ocr"),
+    fixture_manifest: Path | None = None,
+) -> dict[str, object]:
+    plan = build_ocr_fixture_review_plan(
+        issue_id=issue_id,
+        pdf_path=pdf_path,
+        artifact_dir=artifact_dir,
+        fixture_manifest=fixture_manifest,
+    )
+    return plan.to_dict()
+
+
 def run_market_data_plan_command(
     *,
     env_file: Path | None = None,
@@ -1002,6 +1047,13 @@ def main(argv: list[str] | None = None) -> int:
                 output_dir=args.output_dir,
                 dpi=args.dpi,
                 ocr_language=args.ocr_language,
+            )
+        elif args.command == "ocr-fixture-plan":
+            result = run_ocr_fixture_plan_command(
+                issue_id=args.issue_id,
+                pdf_path=args.pdf,
+                artifact_dir=args.artifact_dir,
+                fixture_manifest=args.fixture_manifest,
             )
         elif args.command == "market-data-plan":
             result = run_market_data_plan_command(

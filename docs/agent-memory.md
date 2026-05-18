@@ -25,6 +25,11 @@ Created: 2026-05-15
   storage and optionally run local Tesseract. The command reports artifact
   paths, statuses, hashes, and counts, but not OCR text; missing local tools
   degrade to dependency/status output with no remote OCR or enrichment.
+- Local OCR fixture planning is metadata-only through `ocr-fixture-plan`.
+  Default `DA_2026_03` fixture coverage includes pages 18-19, 22, 37, 61-63,
+  66, and 78-89 with intended targets and expected section labels. If private
+  artifacts exist, the command reports paths/statuses/hashes/counts only and
+  rejects fixture manifests containing text-bearing keys.
 - Configured Google Drive folders can be listed for PDF metadata only. The
   Drive listing does not download PDFs or inspect PDF content, and optional
   JSONL manifests must stay in ignored private storage because they include
@@ -184,6 +189,7 @@ Created: 2026-05-15
 - `PYTHONPATH=src python3 -m stock_analyst.cli review-queue ./data/uploads/uploads.jsonl`
 - `PYTHONPATH=src python3 -m stock_analyst.cli visual-ocr-review ./data/private/issues/DA_2026_03.pdf --pages 22,62-63`
 - `PYTHONPATH=src python3 -m stock_analyst.cli visual-ocr-review ./data/private/issues/DA_2026_03.pdf --page 22 --ocr --write-ocr-text`
+- `PYTHONPATH=src python3 -m stock_analyst.cli ocr-fixture-plan --pdf ./data/private/issues/DA_2026_03.pdf --artifact-dir ./data/private/visual-ocr`
 - `PYTHONPATH=src python3 -m stock_analyst.cli recommendation-cards ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli dividend-strategy ./data/private/issues/DA_2026_03.pdf`
