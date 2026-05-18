@@ -50,9 +50,8 @@ Follow-ups:
 
 - Add strict workbook schema validation so every planned row has exactly the
   configured tab width and contains only sheet-safe scalar values.
-- Add a derivative overview alignment guard so base-table rows and retrospective
-  metrics cannot silently merge by position when a row is skipped or OCR order
-  changes.
+- Derivative overview alignment guard completed in
+  `docs/handoffs/2026-05-18-derivative-overview-alignment-guard.md`.
 - After the price/as-of work, build an OCR-specific dividend table line
   normalizer for DA_2026_03 pages 18-19. Keep it local-only and fixture-driven:
   start from ignored OCR artifacts, convert the noisy page text into row-major

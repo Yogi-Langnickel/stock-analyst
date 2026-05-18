@@ -58,6 +58,11 @@ Created: 2026-05-15
 - Dividend strategy rows preserve otherwise complete high-yield table entries
   when optional market-cap or P/E cells are printed as dash-like missing values;
   those cells normalize to blank workbook cells rather than dropping the row.
+- Derivative overview rows apply retrospective entry/current/performance/
+  target/stop/recommendation metrics only when the parsed base-row count and
+  retrospective-row count match exactly. On mismatch, keep the base rows and
+  leave retrospective metric fields blank instead of applying metrics by
+  position.
 - Instrument dry-run rows must populate row-level `date updated` as the last
   field. Stocks initialize it from an explicit import/issue date when
   available, otherwise from the command's current UTC date. Section inventories,

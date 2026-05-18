@@ -124,13 +124,12 @@ def extract_derivative_overview_rows_from_page_lines(
         if _looks_like_metrics_table(normalized):
             metrics.extend(_extract_metrics_rows(normalized))
 
-    merged: list[DerivativeOverviewRow] = []
-    for index, row in enumerate(base_rows):
-        if index < len(metrics):
-            merged.append(_apply_metrics(row, metrics[index]))
-        else:
-            merged.append(row)
-    return tuple(merged)
+    if len(base_rows) != len(metrics):
+        return tuple(base_rows)
+
+    return tuple(
+        _apply_metrics(row, row_metrics) for row, row_metrics in zip(base_rows, metrics)
+    )
 
 
 @dataclass(frozen=True)
