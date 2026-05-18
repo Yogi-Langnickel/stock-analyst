@@ -89,8 +89,9 @@ Created: 2026-05-15
   `Magazine Price`, `Magazine Current Price`, and
   `Magazine Price at Recommendation` so they are not mistaken for live
   provider-backed prices.
-- Workbook export writes now require each planned row to exactly match the
-  configured tab width; stale short rows fail before any Google write path can
+- Local workbook export-plan construction now requires each planned row to
+  target an active workbook tab and exactly match that tab's configured width;
+  stale short rows fail before JSON serialization or any Google write path can
   pad or truncate them.
 - Future currency display should preserve printed source prices and add a
   dashboard/display toggle for `EUR`, `USD`, and `AUD`. Converted values must

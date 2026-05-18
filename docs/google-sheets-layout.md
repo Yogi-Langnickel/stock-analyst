@@ -239,6 +239,11 @@ The command does not call Google Sheets and does not write export files. Planned
 rows are draft reviewer infrastructure only: `exportable=false`,
 `requiresManualReview=true`, and `approvedRows=0`.
 
+Workbook export-plan construction validates every planned row against the active
+tab schemas before JSON serialization. Rows that target inactive tabs or have a
+stale width fail locally instead of being padded, truncated, or handed to a
+Google write path.
+
 The `google-sheets-export-plan` command writes those draft reviewer rows into
 the configured Google Sheet. It bootstraps headers first, replaces existing rows
 for the same issue in affected tabs by default, preserves rows from other

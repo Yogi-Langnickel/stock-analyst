@@ -57,6 +57,10 @@ from stock_analyst.section_inventory import (
 MANUAL_REVIEW_WARNING = "manual_review_required_before_family_visible_export"
 
 
+class WorkbookExportPlanError(ValueError):
+    """Raised when a local workbook export plan does not match tab schemas."""
+
+
 @dataclass(frozen=True)
 class WorkbookDraftRow:
     tab: str
@@ -93,6 +97,9 @@ class WorkbookExportPlan:
     external_services_enabled: bool
     google_writes_enabled: bool
     rows: tuple[WorkbookDraftRow, ...]
+
+    def __post_init__(self) -> None:
+        _validate_workbook_rows(self.rows)
 
     def to_dict(self) -> dict[str, object]:
         rows_by_tab = Counter(row.tab for row in self.rows)
@@ -1121,6 +1128,23 @@ def _tabs_for_rows(rows: Iterable[WorkbookDraftRow]) -> tuple[str, ...]:
             seen.add(row.tab)
             ordered.append(row.tab)
     return tuple(ordered)
+
+
+def _validate_workbook_rows(rows: Sequence[WorkbookDraftRow]) -> None:
+    specs_by_title = {spec.title: spec for spec in DEFAULT_SHEET_TABS}
+    for row in rows:
+        spec = specs_by_title.get(row.tab)
+        if spec is None:
+            raise WorkbookExportPlanError(
+                f"workbook export row targets unsupported tab {row.tab!r}"
+            )
+        expected_width = len(spec.headers)
+        actual_width = len(row.values)
+        if actual_width != expected_width:
+            raise WorkbookExportPlanError(
+                f"workbook export row for {row.tab} must contain "
+                f"{expected_width} values, got {actual_width}"
+            )
 
 
 def _chance_risk(chance: int | None, risk: int | None) -> str:

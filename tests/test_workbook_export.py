@@ -17,6 +17,9 @@ from stock_analyst.section_inventory import (
     MagazineSectionKind,
 )
 from stock_analyst.workbook_export import (
+    WorkbookDraftRow,
+    WorkbookExportPlan,
+    WorkbookExportPlanError,
     build_workbook_export_plan,
     build_workbook_export_plan_from_pdf,
 )
@@ -37,6 +40,50 @@ def load_workbook_fixture(name: str) -> dict[str, object]:
 
 
 class WorkbookExportPlanTest(unittest.TestCase):
+    def test_plan_rejects_stale_row_width_before_serialization(self) -> None:
+        with self.assertRaisesRegex(
+            WorkbookExportPlanError,
+            r"workbook export row for Stocks must contain 24 values, got 23",
+        ):
+            WorkbookExportPlan(
+                issue_id="2026-W03",
+                pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+                external_services_enabled=False,
+                google_writes_enabled=False,
+                rows=(
+                    WorkbookDraftRow(
+                        tab="Stocks",
+                        row_kind="stock_recommendation",
+                        source_id="card:2026-W03:p22:A0MRD4:test",
+                        issue_id="2026-W03",
+                        page=22,
+                        values=tuple("" for _ in range(len(headers_for("Stocks")) - 1)),
+                    ),
+                ),
+            )
+
+    def test_plan_rejects_rows_for_inactive_workbook_tabs(self) -> None:
+        with self.assertRaisesRegex(
+            WorkbookExportPlanError,
+            r"workbook export row targets unsupported tab 'Recommendation Cards'",
+        ):
+            WorkbookExportPlan(
+                issue_id="2026-W03",
+                pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+                external_services_enabled=False,
+                google_writes_enabled=False,
+                rows=(
+                    WorkbookDraftRow(
+                        tab="Recommendation Cards",
+                        row_kind="recommendation_card",
+                        source_id="card:2026-W03:p22:A0MRD4:test",
+                        issue_id="2026-W03",
+                        page=22,
+                        values=tuple("" for _ in range(15)),
+                    ),
+                ),
+            )
+
     def test_pdf_plan_extracts_text_once_for_all_local_parsers(self) -> None:
         class StubExtractor:
             extractor_name = "stub"
