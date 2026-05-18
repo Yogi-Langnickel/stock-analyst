@@ -99,6 +99,11 @@ Behavior:
 - If a private PDF and visual-OCR artifact directory are provided, reports PDF
   checksum plus render/OCR artifact paths, availability, SHA-256 hashes, byte
   counts, and OCR character counts.
+- Adds `artifactReviewPlanning`, a metadata-only summary of fixture pages with
+  render/OCR artifacts available, missing, or not configured. When private
+  paths are provided, it includes exact local `scripts/stock-analyst
+  visual-ocr-review` commands for rendering missing pages and writing missing
+  local OCR text artifacts.
 - Never returns OCR text or private extracted article text.
 - Allows an optional private JSON fixture manifest, but rejects text-bearing
   keys such as `text`, `ocrText`, `sourceText`, `rawText`, and `lines`.

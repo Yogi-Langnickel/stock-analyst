@@ -8,6 +8,7 @@ from stock_analyst.ocr_fixtures import (
     DEFAULT_OCR_FIXTURE_ISSUE_ID,
     build_ocr_fixture_review_plan,
     expected_visual_ocr_artifact_paths,
+    format_page_selection,
     load_ocr_fixture_definitions,
 )
 
@@ -57,6 +58,100 @@ class OcrFixturePlanTest(unittest.TestCase):
         self.assertEqual(page_18["ocrText"]["status"], "available")
         self.assertEqual(page_18["ocrText"]["charCount"], len(private_ocr_text))
         self.assertNotIn(private_ocr_text, payload_text)
+
+    def test_artifact_review_planning_lists_missing_pages_and_commands(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            pdf = root / "Synthetic Issue.pdf"
+            artifact_dir = root / "private artifacts" / "visual-ocr"
+            manifest = root / "fixtures.json"
+            pdf.write_bytes(b"%PDF-1.7\nsynthetic fixture")
+            artifact_dir.mkdir(parents=True)
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "issueId": "SYNTHETIC_ISSUE",
+                        "fixtures": [
+                            {
+                                "fixtureId": "synthetic-pages",
+                                "pages": [1, 2, 3, 5, 6],
+                                "expectedSectionLabels": ["Synthetic table"],
+                                "intendedExtractionTargets": ["Extraction Audit"],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            page_1_render, page_1_ocr = expected_visual_ocr_artifact_paths(
+                pdf,
+                artifact_dir=artifact_dir,
+                page_number=1,
+            )
+            page_2_render, _page_2_ocr = expected_visual_ocr_artifact_paths(
+                pdf,
+                artifact_dir=artifact_dir,
+                page_number=2,
+            )
+            page_1_render.write_bytes(b"synthetic-page-1-png")
+            private_ocr_text = "synthetic private OCR line"
+            page_1_ocr.write_text(private_ocr_text, encoding="utf-8")
+            page_2_render.write_bytes(b"synthetic-page-2-png")
+
+            result = run_ocr_fixture_plan_command(
+                issue_id="SYNTHETIC_ISSUE",
+                pdf_path=pdf,
+                artifact_dir=artifact_dir,
+                fixture_manifest=manifest,
+            )
+
+        planning = result["artifactReviewPlanning"]
+        planning_text = json.dumps(planning)
+        self.assertEqual(planning["status"], "missing_artifacts")
+        self.assertEqual(planning["render"]["availablePages"], [1, 2])
+        self.assertEqual(planning["render"]["missingPages"], [3, 5, 6])
+        self.assertEqual(planning["ocrText"]["availablePages"], [1])
+        self.assertEqual(planning["ocrText"]["missingPages"], [2, 3, 5, 6])
+        self.assertEqual(
+            planning["commands"],
+            [
+                {
+                    "purpose": "render_missing_pages",
+                    "pages": [3, 5, 6],
+                    "pageSelection": "3,5-6",
+                    "command": (
+                        "scripts/stock-analyst visual-ocr-review "
+                        f"{str(pdf)!r} --pages 3,5-6 --render --output-dir "
+                        f"{str(artifact_dir)!r}"
+                    ),
+                },
+                {
+                    "purpose": "ocr_missing_pages",
+                    "pages": [2, 3, 5, 6],
+                    "pageSelection": "2-3,5-6",
+                    "command": (
+                        "scripts/stock-analyst visual-ocr-review "
+                        f"{str(pdf)!r} --pages 2-3,5-6 --render --ocr "
+                        f"--write-ocr-text --output-dir {str(artifact_dir)!r}"
+                    ),
+                },
+            ],
+        )
+        self.assertNotIn(private_ocr_text, planning_text)
+        self.assertNotIn("sha256", planning_text.lower())
+
+    def test_artifact_review_planning_is_not_configured_without_private_paths(self) -> None:
+        result = run_ocr_fixture_plan_command(artifact_dir=None)
+        planning = result["artifactReviewPlanning"]
+
+        self.assertEqual(planning["status"], "not_configured")
+        self.assertEqual(planning["render"]["missingPages"], [])
+        self.assertEqual(planning["render"]["notConfiguredPages"], result["uniquePages"])
+        self.assertEqual(planning["ocrText"]["notConfiguredPages"], result["uniquePages"])
+        self.assertEqual(planning["commands"], [])
+
+    def test_page_selection_formatter_compacts_sorted_unique_ranges(self) -> None:
+        self.assertEqual(format_page_selection((5, 2, 3, 5, 8, 9, 10)), "2-3,5,8-10")
 
     def test_private_fixture_manifest_can_define_metadata_only_fixtures(self) -> None:
         with TemporaryDirectory() as directory:

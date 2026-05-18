@@ -8,6 +8,7 @@ article text.
 from __future__ import annotations
 
 import json
+import shlex
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -133,6 +134,10 @@ class OcrFixtureReviewPlan:
         ]
         return tuple(dict.fromkeys(sorted(pages)))
 
+    @property
+    def review_planning(self) -> "OcrFixtureArtifactReviewPlanning":
+        return build_artifact_review_planning(self)
+
     def to_dict(self) -> dict[str, object]:
         render_available_count = sum(
             fixture.render_available_count for fixture in self.fixtures
@@ -151,6 +156,7 @@ class OcrFixtureReviewPlan:
             "uniquePageCount": len(self.unique_pages),
             "renderAvailableCount": render_available_count,
             "ocrTextAvailableCount": ocr_text_available_count,
+            "artifactReviewPlanning": self.review_planning.to_dict(),
             "fixtures": [fixture.to_dict() for fixture in self.fixtures],
         }
         if self.pdf_path is not None:
@@ -160,6 +166,66 @@ class OcrFixtureReviewPlan:
         if self.artifact_dir is not None:
             result["artifactDir"] = str(self.artifact_dir)
         return result
+
+
+@dataclass(frozen=True)
+class OcrFixtureArtifactAvailability:
+    available_pages: tuple[int, ...]
+    missing_pages: tuple[int, ...]
+    not_configured_pages: tuple[int, ...]
+
+    @property
+    def available_count(self) -> int:
+        return len(self.available_pages)
+
+    @property
+    def missing_count(self) -> int:
+        return len(self.missing_pages)
+
+    @property
+    def not_configured_count(self) -> int:
+        return len(self.not_configured_pages)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "availablePages": list(self.available_pages),
+            "missingPages": list(self.missing_pages),
+            "notConfiguredPages": list(self.not_configured_pages),
+            "availableCount": self.available_count,
+            "missingCount": self.missing_count,
+            "notConfiguredCount": self.not_configured_count,
+        }
+
+
+@dataclass(frozen=True)
+class OcrFixtureReviewCommand:
+    purpose: str
+    pages: tuple[int, ...]
+    command: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "purpose": self.purpose,
+            "pages": list(self.pages),
+            "pageSelection": format_page_selection(self.pages),
+            "command": self.command,
+        }
+
+
+@dataclass(frozen=True)
+class OcrFixtureArtifactReviewPlanning:
+    status: str
+    render: OcrFixtureArtifactAvailability
+    ocr_text: OcrFixtureArtifactAvailability
+    commands: tuple[OcrFixtureReviewCommand, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "render": self.render.to_dict(),
+            "ocrText": self.ocr_text.to_dict(),
+            "commands": [command.to_dict() for command in self.commands],
+        }
 
 
 DEFAULT_OCR_FIXTURES: tuple[OcrFixtureDefinition, ...] = (
@@ -323,6 +389,27 @@ def build_page_artifact_metadata(
     )
 
 
+def build_artifact_review_planning(
+    plan: OcrFixtureReviewPlan,
+) -> OcrFixtureArtifactReviewPlanning:
+    render = _availability_by_page(plan, artifact_name="render")
+    ocr_text = _availability_by_page(plan, artifact_name="ocr_text")
+    commands = _missing_artifact_commands(plan, render=render, ocr_text=ocr_text)
+
+    status = "complete"
+    if render.not_configured_pages or ocr_text.not_configured_pages:
+        status = "not_configured"
+    elif render.missing_pages or ocr_text.missing_pages:
+        status = "missing_artifacts"
+
+    return OcrFixtureArtifactReviewPlanning(
+        status=status,
+        render=render,
+        ocr_text=ocr_text,
+        commands=commands,
+    )
+
+
 def expected_visual_ocr_artifact_paths(
     pdf_path: Path,
     *,
@@ -332,6 +419,26 @@ def expected_visual_ocr_artifact_paths(
     digest = sha256(str(pdf_path.name).encode("utf-8")).hexdigest()[:8]
     stem = f"{pdf_path.stem}-{digest}-p{page_number:03d}"
     return artifact_dir / f"{stem}.png", artifact_dir / f"{stem}.ocr.txt"
+
+
+def format_page_selection(pages: Sequence[int]) -> str:
+    """Return a deterministic compact page/range expression for CLI use."""
+
+    selected = tuple(dict.fromkeys(sorted(pages)))
+    if not selected:
+        return ""
+
+    ranges: list[str] = []
+    start = selected[0]
+    previous = selected[0]
+    for page in selected[1:]:
+        if page == previous + 1:
+            previous = page
+            continue
+        ranges.append(_format_page_range(start, previous))
+        start = previous = page
+    ranges.append(_format_page_range(start, previous))
+    return ",".join(ranges)
 
 
 def _definition_from_mapping(
@@ -359,6 +466,92 @@ def _definition_from_mapping(
     )
 
 
+def _availability_by_page(
+    plan: OcrFixtureReviewPlan,
+    *,
+    artifact_name: str,
+) -> OcrFixtureArtifactAvailability:
+    statuses: dict[int, str] = {}
+    for fixture in plan.fixtures:
+        for page_artifact in fixture.page_artifacts:
+            metadata = getattr(page_artifact, artifact_name)
+            statuses[page_artifact.page_number] = metadata.status
+
+    available_pages = tuple(
+        page for page in plan.unique_pages if statuses.get(page) == "available"
+    )
+    missing_pages = tuple(
+        page for page in plan.unique_pages if statuses.get(page) == "missing"
+    )
+    not_configured_pages = tuple(
+        page for page in plan.unique_pages if statuses.get(page) == "not_configured"
+    )
+    return OcrFixtureArtifactAvailability(
+        available_pages=available_pages,
+        missing_pages=missing_pages,
+        not_configured_pages=not_configured_pages,
+    )
+
+
+def _missing_artifact_commands(
+    plan: OcrFixtureReviewPlan,
+    *,
+    render: OcrFixtureArtifactAvailability,
+    ocr_text: OcrFixtureArtifactAvailability,
+) -> tuple[OcrFixtureReviewCommand, ...]:
+    if plan.pdf_path is None or plan.artifact_dir is None:
+        return ()
+
+    commands: list[OcrFixtureReviewCommand] = []
+    if render.missing_pages:
+        commands.append(
+            _visual_ocr_command(
+                purpose="render_missing_pages",
+                pdf_path=plan.pdf_path,
+                artifact_dir=plan.artifact_dir,
+                pages=render.missing_pages,
+                ocr=False,
+            )
+        )
+    if ocr_text.missing_pages:
+        commands.append(
+            _visual_ocr_command(
+                purpose="ocr_missing_pages",
+                pdf_path=plan.pdf_path,
+                artifact_dir=plan.artifact_dir,
+                pages=ocr_text.missing_pages,
+                ocr=True,
+            )
+        )
+    return tuple(commands)
+
+
+def _visual_ocr_command(
+    *,
+    purpose: str,
+    pdf_path: Path,
+    artifact_dir: Path,
+    pages: tuple[int, ...],
+    ocr: bool,
+) -> OcrFixtureReviewCommand:
+    command_parts = [
+        "scripts/stock-analyst",
+        "visual-ocr-review",
+        str(pdf_path),
+        "--pages",
+        format_page_selection(pages),
+        "--render",
+    ]
+    if ocr:
+        command_parts.extend(("--ocr", "--write-ocr-text"))
+    command_parts.extend(("--output-dir", str(artifact_dir)))
+    return OcrFixtureReviewCommand(
+        purpose=purpose,
+        pages=pages,
+        command=" ".join(shlex.quote(part) for part in command_parts),
+    )
+
+
 def _file_artifact_metadata(path: Path, *, count_text_chars: bool) -> OcrArtifactMetadata:
     if not path.exists():
         return OcrArtifactMetadata(status="missing", path=path)
@@ -373,6 +566,12 @@ def _file_artifact_metadata(path: Path, *, count_text_chars: bool) -> OcrArtifac
         byte_count=len(content),
         char_count=char_count,
     )
+
+
+def _format_page_range(start: int, end: int) -> str:
+    if start == end:
+        return str(start)
+    return f"{start}-{end}"
 
 
 def _issue_id_from_definitions(definitions: Sequence[OcrFixtureDefinition]) -> str:

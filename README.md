@@ -114,11 +114,15 @@ Render pages for private visual review and optional local OCR:
 ```sh
 scripts/stock-analyst visual-ocr-review ./data/private/issues/DA_2026_03.pdf --pages 22,62-63 --render
 scripts/stock-analyst visual-ocr-review ./data/private/issues/DA_2026_03.pdf --page 22 --ocr --write-ocr-text
+scripts/stock-analyst ocr-fixture-plan --pdf ./data/private/issues/DA_2026_03.pdf --artifact-dir ./data/private/visual-ocr
 ```
 
 The command writes rendered page PNGs, and optionally OCR text, under ignored
 private storage. Its JSON output contains file paths, sizes, hashes, and status
 metadata only; it does not print OCR text or call remote OCR providers.
+`ocr-fixture-plan` adds a metadata-only `artifactReviewPlanning` summary with
+available and missing fixture pages plus exact local `visual-ocr-review`
+commands for creating missing private artifacts.
 
 Inventory important magazine sections and table surfaces, including dividend
 strategy tables, derivative overview tables, AKTIONAER depot snapshots,
