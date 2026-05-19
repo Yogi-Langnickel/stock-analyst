@@ -133,10 +133,11 @@ strategy tables, derivative overview tables, AKTIONAER depot snapshots,
 transaction tables, chart-check pages, quick-check tables, statistics, and
 low-priority back matter:
 
-Normal magazine extraction skips the first five pages and cuts routine
-processing after the first detected `Statistik` page. The `Statistik` page is
-kept as context; later back matter is excluded unless a future manual override
-is added.
+Normal magazine extraction skips the first five `Inhalt`/front-matter pages and
+cuts routine processing after the first detected `Statistik` body section. The
+`Statistik` page is kept as context; later back matter is excluded unless a
+future manual override is added. Running-header or page-corner labels such as
+`Inhalt` or `Statistik` do not trigger section handling on their own.
 
 ```sh
 PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf

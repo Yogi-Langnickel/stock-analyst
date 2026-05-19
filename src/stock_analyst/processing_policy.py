@@ -8,6 +8,7 @@ from typing import Protocol, Sequence, TypeVar
 
 DEFAULT_FRONT_MATTER_PAGE_COUNT = 5
 DEFAULT_REMOTE_OCR_MONTHLY_PAGE_BUDGET = 900
+RUNNING_HEADER_LINE_COUNT = 3
 
 
 class PageLike(Protocol):
@@ -54,9 +55,10 @@ def filter_magazine_processing_pages(
 ) -> tuple[PageT, ...]:
     """Return pages in the useful magazine processing window.
 
-    The default window skips early front matter and includes pages only through
-    the first detected Statistik section. The Statistik page itself is kept as
-    context; pages after it are dropped from normal extraction/OCR planning.
+    The default window skips early front matter, including the Inhalt pages,
+    and includes pages only through the first detected Statistik body section.
+    The Statistik page itself is kept as context; pages after it are dropped
+    from normal extraction/OCR planning.
     """
 
     window = build_magazine_processing_window(pages, policy=policy)
@@ -133,13 +135,35 @@ def _first_statistics_page(pages: Sequence[PageLike]) -> int | None:
 
 def is_statistics_section_text(lines: Sequence[str]) -> bool:
     normalized = tuple(_clean_line(line) for line in lines if _clean_line(line))
-    text = "\n".join(normalized)
-    return "Statistik" in text and (
-        "Die Woche im Überblick" in text
-        or "52-Wochen" in text
-        or "seit Jahresanfang" in text
-        or "Indizes" in text
+    body_lines = _without_running_header(normalized)
+    body_text = "\n".join(body_lines)
+    body_markers = (
+        "Die Woche im Überblick",
+        "52-Wochen",
+        "seit Jahresanfang",
+        "Indizes",
     )
+    marker_count = sum(1 for marker in body_markers if marker in body_text)
+
+    return (
+        "Die Woche im Überblick" in body_text
+        or ("Statistik" in body_text and marker_count >= 1)
+        or marker_count >= 2
+    )
+
+
+def _without_running_header(lines: Sequence[str]) -> tuple[str, ...]:
+    if _has_running_header(lines):
+        return tuple(lines[RUNNING_HEADER_LINE_COUNT:])
+    return tuple(lines)
+
+
+def _has_running_header(lines: Sequence[str]) -> bool:
+    if len(lines) < RUNNING_HEADER_LINE_COUNT:
+        return False
+    section_label = lines[0] in {"Inhalt", "Statistik"}
+    magazine_label = any("AKTIONÄR" in line for line in lines[1:RUNNING_HEADER_LINE_COUNT])
+    return section_label and magazine_label
 
 
 def _clean_line(line: str) -> str:

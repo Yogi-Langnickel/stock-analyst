@@ -54,10 +54,12 @@ Sources:
 
 - Keep OCR page-scoped. Do not reprocess pages that already have enough
   embedded text and labelled card fields.
-- Normal magazine processing skips the first five pages as front matter and
-  includes pages only through the first detected `Statistik` section. Pages
-  after `Statistik` are excluded from normal extraction/OCR planning unless a
-  future manual override explicitly includes them.
+- Normal magazine processing skips the first five `Inhalt`/front-matter pages
+  and includes pages only through the first detected `Statistik` body section.
+  Pages after `Statistik` are excluded from normal extraction/OCR planning
+  unless a future manual override explicitly includes them. Repeated
+  running-header/page-corner labels such as `Inhalt` or `Statistik` are ignored
+  unless the page body also contains section/table markers.
 - Store OCR output as draft extraction evidence, never approved rows.
 - Cache OCR outputs by source PDF checksum, page number, provider, and provider
   version/config.
