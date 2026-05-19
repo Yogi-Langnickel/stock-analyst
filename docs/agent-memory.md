@@ -49,6 +49,13 @@ Created: 2026-05-15
   AKTIONAER depot positions, depot transactions, chart-check pages,
   quick-check tables, statistics context, and low-priority back matter with
   suggested Google Sheet destinations.
+- Normal magazine scan policy skips the first five pages as front matter and
+  cuts normal processing after the first detected `Statistik` page. Keep the
+  `Statistik` page itself as context; back matter after it is excluded unless a
+  manual override is introduced later.
+- Remote OCR planning has a 900-page monthly budget guard. Provider adapters
+  must block or require manual approval above that budget before making Google
+  Vision calls.
 - `Aktien im Quick-Check` rows are parser-backed into `Stock Quickcheck` and
   also surface in `Stocks` as previous-recommendation stock rows with split
   current price, price at recommendation, target, stop, and comment fields.

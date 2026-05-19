@@ -32,6 +32,10 @@ to 5 issues per month, the expected 625 pages/month should fit inside that free
 Vision OCR tier. This excludes Cloud Storage, networking, and any other Google
 services, and pricing must be rechecked before enabling the provider.
 
+Current local guard: the provider-disabled remote OCR queue contract uses a
+900-page monthly budget. Any future provider adapter must block or require
+manual approval above that budget before making Google Vision calls.
+
 Sources:
 
 - https://cloud.google.com/vision/pricing
@@ -50,6 +54,10 @@ Sources:
 
 - Keep OCR page-scoped. Do not reprocess pages that already have enough
   embedded text and labelled card fields.
+- Normal magazine processing skips the first five pages as front matter and
+  includes pages only through the first detected `Statistik` section. Pages
+  after `Statistik` are excluded from normal extraction/OCR planning unless a
+  future manual override explicitly includes them.
 - Store OCR output as draft extraction evidence, never approved rows.
 - Cache OCR outputs by source PDF checksum, page number, provider, and provider
   version/config.

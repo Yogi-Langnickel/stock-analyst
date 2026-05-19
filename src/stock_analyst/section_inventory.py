@@ -9,6 +9,12 @@ import re
 from typing import Sequence
 
 from stock_analyst.extraction import RawTextExtractor, extract_pdf_text
+from stock_analyst.processing_policy import (
+    DEFAULT_MAGAZINE_PROCESSING_POLICY,
+    MagazineProcessingPolicy,
+    filter_magazine_processing_pages,
+    is_statistics_section_text,
+)
 from stock_analyst.schemas import ReviewStatus
 
 
@@ -113,6 +119,7 @@ def build_section_inventory_from_pdf(
     issue_id: str | None = None,
     extractor: RawTextExtractor | None = None,
     min_embedded_chars: int = 40,
+    processing_policy: MagazineProcessingPolicy = DEFAULT_MAGAZINE_PROCESSING_POLICY,
 ) -> MagazineSectionInventory:
     """Find high-value table/section surfaces using local embedded text only."""
 
@@ -123,8 +130,12 @@ def build_section_inventory_from_pdf(
     )
     resolved_issue_id = issue_id or _issue_id_from_filename(pdf_path)
     sections: list[MagazineSectionCandidate] = []
+    pages = filter_magazine_processing_pages(
+        extraction.pages,
+        policy=processing_policy,
+    )
 
-    for page in extraction.pages:
+    for page in pages:
         sections.extend(
             extract_section_candidates_from_lines(
                 page.text.splitlines(),
@@ -361,10 +372,8 @@ def _is_quick_check(lines: Sequence[str], text: str) -> bool:
 
 
 def _is_statistics_context(lines: Sequence[str], text: str) -> bool:
-    return "Statistik" in text and (
-        "Die Woche im Überblick" in text
-        or len(_extract_wkns(lines)) >= 2
-        or _contains_any(lines, ("52-Wochen", "seit Jahresanfang"))
+    return is_statistics_section_text(lines) or (
+        "Statistik" in text and len(_extract_wkns(lines)) >= 2
     )
 
 

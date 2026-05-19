@@ -95,7 +95,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
                 self.calls += 1
                 return (
                     RawPageText(
-                        page_number=1,
+                        page_number=6,
                         text="\n".join(
                             (
                                 "Aktie",
@@ -135,6 +135,45 @@ class WorkbookExportPlanTest(unittest.TestCase):
             {"Extraction Audit": 1, "Stocks": 1},
         )
 
+    def test_pdf_plan_skips_front_matter_and_pages_after_statistics(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(
+                        page_number=2,
+                        text="\n".join(("Aktie", "Front Matter AG", "WKN", "ABC123")),
+                    ),
+                    RawPageText(
+                        page_number=6,
+                        text="\n".join(("Aktie", "Useful AG", "WKN", "USE123")),
+                    ),
+                    RawPageText(
+                        page_number=7,
+                        text="\n".join(("Statistik", "Die Woche im Überblick", "Indizes")),
+                    ),
+                    RawPageText(
+                        page_number=8,
+                        text="\n".join(("Aktie", "Back Matter AG", "WKN", "BCK123")),
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_03.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        result = plan.to_dict()
+        stock_rows = [row for row in result["rows"] if row["tab"] == "Stocks"]
+
+        self.assertEqual(len(stock_rows), 1)
+        self.assertEqual(stock_rows[0]["values"][0], "Useful AG")
+        self.assertEqual(stock_rows[0]["page"], 6)
+        self.assertNotIn("Front Matter AG", json.dumps(result))
+        self.assertNotIn("Back Matter AG", json.dumps(result))
+
     def test_pdf_plan_uses_filename_issue_date_for_stock_update_date(self) -> None:
         class StubExtractor:
             extractor_name = "stub"
@@ -142,7 +181,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
             def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
                 return (
                     RawPageText(
-                        page_number=1,
+                        page_number=6,
                         text="\n".join(
                             (
                                 "Aktie",
@@ -983,7 +1022,7 @@ class _SingleStockExtractor:
     def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
         return (
             RawPageText(
-                page_number=1,
+                page_number=6,
                 text="\n".join(
                     (
                         "Aktie",

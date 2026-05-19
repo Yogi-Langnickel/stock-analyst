@@ -60,6 +60,9 @@ class OcrNeededReportTest(unittest.TestCase):
         self.assertEqual(remote_contract["provider"], "google_vision")
         self.assertFalse(remote_contract["externalServicesEnabled"])
         self.assertFalse(remote_contract["providerCallsPlanned"])
+        self.assertEqual(remote_contract["monthlyPageBudget"], 900)
+        self.assertEqual(remote_contract["requestedPageCount"], 3)
+        self.assertEqual(remote_contract["budgetStatus"], "within_contract_budget")
         self.assertEqual(remote_contract["pageScope"], "selected_pages_only")
         self.assertEqual(remote_contract["items"][0]["pageSelection"], "1,3-4")
         self.assertEqual(

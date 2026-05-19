@@ -36,6 +36,11 @@ from stock_analyst.derivative_tables import (
 from stock_analyst.extraction import RawTextExtractor, extract_pdf_text
 from stock_analyst.google_access import DEFAULT_SHEET_TABS
 from stock_analyst.intake import guess_issue_date
+from stock_analyst.processing_policy import (
+    DEFAULT_MAGAZINE_PROCESSING_POLICY,
+    MagazineProcessingPolicy,
+    filter_magazine_processing_pages,
+)
 from stock_analyst.quickcheck import (
     QuickcheckRow,
     extract_quickcheck_rows_from_page_lines,
@@ -142,6 +147,7 @@ def build_workbook_export_plan_from_pdf(
     min_embedded_chars: int = 40,
     import_date: date | str | None = None,
     current_utc_date: date | str | None = None,
+    processing_policy: MagazineProcessingPolicy = DEFAULT_MAGAZINE_PROCESSING_POLICY,
 ) -> WorkbookExportPlan:
     """Build a dry-run workbook row plan from local embedded PDF text."""
 
@@ -156,13 +162,18 @@ def build_workbook_export_plan_from_pdf(
         import_date=import_date,
         current_utc_date=current_utc_date,
     )
-    pages = tuple((page.page_number, page.text.splitlines()) for page in extraction.pages)
+    content_pages = filter_magazine_processing_pages(
+        extraction.pages,
+        policy=processing_policy,
+    )
+    pages = tuple((page.page_number, page.text.splitlines()) for page in content_pages)
     cards: list[RecommendationCard] = (
         list(
             extract_recommendation_cards_from_pdf(
                 pdf_path,
                 issue_id=resolved_issue_id,
                 min_embedded_chars=min_embedded_chars,
+                processing_policy=processing_policy,
             ).cards
         )
         if extractor is None

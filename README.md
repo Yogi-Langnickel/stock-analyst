@@ -123,7 +123,7 @@ private storage. Its JSON output contains file paths, sizes, hashes, and status
 metadata only; it does not print OCR text or call remote OCR providers.
 `ocr-needed` also emits a provider-disabled `remoteOcrQueueContract` for later
 selected-page Google Vision work; the contract is metadata only and keeps
-provider calls disabled.
+provider calls disabled. Remote OCR planning is guarded at 900 pages/month.
 `ocr-fixture-plan` adds a metadata-only `artifactReviewPlanning` summary with
 available and missing fixture pages plus exact local `visual-ocr-review`
 commands for creating missing private artifacts.
@@ -132,6 +132,11 @@ Inventory important magazine sections and table surfaces, including dividend
 strategy tables, derivative overview tables, AKTIONAER depot snapshots,
 transaction tables, chart-check pages, quick-check tables, statistics, and
 low-priority back matter:
+
+Normal magazine extraction skips the first five pages and cuts routine
+processing after the first detected `Statistik` page. The `Statistik` page is
+kept as context; later back matter is excluded unless a future manual override
+is added.
 
 ```sh
 PYTHONPATH=src python3 -m stock_analyst.cli section-inventory ./data/private/issues/DA_2026_03.pdf

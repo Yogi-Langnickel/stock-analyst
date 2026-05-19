@@ -11,6 +11,10 @@ from stock_analyst.quality_report import (
     ExtractionQualityReport,
     build_extraction_quality_report,
 )
+from stock_analyst.processing_policy import (
+    DEFAULT_REMOTE_OCR_MONTHLY_PAGE_BUDGET,
+    remote_ocr_budget_status,
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,9 @@ class RemoteOcrQueueContract:
     provider: str
     external_services_enabled: bool
     provider_calls_planned: bool
+    monthly_page_budget: int
+    requested_page_count: int
+    budget_status: str
     page_scope: str
     privacy_boundary: str
     items: tuple[RemoteOcrQueueItem, ...]
@@ -58,6 +65,9 @@ class RemoteOcrQueueContract:
             "provider": self.provider,
             "externalServicesEnabled": self.external_services_enabled,
             "providerCallsPlanned": self.provider_calls_planned,
+            "monthlyPageBudget": self.monthly_page_budget,
+            "requestedPageCount": self.requested_page_count,
+            "budgetStatus": self.budget_status,
             "pageScope": self.page_scope,
             "privacyBoundary": self.privacy_boundary,
             "items": [item.to_dict() for item in self.items],
@@ -151,6 +161,7 @@ def build_ocr_needed_report(
         if item.ocr_needed_pages
     )
     remote_queue_items = tuple(_remote_ocr_queue_item(item) for item in items)
+    remote_page_count = sum(len(item.pages) for item in remote_queue_items)
 
     return OcrNeededReport(
         manifest_path=quality_report.manifest_path,
@@ -164,6 +175,9 @@ def build_ocr_needed_report(
             provider="google_vision",
             external_services_enabled=False,
             provider_calls_planned=False,
+            monthly_page_budget=DEFAULT_REMOTE_OCR_MONTHLY_PAGE_BUDGET,
+            requested_page_count=remote_page_count,
+            budget_status=remote_ocr_budget_status(remote_page_count),
             page_scope="selected_pages_only",
             privacy_boundary="metadata_only_contract_no_ocr_or_article_content",
             items=remote_queue_items,

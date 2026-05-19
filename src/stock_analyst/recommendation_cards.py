@@ -8,6 +8,11 @@ import re
 from typing import Sequence
 
 from stock_analyst.extraction import RawTextExtractor, extract_pdf_text
+from stock_analyst.processing_policy import (
+    DEFAULT_MAGAZINE_PROCESSING_POLICY,
+    MagazineProcessingPolicy,
+    filter_magazine_processing_pages,
+)
 from stock_analyst.schemas import InstrumentType, ReviewStatus
 
 
@@ -174,6 +179,7 @@ def extract_recommendation_cards_from_pdf(
     issue_id: str | None = None,
     extractor: RawTextExtractor | None = None,
     min_embedded_chars: int = 40,
+    processing_policy: MagazineProcessingPolicy = DEFAULT_MAGAZINE_PROCESSING_POLICY,
 ) -> RecommendationCardExtraction:
     """Extract draft recommendation cards from embedded text only."""
 
@@ -183,12 +189,16 @@ def extract_recommendation_cards_from_pdf(
         min_embedded_chars=min_embedded_chars,
     )
     resolved_issue_id = issue_id or _issue_id_from_filename(pdf_path)
+    pages = filter_magazine_processing_pages(
+        extraction.pages,
+        policy=processing_policy,
+    )
     visual_pairs_by_page = (
         _visual_chance_risk_pairs_by_page(pdf_path) if extractor is None else {}
     )
     cards: list[RecommendationCard] = []
 
-    for page in extraction.pages:
+    for page in pages:
         cards.extend(
             extract_recommendation_cards_from_lines(
                 page.text.splitlines(),
