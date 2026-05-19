@@ -55,6 +55,17 @@ class OcrNeededReportTest(unittest.TestCase):
         self.assertIn("--write-ocr-text", item["localOcrCommand"])
         self.assertNotIn("enough embedded text", json.dumps(result))
         self.assertFalse(result["externalServicesEnabled"])
+        remote_contract = result["remoteOcrQueueContract"]
+        self.assertEqual(remote_contract["schemaVersion"], "remote-ocr-queue/v1")
+        self.assertEqual(remote_contract["provider"], "google_vision")
+        self.assertFalse(remote_contract["externalServicesEnabled"])
+        self.assertFalse(remote_contract["providerCallsPlanned"])
+        self.assertEqual(remote_contract["pageScope"], "selected_pages_only")
+        self.assertEqual(remote_contract["items"][0]["pageSelection"], "1,3-4")
+        self.assertEqual(
+            remote_contract["items"][0]["status"],
+            "contract_only_provider_disabled",
+        )
 
     def test_cli_ocr_needed_returns_empty_items_when_no_pages_need_ocr(self) -> None:
         with TemporaryDirectory() as directory:
@@ -68,6 +79,7 @@ class OcrNeededReportTest(unittest.TestCase):
         self.assertEqual(result["pdfsNeedingOcrCount"], 0)
         self.assertEqual(result["ocrNeededPageCount"], 0)
         self.assertEqual(result["items"], [])
+        self.assertEqual(result["remoteOcrQueueContract"]["items"], [])
 
     def test_cli_helper_uses_privacy_safe_manifest_output(self) -> None:
         with TemporaryDirectory() as directory:

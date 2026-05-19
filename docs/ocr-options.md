@@ -124,5 +124,9 @@ Smoke result on 2026-05-17:
      page numbers below the embedded-text threshold, emits metadata-only
      `visual-ocr-review` commands, and never returns OCR text or article text.
 2. Add a remote OCR queue contract without implementing Google calls yet.
+   - Implemented as a provider-disabled `remoteOcrQueueContract` in
+     `ocr-needed` output. It records selected page ranges, source ids, checksums,
+     and privacy policy metadata only. `externalServicesEnabled` and
+     `providerCallsPlanned` remain `false`.
 3. Only after review, add a Google Vision adapter that processes selected pages,
    not complete issues by default.

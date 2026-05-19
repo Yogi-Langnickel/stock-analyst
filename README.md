@@ -121,6 +121,9 @@ scripts/stock-analyst ocr-needed ./data/uploads/uploads.jsonl
 The command writes rendered page PNGs, and optionally OCR text, under ignored
 private storage. Its JSON output contains file paths, sizes, hashes, and status
 metadata only; it does not print OCR text or call remote OCR providers.
+`ocr-needed` also emits a provider-disabled `remoteOcrQueueContract` for later
+selected-page Google Vision work; the contract is metadata only and keeps
+provider calls disabled.
 `ocr-fixture-plan` adds a metadata-only `artifactReviewPlanning` summary with
 available and missing fixture pages plus exact local `visual-ocr-review`
 commands for creating missing private artifacts.

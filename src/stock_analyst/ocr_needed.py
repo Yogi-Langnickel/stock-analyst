@@ -14,6 +14,57 @@ from stock_analyst.quality_report import (
 
 
 @dataclass(frozen=True)
+class RemoteOcrQueueItem:
+    filename: str
+    source_pdf_id: str | None
+    checksum_sha256: str | None
+    stored_path: Path | None
+    pages: tuple[int, ...]
+    page_selection: str
+    status: str
+
+    def to_dict(self) -> dict[str, object]:
+        result: dict[str, object] = {
+            "filename": self.filename,
+            "pages": list(self.pages),
+            "pageSelection": self.page_selection,
+            "status": self.status,
+            "inputKind": "selected_pdf_pages",
+        }
+
+        if self.source_pdf_id is not None:
+            result["sourcePdfId"] = self.source_pdf_id
+        if self.checksum_sha256 is not None:
+            result["checksumSha256"] = self.checksum_sha256
+        if self.stored_path is not None:
+            result["storedPath"] = str(self.stored_path)
+
+        return result
+
+
+@dataclass(frozen=True)
+class RemoteOcrQueueContract:
+    schema_version: str
+    provider: str
+    external_services_enabled: bool
+    provider_calls_planned: bool
+    page_scope: str
+    privacy_boundary: str
+    items: tuple[RemoteOcrQueueItem, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schemaVersion": self.schema_version,
+            "provider": self.provider,
+            "externalServicesEnabled": self.external_services_enabled,
+            "providerCallsPlanned": self.provider_calls_planned,
+            "pageScope": self.page_scope,
+            "privacyBoundary": self.privacy_boundary,
+            "items": [item.to_dict() for item in self.items],
+        }
+
+
+@dataclass(frozen=True)
 class OcrNeededItem:
     filename: str
     source_pdf_id: str | None
@@ -56,6 +107,7 @@ class OcrNeededReport:
     ocr_needed_page_count: int
     external_services_enabled: bool
     items: tuple[OcrNeededItem, ...]
+    remote_ocr_queue_contract: RemoteOcrQueueContract
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -65,6 +117,7 @@ class OcrNeededReport:
             "ocrNeededPageCount": self.ocr_needed_page_count,
             "externalServicesEnabled": self.external_services_enabled,
             "items": [item.to_dict() for item in self.items],
+            "remoteOcrQueueContract": self.remote_ocr_queue_contract.to_dict(),
         }
 
 
@@ -97,6 +150,7 @@ def build_ocr_needed_report(
         for item in quality_report.items
         if item.ocr_needed_pages
     )
+    remote_queue_items = tuple(_remote_ocr_queue_item(item) for item in items)
 
     return OcrNeededReport(
         manifest_path=quality_report.manifest_path,
@@ -105,6 +159,15 @@ def build_ocr_needed_report(
         ocr_needed_page_count=sum(len(item.ocr_needed_pages) for item in items),
         external_services_enabled=False,
         items=items,
+        remote_ocr_queue_contract=RemoteOcrQueueContract(
+            schema_version="remote-ocr-queue/v1",
+            provider="google_vision",
+            external_services_enabled=False,
+            provider_calls_planned=False,
+            page_scope="selected_pages_only",
+            privacy_boundary="metadata_only_contract_no_ocr_or_article_content",
+            items=remote_queue_items,
+        ),
     )
 
 
@@ -133,6 +196,18 @@ def _ocr_needed_item(
         ocr_needed_pages=item.ocr_needed_pages,
         reasons=item.blocking_reasons,
         local_ocr_command=local_ocr_command,
+    )
+
+
+def _remote_ocr_queue_item(item: OcrNeededItem) -> RemoteOcrQueueItem:
+    return RemoteOcrQueueItem(
+        filename=item.filename,
+        source_pdf_id=item.source_pdf_id,
+        checksum_sha256=item.checksum_sha256,
+        stored_path=item.stored_path,
+        pages=item.ocr_needed_pages,
+        page_selection=_page_selection(item.ocr_needed_pages),
+        status="contract_only_provider_disabled",
     )
 
 
