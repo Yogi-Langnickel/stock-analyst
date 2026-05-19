@@ -92,6 +92,7 @@ class GoogleSheetTabSpec:
 
 
 DATA_BACKED_TAB_TITLES = {
+    "Navigation Dashboard",
     "Stocks",
     "Derivative Tips",
     "AKTIONAER Depot",
@@ -103,14 +104,83 @@ DATA_BACKED_TAB_TITLES = {
 }
 
 
+NAVIGATION_DASHBOARD_CELLS: tuple[tuple[str, str], ...] = (
+    ("A1", "Der Aktionär Summaries"),
+    ("A2", "Navigation Dashboard"),
+    ("A3", "Draft reviewer workbook. Verify issue/page/source fields before family-facing export."),
+    ("A6", "Core review"),
+    ("B6", "Stocks"),
+    ("C6", "Canonical equity rows merged from recommendation cards, Quick Check, and Chart Check."),
+    ("D6", "Start here for stock review."),
+    ("E6", ""),
+    ("F6", "parser-backed; review required"),
+    ("G6", "Current Price* stays blank until provider enrichment writes it."),
+    ("A7", "Core review"),
+    ("B7", "Dividend Focus"),
+    ("C7", "Dividend table rows and multi-period dividend context."),
+    ("D7", "Validate yield/date/price fields."),
+    ("E7", ""),
+    ("F7", "parser-backed; review required"),
+    ("G7", "Dividend yield is source context, not a guaranteed future payout."),
+    ("A8", "Core review"),
+    ("B8", "Derivative Tips"),
+    ("C8", "Calls, puts, certificates, and derivative overview rows."),
+    ("D8", "Check derivative WKN/product terms."),
+    ("E8", ""),
+    ("F8", "parser-backed; review required"),
+    ("G8", "Highest risk surface; do not group rows by underlying alone."),
+    ("A9", "Publisher portfolio"),
+    ("B9", "AKTIONAER Depot"),
+    ("C9", "Publisher model-depot position snapshots."),
+    ("D9", "Treat as source context, not advice."),
+    ("E9", ""),
+    ("F9", "parser-backed; review required"),
+    ("G9", "This is the publisher's model portfolio, not a household portfolio."),
+    ("A10", "Publisher portfolio"),
+    ("B10", "Depot Transactions"),
+    ("C10", "Publisher transaction and no-transaction ledger."),
+    ("D10", "Check event history."),
+    ("E10", ""),
+    ("F10", "parser-backed; review required"),
+    ("G10", "Use for source history and transaction evidence."),
+    ("A11", "Source detail"),
+    ("B11", "Chart Check"),
+    ("C11", "Full parsed chart-check source rows."),
+    ("D11", "Trace stock fields back to source."),
+    ("E11", ""),
+    ("F11", "parser-backed; review required"),
+    ("G11", "Also feeds matching stock rows where possible."),
+    ("A12", "Source detail"),
+    ("B12", "Stock Quickcheck"),
+    ("C12", "Full parsed quick-check rows."),
+    ("D12", "Trace stock fields back to source."),
+    ("E12", ""),
+    ("F12", "parser-backed; review required"),
+    ("G12", "Also feeds matching stock rows where possible."),
+    ("A13", "QA"),
+    ("B13", "Extraction Audit"),
+    ("C13", "Parser warnings, skipped sections, OCR-needed pages, and review notes."),
+    ("D13", "Fix blockers before relying on rows."),
+    ("E13", ""),
+    ("F13", "parser-backed; internal"),
+    ("G13", "Check this tab after each import."),
+)
+
+
 DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     GoogleSheetTabSpec(
         "Navigation Dashboard",
-        ("Area", "Tab", "Purpose", "Status"),
-        "Low-clutter entrypoint for the workbook.",
+        ("Area", "Open", "What this tab is for", "Reviewer action", "Row count", "Status", "Notes"),
+        "Low-clutter entrypoint for active workbook tabs.",
+        header_row=5,
+        metadata_cells=NAVIGATION_DASHBOARD_CELLS,
+        frozen_rows=5,
+        frozen_columns=2,
+        table_starts_at="A5",
         layout_notes=(
-            "Use spreadsheet-native links to major workbook areas.",
-            "Keep only high-level status and navigation here.",
+            "Use this tab as a dashboard index for currently active parser-backed tabs.",
+            "Keep financial decision detail on source tabs; this tab should stay concise.",
+            "Preserve this layout during data clears because it contains static navigation rows.",
         ),
         parser_status="layout_only",
     ),
@@ -862,7 +932,7 @@ def write_workbook_plan_to_google_sheet(
         tab = str(raw_row.get("tab") or "").strip()
         spec = specs_by_title.get(tab)
         values = raw_row.get("values")
-        if spec is None or not isinstance(values, list):
+        if spec is None or spec.parser_status == "layout_only" or not isinstance(values, list):
             skipped_count += 1
             continue
         _validate_sheet_row_width(tab, values, width=len(spec.headers))
@@ -1087,6 +1157,7 @@ def _build_sheet_body_clear_ranges(
             f"{_column_letter(len(spec.headers))}"
         )
         for spec in tab_specs
+        if spec.parser_status != "layout_only"
     )
 
 

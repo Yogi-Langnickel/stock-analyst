@@ -84,6 +84,28 @@ class WorkbookExportPlanTest(unittest.TestCase):
                 ),
             )
 
+    def test_plan_rejects_rows_for_layout_only_dashboard(self) -> None:
+        with self.assertRaisesRegex(
+            WorkbookExportPlanError,
+            r"workbook export row targets layout-only tab 'Navigation Dashboard'",
+        ):
+            WorkbookExportPlan(
+                issue_id="2026-W03",
+                pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+                external_services_enabled=False,
+                google_writes_enabled=False,
+                rows=(
+                    WorkbookDraftRow(
+                        tab="Navigation Dashboard",
+                        row_kind="dashboard",
+                        source_id="dashboard:2026-W03",
+                        issue_id="2026-W03",
+                        page=0,
+                        values=tuple("" for _ in headers_for("Navigation Dashboard")),
+                    ),
+                ),
+            )
+
     def test_pdf_plan_extracts_text_once_for_all_local_parsers(self) -> None:
         class StubExtractor:
             extractor_name = "stub"

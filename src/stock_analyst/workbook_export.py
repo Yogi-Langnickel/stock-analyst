@@ -1149,6 +1149,10 @@ def _validate_workbook_rows(rows: Sequence[WorkbookDraftRow]) -> None:
             raise WorkbookExportPlanError(
                 f"workbook export row targets unsupported tab {row.tab!r}"
             )
+        if spec.parser_status == "layout_only":
+            raise WorkbookExportPlanError(
+                f"workbook export row targets layout-only tab {row.tab!r}"
+            )
         expected_width = len(spec.headers)
         actual_width = len(row.values)
         if actual_width != expected_width:

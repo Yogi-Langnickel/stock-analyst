@@ -318,10 +318,32 @@ class GoogleAccessTest(unittest.TestCase):
         )
         values_body = sheets.spreadsheets_resource.values_resource.batch_update_requests[0]["body"]
         self.assertEqual(values_body["valueInputOption"], "RAW")
-        self.assertNotIn(
+        self.assertIn(
             {
-                "range": "'Navigation Dashboard'!A1:D1",
-                "values": [["Area", "Tab", "Purpose", "Status"]],
+                "range": "'Navigation Dashboard'!A5:G5",
+                "values": [[
+                    "Area",
+                    "Open",
+                    "What this tab is for",
+                    "Reviewer action",
+                    "Row count",
+                    "Status",
+                    "Notes",
+                ]],
+            },
+            values_body["data"],
+        )
+        self.assertIn(
+            {
+                "range": "'Navigation Dashboard'!A6",
+                "values": [["Core review"]],
+            },
+            values_body["data"],
+        )
+        self.assertIn(
+            {
+                "range": "'Navigation Dashboard'!B6",
+                "values": [["Stocks"]],
             },
             values_body["data"],
         )
@@ -385,7 +407,12 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(tab_status["Depot Transactions"], "parser_backed")
         self.assertEqual(tab_status["Chart Check"], "parser_backed")
         self.assertEqual(tab_status["Stock Quickcheck"], "parser_backed")
-        self.assertNotIn("Navigation Dashboard", tab_status)
+        self.assertEqual(tab_status["Navigation Dashboard"], "layout_only")
+        navigation_tab = next(tab for tab in result["tabs"] if tab["title"] == "Navigation Dashboard")
+        self.assertEqual(navigation_tab["headerRow"], 5)
+        self.assertEqual(navigation_tab["frozenRows"], 5)
+        self.assertEqual(navigation_tab["frozenColumns"], 2)
+        self.assertEqual(navigation_tab["tableStartsAt"], "A5")
         headers_by_tab = {tab["title"]: tab["headers"] for tab in result["tabs"]}
         self.assertEqual(headers_by_tab["Derivative Tips"][10], "Magazine Entry Price")
         self.assertEqual(headers_by_tab["Derivative Tips"][11], "Magazine Current Price")
@@ -472,8 +499,8 @@ class GoogleAccessTest(unittest.TestCase):
             for request in batch_body["requests"]
             if "deleteSheet" in request
         ]
-        self.assertEqual(result["deletedTabCount"], 2)
-        self.assertIn({"sheetId": 10}, delete_requests)
+        self.assertEqual(result["deletedTabCount"], 1)
+        self.assertNotIn({"sheetId": 10}, delete_requests)
         self.assertIn({"sheetId": 20}, delete_requests)
         self.assertNotIn({"sheetId": 30}, delete_requests)
 
@@ -525,9 +552,22 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["formatRulesWritten"], 7)
         self.assertEqual(len(delete_requests), 3)
         self.assertEqual(len(add_requests), 4)
-        self.assertIn({"sheetId": 3, "index": 0}, delete_requests)
-        self.assertIn({"sheetId": 4, "index": 1}, delete_requests)
-        self.assertIn({"sheetId": 4, "index": 0}, delete_requests)
+        sheet_ids_by_title = {
+            spec.title: index + 1
+            for index, spec in enumerate(DEFAULT_SHEET_TABS)
+        }
+        self.assertIn(
+            {"sheetId": sheet_ids_by_title["AKTIONAER Depot"], "index": 0},
+            delete_requests,
+        )
+        self.assertIn(
+            {"sheetId": sheet_ids_by_title["Depot Transactions"], "index": 1},
+            delete_requests,
+        )
+        self.assertIn(
+            {"sheetId": sheet_ids_by_title["Depot Transactions"], "index": 0},
+            delete_requests,
+        )
 
     def test_google_sheet_clear_data_rows_preserves_headers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -559,7 +599,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(result["headersRewritten"])
         self.assertEqual(result["clearedTabCount"], len(result["clearedRanges"]))
         self.assertIn("'Stocks'!A4:X", clear_ranges)
-        self.assertNotIn("'Navigation Dashboard'!A2:D", clear_ranges)
+        self.assertNotIn("'Navigation Dashboard'!A5:E", clear_ranges)
         self.assertGreater(len(values_resource.batch_update_requests), 0)
 
     def test_google_sheet_export_writes_workbook_rows_and_replaces_same_issue(self) -> None:
@@ -753,6 +793,39 @@ class GoogleAccessTest(unittest.TestCase):
                     workbook_plan,
                     sheets_service_factory=lambda: sheets,
                 )
+
+    def test_google_sheet_export_skips_layout_only_dashboard_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets({"spreadsheetId": config.sheets_spreadsheet_id, "sheets": []})
+            workbook_plan = {
+                "issueId": "2026-W03",
+                "rows": [
+                    {
+                        "tab": "Navigation Dashboard",
+                        "values": ["" for _ in range(7)],
+                    }
+                ],
+            }
+
+            result = write_workbook_plan_to_google_sheet(
+                config,
+                workbook_plan,
+                sheets_service_factory=lambda: sheets,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["rowsWritten"], 0)
+        self.assertEqual(result["rowsSkipped"], 1)
+        self.assertNotIn("Navigation Dashboard", result["tabsWritten"])
 
 
 if __name__ == "__main__":

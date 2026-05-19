@@ -90,11 +90,15 @@ Created: 2026-05-15
   index context, statistics, and broad constituent lists must not fan out into
   `Stocks`; parsed quick-check, chart-check, and other explicitly mentioned
   stock rows go there.
-- Active workbook tabs are pruned to data-backed surfaces only: `Stocks`,
-  `Derivative Tips`, `AKTIONAER Depot`, `Depot Transactions`, `Chart Check`,
-  `Stock Quickcheck`, `Dividend Focus`, and `Extraction Audit`. Planned tabs are
-  removed from the live workbook until they have real emitted rows; pruning is
-  limited to project-known generated tabs so manual user tabs survive.
+- Active workbook tabs are pruned to the layout-only `Navigation Dashboard`
+  plus data-backed surfaces: `Stocks`, `Derivative Tips`, `AKTIONAER Depot`,
+  `Depot Transactions`, `Chart Check`, `Stock Quickcheck`, `Dividend Focus`,
+  and `Extraction Audit`. Planned tabs are removed from the live workbook until
+  they have real emitted rows; pruning is limited to project-known generated
+  tabs so manual user tabs survive.
+- `Navigation Dashboard` is a static reviewer cockpit only. Do not emit
+  workbook rows to it, do not trigger enrichment from it, and preserve its body
+  rows during generated data clears.
 - Workbook identity rule: once a stock exists, later magazine mentions update
   the existing instrument row rather than append duplicates. Options and
   derivatives all live in `Derivative Tips` for now and are different: update

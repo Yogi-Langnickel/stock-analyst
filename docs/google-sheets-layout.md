@@ -11,13 +11,13 @@ family-facing output limited to approved rows.
 
 Target workbook name: `Der Aktionär Summaries`.
 
-The active workbook is currently trimmed to parser-backed, data-bearing tabs
-only. Older planned tabs such as `Navigation Dashboard`, `ETF`, `Commodities`,
-`Options`, `Crypto`, `Forex`, `Example Portfolios`, `Review Queue`,
-`Reviewed Magazine Mentions`, `Recommendation Cards`, and `Statistics Context`
-are intentionally pruned from Google Sheets until they have real emitted data.
-Bootstrap pruning is limited to tabs known to this project so manual user tabs
-are preserved.
+The active workbook is currently trimmed to the navigation dashboard plus
+parser-backed, data-bearing tabs. Older planned tabs such as `ETF`,
+`Commodities`, `Options`, `Crypto`, `Forex`, `Example Portfolios`,
+`Review Queue`, `Reviewed Magazine Mentions`, `Recommendation Cards`, and
+`Statistics Context` are intentionally pruned from Google Sheets until they
+have real emitted data. Bootstrap pruning is limited to tabs known to this
+project so manual user tabs are preserved.
 
 There is no separate `Options` tab for now. Calls, puts, discount calls, turbo
 long/short products, certificates, and derivative overview rows all use
@@ -25,7 +25,13 @@ long/short products, certificates, and derivative overview rows all use
 
 ## Active Tabs
 
-1. `Stocks`
+1. `Navigation Dashboard`
+   Low-clutter cockpit for the active workbook tabs. It groups the current tabs
+   into core instruments, derivatives, income, publisher portfolio, source
+   detail, and review control so the workbook has a stable entrypoint without
+   duplicating detailed financial rows.
+
+2. `Stocks`
    Canonical equity row per WKN/normalized company. Stock recommendation cards,
    `Aktien im Quick-Check`, and `Chart-Check` rows all surface here, with
    duplicate mentions consolidated and non-empty fields merged. The stock table
@@ -38,40 +44,40 @@ long/short products, certificates, and derivative overview rows all use
    `date updated`. `Current Price*` stays blank until a future enrichment job
    writes a provider-backed value.
 
-2. `Derivative Tips`
+3. `Derivative Tips`
    Unified detailed options/derivatives table. Issue and page are trailing
    provenance columns. New derivative recommendations use printed magazine
    values in `Magazine Entry Price` and `Magazine Current Price`; enrichment
    must not overwrite those source fields.
 
-3. `Dividend Focus`
+4. `Dividend Focus`
    Dedicated dividend section for table-based dividend data, including dividend
    yield, ex/cum date, next pay date, and payouts per year. Issue/page are
    trailing provenance columns.
 
-4. `AKTIONAER Depot`
+5. `AKTIONAER Depot`
    Dedicated magazine model-depot snapshot. One row per issue/position. This
    is publisher portfolio context, not direct app advice. Performance cells are
    conditionally formatted green for positive values and red for negative
    values.
 
-5. `Depot Transactions`
+6. `Depot Transactions`
    Dedicated ledger for `Durchgefuehrte Transaktionen`. One row per issue and
    transaction, including explicit no-transaction weeks. Performance cells use
    the same positive/negative conditional formatting as the depot tab.
 
-6. `Chart Check`
+7. `Chart Check`
    Dedicated traceability export for chart-check source rows, including the
    parsed table fields for magazine price, magazine recommendation price,
    target, stop, 52-week range, performance, dividend yield, and next report
    date. Parsed fields also surface into the matching `Stocks` row by
    WKN/normalized company while remaining `needs_review`.
 
-7. `Stock Quickcheck`
+8. `Stock Quickcheck`
    Dedicated normalized quick-check table with printed magazine price labels.
    Parsed rows also update the matching `Stocks` row by WKN/normalized company.
 
-8. `Extraction Audit`
+9. `Extraction Audit`
    Internal audit tab for skipped pages, low-priority back matter, OCR-needed
    pages, parser warnings, and row-level review notes.
 
@@ -84,6 +90,7 @@ the live Sheet; those should be added only after this layout is accepted.
 <!-- markdownlint-disable MD013 -->
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
+| `Navigation Dashboard` | `layout_only` | 4 rows, 2 cols | `A4` | Workbook title and static navigation rows | Entry dashboard based on the active tabs. Keep rows concise, source-neutral, and review-oriented; data clears preserve this layout. |
 | `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current Price*` is reserved for provider-backed enrichment and remains blank in local magazine-only plans; `Magazine Price` and `Magazine Price As Of` preserve the latest printed source price; `Price at Recommendation` preserves the printed recommendation price where available; includes market cap, P/S ratio, P/E ratio, Chance/Risk, dividend yield, chart fields, and comments where available; `date updated` is the last row field. |
 | `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Printed source prices use `Magazine Entry Price` and `Magazine Current Price`; source ID stays in row metadata; visible provenance is trailing issue/page columns. |
 | `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; printed source prices use `Magazine Buy Price` and `Magazine Current Price`; performance cells are green for positive values and red for negative values. |
