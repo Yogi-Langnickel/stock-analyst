@@ -317,7 +317,7 @@ class GoogleAccessTest(unittest.TestCase):
             batch_body["requests"],
         )
         values_body = sheets.spreadsheets_resource.values_resource.batch_update_requests[0]["body"]
-        self.assertEqual(values_body["valueInputOption"], "RAW")
+        self.assertEqual(values_body["valueInputOption"], "USER_ENTERED")
         self.assertIn(
             {
                 "range": "'Navigation Dashboard'!A5:G5",
@@ -344,6 +344,13 @@ class GoogleAccessTest(unittest.TestCase):
             {
                 "range": "'Navigation Dashboard'!B6",
                 "values": [["Stocks"]],
+            },
+            values_body["data"],
+        )
+        self.assertIn(
+            {
+                "range": "'Navigation Dashboard'!E6",
+                "values": [["=COUNTA('Stocks'!A4:A)"]],
             },
             values_body["data"],
         )

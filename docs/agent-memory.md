@@ -98,7 +98,8 @@ Created: 2026-05-15
   tabs so manual user tabs survive.
 - `Navigation Dashboard` is a static reviewer cockpit only. Do not emit
   workbook rows to it, do not trigger enrichment from it, and preserve its body
-  rows during generated data clears.
+  rows during generated data clears. Its row-count cells are spreadsheet
+  formulas over active tab data ranges only.
 - Workbook identity rule: once a stock exists, later magazine mentions update
   the existing instrument row rather than append duplicates. Options and
   derivatives all live in `Derivative Tips` for now and are different: update
