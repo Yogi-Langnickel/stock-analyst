@@ -166,6 +166,12 @@ Created: 2026-05-15
   Structured cache records can persist provider response payloads with
   credential-free metadata, freshness fields, source URL hashes, and terms
   review fields; raw provider URLs and API keys must not be stored.
+- SEC EDGAR Form 4 is the preferred planned insider-activity enrichment source
+  for US-listed stocks already present in `Stocks`. It requires an identifying
+  `SEC_USER_AGENT`, ticker-to-CIK mapping, SEC submissions/Form 4 XML parsing,
+  source filing URLs, conservative caching, and explicit not-covered handling
+  for non-US or unresolved companies. Finviz is comparison/reference only, not
+  the automated source of record.
 - Manual review remains mandatory before family-visible digest rows or exports.
 - Next real-corpus unblock is user-provided private PDFs from the last two years
   in ignored local `data/private/issues/` or a private Drive folder. Local

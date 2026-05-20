@@ -25,6 +25,7 @@ the provider's ticker format.
 | `finnhub` | Metadata and dry-run planner only | `FINNHUB_API_KEY`; `FINNHUB_SECRET` kept private but unused by REST planner | No | Analyst, insider, earnings, quote, news, and sentiment context planning |
 | `fmp` | Metadata and dry-run planner only | `FMP_API_KEY` | No | Optional future Financial Modeling Prep quote/profile/fundamentals context |
 | `sec_companyfacts` | Metadata only | No key; `SEC_USER_AGENT` before live access | No | Optional future US issuer fundamentals and filing metadata |
+| `sec_edgar_form4` | Planned | No key; `SEC_USER_AGENT` before live access | No | Preferred official source for US insider activity from Form 4 filings |
 
 `STOCK_ANALYST_MARKET_DATA_PROVIDER` defaults to `disabled`. Selecting
 `stooq_csv` only enables parsing caller-supplied CSV text; it does not fetch
@@ -84,9 +85,14 @@ because adapters, cache policy, throttling, and terms checks are not complete.
    - Keep a hard planning budget of 235 calls/day and plan against a
      512MB/month bandwidth ceiling before live access.
 
-8. SEC companyfacts and filings
-   - Official free source for US fundamentals and filing metadata.
-   - Use for issuer/company context, not price validation.
+8. SEC companyfacts and Form 4 filings
+   - Official free source for US fundamentals, filing metadata, and insider
+     transaction filings.
+   - Use companyfacts for slow-moving issuer/company context, not price
+     validation.
+   - Use Form 4 filings as the preferred insider-activity source for US-listed
+     stocks already present in the workbook. Non-US companies will usually not
+     have SEC insider filings and must be marked as not covered.
 
 ## Current Provider Notes
 
@@ -116,11 +122,14 @@ because adapters, cache policy, throttling, and terms checks are not complete.
   dry-run planning only. Treat the configured limit as a hard 235 calls/day
   budget with a 512MB/month bandwidth planning note until live terms, endpoint
   weights, caching, and accounting are reviewed.
-- SEC companyfacts: the official SEC API exposes
+- SEC companyfacts and submissions: the official SEC API exposes
   `data.sec.gov/api/xbrl/companyfacts/CIK##########.json`, bulk companyfacts ZIP
-  data, and real-time API updates. SEC fair-access guidance limits each user to
-  no more than 10 requests per second and requires efficient, identified
-  automated access. Sources:
+  data, `data.sec.gov/submissions/CIK##########.json`, and real-time API
+  updates. The submissions endpoint includes recent filing metadata, which can
+  be filtered for `form == "4"` before fetching source Form 4 XML documents
+  from the SEC Archives. SEC fair-access guidance limits each user to no more
+  than 10 requests per second and requires efficient, identified automated
+  access. Sources:
   <https://www.sec.gov/search-filings/edgar-application-programming-interfaces>
   and <https://www.sec.gov/about/developer-resources>.
 - Stooq CSV: keep as the first no-key parser for reviewer-supplied CSV text.
@@ -150,6 +159,10 @@ because adapters, cache policy, throttling, and terms checks are not complete.
 8. Mark unavailable or ambiguous market rows as `needs_review`; never infer a
    missing price, stop loss, target, ticker, ISIN, WKN, or recommendation.
 9. Add provider terms/rate-limit notes before enabling network calls.
+10. Add SEC EDGAR Form 4 insider enrichment before relying on third-party
+    insider APIs for US-listed stocks. Require `SEC_USER_AGENT`, ticker-to-CIK
+    cache, 24-hour submissions cache, SEC filing URL evidence, and explicit
+    not-covered handling for non-US or unresolved companies.
 
 ## Enrichment Signal Plan
 
@@ -159,7 +172,7 @@ recommendations, target prices, stop prices, or WKN/source fields.
 | Signal | Primary source | Fallback source | Notes |
 | --- | --- | --- | --- |
 | Analyst consensus | Finnhub recommendation trends; Twelve Data recommendations/analyst ratings | Alpha Vantage analyst/intelligence endpoints if quota allows | Store consensus date and source; stale consensus is still useful but must be labelled. |
-| Insider buying | Finnhub insider sentiment or insider transactions | Alpha Vantage insider transactions; Twelve Data insider transactions if plan allows | Summarize recent net buying/selling, not individual advice. |
+| Insider buying | SEC EDGAR Form 4 for US-listed stocks | Finnhub insider sentiment/transactions; Alpha Vantage or Twelve Data insider transactions if plan allows | Prefer official Form 4 transaction code `P` open-market purchases first. Summarize recent net buying/selling as context only; non-US issuers may be not covered. |
 | Earnings surprise | Finnhub earnings surprises; Twelve Data earnings | Alpha Vantage earnings history/calendar | Keep estimate, actual, surprise percent, and event date. |
 | Sentiment trend | Finnhub company news/sentiment; Alpha Vantage news sentiment | Local magazine mention trend | Cache aggressively; do not call news endpoints for every stock daily. |
 | Volatility regime | Twelve Data ATR/standard deviation/time series | Alpha Vantage technical indicators | Can be calculated locally from cached OHLCV. |

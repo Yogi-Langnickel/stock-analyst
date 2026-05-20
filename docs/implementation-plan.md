@@ -73,6 +73,10 @@ Recommended initial shape:
 - Exports: Google Sheets API with idempotent row IDs.
 - Enrichment: RSS/API first. Scrapling only as a controlled, allowlisted
   enrichment adapter for company/news context.
+- Insider activity enrichment: use official SEC EDGAR Form 4 filings as the
+  preferred automated source for US-listed companies. Finviz can remain a
+  human-readable comparison page, but must not become the production ingestion
+  dependency.
 
 Recommended Drive/Lambda/local split:
 
@@ -102,6 +106,15 @@ Free market-data enrichment is documented in
 `docs/free-market-data-options.md`. It remains disabled by default, cannot
 overwrite magazine-extracted values, and must mark missing or ambiguous provider
 data as reviewer-gated rather than inferred.
+
+SEC EDGAR insider enrichment is stock-only and downstream of magazine
+extraction. It should only inspect companies already present in the `Stocks`
+tab/export rows, resolve US tickers to CIKs, fetch recent Form 4 filings, parse
+transaction code `P` open-market purchases first, and write source-linked rows
+to a dedicated `Insider Activity` review tab before any compact summary is
+mirrored back into `Stocks`. Non-US issuers and US issuers without reliable
+ticker/CIK mapping must be marked as not covered or `needs_review`, not inferred
+from unrelated providers.
 
 Do not defer the frontend decision past PDF intake. Build and test the first
 intake UI alongside upload validation so accessibility and recovery behavior are
@@ -418,6 +431,44 @@ Acceptance:
 - No paywall, CAPTCHA, login, stealth, or proxy bypass is used.
 - Source URLs are retained for reviewer inspection.
 - Source allowlist, rate limit, and owner are documented.
+
+### 8a. SEC EDGAR Insider Activity Enrichment
+
+1. Add a no-key SEC EDGAR provider for stock-only insider activity.
+1. Add required `SEC_USER_AGENT` configuration before any live SEC request.
+   The value must identify the app and provide a contact email.
+1. Cache the SEC ticker-to-CIK map from
+   `https://www.sec.gov/files/company_tickers.json` under ignored local cache
+   storage, with a weekly or monthly refresh cadence.
+1. For each magazine-backed `Stocks` row with a reliable US ticker, fetch
+   `https://data.sec.gov/submissions/CIK##########.json` and filter recent
+   `form == "4"` submissions.
+1. Download and parse the filing XML from the SEC Archives URL built from CIK,
+   accession number, and primary document.
+1. Initially classify only transaction code `P` as clean open-market insider
+   buying. Record other transaction codes as ignored or review-only until their
+   semantics are deliberately implemented.
+1. Store individual source-linked rows in a dedicated `Insider Activity` tab:
+   company, ticker, CIK, insider name, relationship, transaction date, code,
+   direction, shares, price, value, shares owned after, filing date, SEC filing
+   URL, signal, and `date updated`.
+1. Later mirror only a compact reviewer-context summary back into `Stocks`,
+   such as latest insider buy date, 90-day buy value, 90-day buy count, and
+   insider signal.
+1. Use a conservative request budget: cache submissions per CIK for at least
+   24 hours, cache the ticker map, inspect only a recent window such as 90 days,
+   and stay well below SEC fair-access limits.
+
+Acceptance:
+
+- No SEC request is made without an identifying `SEC_USER_AGENT`.
+- Live SEC enrichment only reads magazine-backed `Stocks` rows.
+- Non-US companies and unresolved ticker/CIK mappings are explicitly marked as
+  not covered or `needs_review`.
+- Every insider signal links back to the SEC filing URL.
+- Insider activity is labelled external context and never changes magazine
+  recommendation, target, stop, WKN, or printed price fields.
+- Finviz is not used as the automated source of record.
 
 ### 9. Family Access
 
