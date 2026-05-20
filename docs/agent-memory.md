@@ -49,12 +49,15 @@ Created: 2026-05-15
   AKTIONAER depot positions, depot transactions, chart-check pages,
   quick-check tables, statistics context, and low-priority back matter with
   suggested Google Sheet destinations.
-- Normal magazine scan policy skips the first five `Inhalt`/front-matter pages
-  and cuts normal processing after the first detected `Statistik` body section.
-  Keep the `Statistik` page itself as context; back matter after it is excluded
-  unless a manual override is introduced later. Repeated page-corner/running
-  header labels such as `Inhalt` or `Statistik` are not section markers by
-  themselves.
+- Normal OCR/cost-control scan policy skips the first five
+  `Inhalt`/front-matter pages and cuts remote/OCR planning after the first
+  detected `Statistik` body section. Keep the `Statistik` page itself as
+  context; back matter after it is excluded unless a manual override is
+  introduced later. Repeated page-corner/running header labels such as `Inhalt`
+  or `Statistik` are not section markers by themselves. Local workbook export
+  still scans non-front-matter embedded text across the whole issue so
+  later explicit sections such as Chart Check, Quick Check, and depot tables
+  are not dropped.
 - Remote OCR planning has a 900-page monthly budget guard. Provider adapters
   must block or require manual approval above that budget before making Google
   Vision calls.
@@ -107,6 +110,10 @@ Created: 2026-05-15
   call or put for the same underlying is a new row when the derivative WKN/ISIN
   differs. Depot snapshots and transactions remain issue/event-specific history
   rows.
+- Google Sheets export now also applies the `Stocks` identity rule against
+  existing sheet rows across prior issues by WKN, falling back to normalized
+  company name when WKN is missing. It merges issue/page provenance rather than
+  appending duplicate stock rows.
 - Stock rows use English sheet labels. `Dividendenrendite` maps to
   `Dividend Yield`, `KUV 26e` maps to `P/S Ratio 26e`, `KGV 26e` maps to
   `P/E Ratio 26e`, `Marktkap.` / `Marktkapitalisierung` maps to `Market Cap`,

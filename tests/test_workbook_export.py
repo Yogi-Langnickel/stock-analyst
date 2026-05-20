@@ -9,6 +9,7 @@ from stock_analyst.depot_tables import DepotPositionRow, DepotTransactionRow
 from stock_analyst.derivative_tables import DerivativeOverviewRow
 from stock_analyst.extraction import RawPageText
 from stock_analyst.google_access import DEFAULT_SHEET_TABS
+from stock_analyst.processing_policy import MagazineProcessingPolicy
 from stock_analyst.recommendation_cards import RecommendationCard
 from stock_analyst.quickcheck import QuickcheckRow
 from stock_analyst.schemas import InstrumentType, ReviewStatus
@@ -157,7 +158,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
             {"Extraction Audit": 1, "Stocks": 1},
         )
 
-    def test_pdf_plan_skips_front_matter_and_pages_after_statistics(self) -> None:
+    def test_pdf_plan_skips_front_matter_but_keeps_later_explicit_sections(self) -> None:
         class StubExtractor:
             extractor_name = "stub"
 
@@ -190,11 +191,39 @@ class WorkbookExportPlanTest(unittest.TestCase):
         result = plan.to_dict()
         stock_rows = [row for row in result["rows"] if row["tab"] == "Stocks"]
 
-        self.assertEqual(len(stock_rows), 1)
+        self.assertEqual(len(stock_rows), 2)
         self.assertEqual(stock_rows[0]["values"][0], "Useful AG")
         self.assertEqual(stock_rows[0]["page"], 6)
+        self.assertEqual(stock_rows[1]["values"][0], "Back Matter AG")
+        self.assertEqual(stock_rows[1]["page"], 8)
         self.assertNotIn("Front Matter AG", json.dumps(result))
-        self.assertNotIn("Back Matter AG", json.dumps(result))
+
+    def test_pdf_plan_can_still_use_strict_statistics_cutoff_policy(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(page_number=6, text="\n".join(("Aktie", "Useful AG", "WKN", "USE123"))),
+                    RawPageText(page_number=7, text="\n".join(("Statistik", "Die Woche im Überblick", "Indizes"))),
+                    RawPageText(page_number=8, text="\n".join(("Aktie", "Back Matter AG", "WKN", "BCK123"))),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_03.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+
+            plan = build_workbook_export_plan_from_pdf(
+                pdf,
+                extractor=StubExtractor(),
+                processing_policy=MagazineProcessingPolicy(),
+            )
+
+        stock_rows = [row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks"]
+
+        self.assertEqual(len(stock_rows), 1)
+        self.assertEqual(stock_rows[0]["values"][0], "Useful AG")
+        self.assertNotIn("Back Matter AG", json.dumps(plan.to_dict()))
 
     def test_pdf_plan_uses_filename_issue_date_for_stock_update_date(self) -> None:
         class StubExtractor:
@@ -975,6 +1004,52 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(values[19], "02/2026 30.12.25")
         self.assertIn("Rekordhoch", values[20])
         self.assertEqual(values[22], "42, 90")
+
+    def test_consolidates_wkn_less_stock_mentions_by_normalized_name(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            stock_update_date="2026-05-17",
+            quickcheck_rows=(
+                QuickcheckRow(
+                    issue_id="2026-W03",
+                    page=90,
+                    instrument="ACME Energy",
+                    wkn="",
+                    current_price="10,00 EUR",
+                    recommendation_price="8,00 EUR",
+                    recommended_issue="01/26",
+                    performance_since_recommendation="+25,0 %",
+                    target="12,00 EUR",
+                    stop="7,00 EUR",
+                    comment="Quick-check comment.",
+                ),
+                QuickcheckRow(
+                    issue_id="2026-W03",
+                    page=91,
+                    instrument="Acme-Energy",
+                    wkn="",
+                    current_price="10,50 EUR",
+                    recommendation_price="",
+                    recommended_issue="",
+                    performance_since_recommendation="+31,3 %",
+                    target="12,50 EUR",
+                    stop="",
+                    comment="Follow-up wording.",
+                ),
+            ),
+        )
+
+        stock_rows = [row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks"]
+
+        self.assertEqual(len(stock_rows), 1)
+        values = stock_rows[0]["values"]
+        self.assertEqual(values[0], "ACME Energy")
+        self.assertEqual(values[3], "10,50 EUR")
+        self.assertEqual(values[11], "12,50 EUR")
+        self.assertIn("Quick-check comment.", values[20])
+        self.assertIn("Follow-up wording.", values[20])
+        self.assertEqual(values[22], "90, 91")
 
     def test_routes_chart_check_rows_to_dedicated_tab(self) -> None:
         plan = build_workbook_export_plan(

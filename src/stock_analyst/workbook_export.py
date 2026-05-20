@@ -37,7 +37,6 @@ from stock_analyst.extraction import RawTextExtractor, extract_pdf_text
 from stock_analyst.google_access import DEFAULT_SHEET_TABS
 from stock_analyst.intake import guess_issue_date
 from stock_analyst.processing_policy import (
-    DEFAULT_MAGAZINE_PROCESSING_POLICY,
     MagazineProcessingPolicy,
     filter_magazine_processing_pages,
 )
@@ -60,6 +59,7 @@ from stock_analyst.section_inventory import (
 
 
 MANUAL_REVIEW_WARNING = "manual_review_required_before_family_visible_export"
+WORKBOOK_EXPORT_PROCESSING_POLICY = MagazineProcessingPolicy(cut_after_statistics=False)
 
 
 class WorkbookExportPlanError(ValueError):
@@ -147,7 +147,7 @@ def build_workbook_export_plan_from_pdf(
     min_embedded_chars: int = 40,
     import_date: date | str | None = None,
     current_utc_date: date | str | None = None,
-    processing_policy: MagazineProcessingPolicy = DEFAULT_MAGAZINE_PROCESSING_POLICY,
+    processing_policy: MagazineProcessingPolicy = WORKBOOK_EXPORT_PROCESSING_POLICY,
 ) -> WorkbookExportPlan:
     """Build a dry-run workbook row plan from local embedded PDF text."""
 
@@ -865,7 +865,11 @@ def _stock_identity_key(values: Sequence[str]) -> str:
     if wkn:
         return f"wkn:{wkn.casefold()}"
     name = values[0].strip() if values else ""
-    return f"name:{name.casefold()}"
+    return f"name:{_normalize_stock_name(name)}"
+
+
+def _normalize_stock_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
 
 def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) -> WorkbookDraftRow:

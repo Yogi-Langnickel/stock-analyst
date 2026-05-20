@@ -975,7 +975,11 @@ def write_workbook_plan_to_google_sheet(
                 ]
             )
             restored_existing_count += len(kept_rows)
-            combined_rows = kept_rows + new_rows
+            combined_rows = (
+                _merge_stock_sheet_rows(kept_rows + new_rows, spec=spec)
+                if tab == "Stocks"
+                else kept_rows + new_rows
+            )
             if replace_issue:
                 sheets.spreadsheets().values().clear(
                     spreadsheetId=config.sheets_spreadsheet_id,
@@ -1281,6 +1285,147 @@ def _normalize_sheet_row_values(values: list[object], *, width: int) -> list[str
     if len(row) < width:
         row.extend("" for _ in range(width - len(row)))
     return row
+
+
+def _merge_stock_sheet_rows(
+    rows: list[list[str]],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> list[list[str]]:
+    grouped: dict[str, list[str]] = {}
+    order: list[str] = []
+    for row in rows:
+        key = _stock_sheet_identity_key(row, spec=spec)
+        if key not in grouped:
+            grouped[key] = row
+            order.append(key)
+            continue
+        grouped[key] = _merge_stock_sheet_row(grouped[key], row, spec=spec)
+    return [grouped[key] for key in order]
+
+
+def _stock_sheet_identity_key(row: list[str], *, spec: GoogleSheetTabSpec) -> str:
+    wkn = _row_value_by_header(row, spec, "WKN")
+    if wkn:
+        return f"wkn:{wkn.casefold()}"
+    company = _row_value_by_header(row, spec, "Company")
+    return f"name:{re.sub(r'[^a-z0-9]+', '', company.casefold())}"
+
+
+def _merge_stock_sheet_row(
+    existing: list[str],
+    incoming: list[str],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> list[str]:
+    values = list(existing)
+    latest_wins_headers = {
+        "Current Price*",
+        "Magazine Price",
+        "Magazine Price As Of",
+        "Price at Recommendation",
+        "Dividend Yield",
+        "Market Cap",
+        "Chance/Risk",
+        "P/S Ratio 26e",
+        "P/E Ratio 26e",
+        "Target",
+        "Stop",
+        "Performance since Recommendation",
+        "52w High",
+        "52w Low",
+        "1Y Performance",
+        "5Y Performance",
+        "Next Report",
+        "date updated",
+    }
+    fill_only_headers = {
+        "Company",
+        "WKN",
+    }
+    for header in latest_wins_headers:
+        _copy_stock_sheet_value(values, incoming, spec, header, overwrite=True)
+    for header in fill_only_headers:
+        _copy_stock_sheet_value(values, incoming, spec, header, overwrite=False)
+
+    recommendation_index = _header_index(spec, "Recommendation")
+    if recommendation_index is not None and incoming[recommendation_index]:
+        current = values[recommendation_index]
+        candidate = incoming[recommendation_index]
+        if not current or _looks_like_richer_sheet_recommendation(candidate, current):
+            values[recommendation_index] = candidate
+
+    comment_index = _header_index(spec, "Comment")
+    if comment_index is not None:
+        values[comment_index] = _join_unique_sheet_values(
+            (values[comment_index], incoming[comment_index]),
+            separator=" | ",
+        )
+
+    issue_index = _header_index(spec, "issue")
+    if issue_index is not None:
+        values[issue_index] = _join_unique_sheet_values(
+            (values[issue_index], incoming[issue_index]),
+            separator=", ",
+        )
+
+    page_index = _header_index(spec, "page")
+    if page_index is not None:
+        values[page_index] = _join_unique_sheet_values(
+            (values[page_index], incoming[page_index]),
+            separator=", ",
+        )
+
+    return values
+
+
+def _copy_stock_sheet_value(
+    values: list[str],
+    incoming: list[str],
+    spec: GoogleSheetTabSpec,
+    header: str,
+    *,
+    overwrite: bool,
+) -> None:
+    index = _header_index(spec, header)
+    if index is None or not incoming[index]:
+        return
+    if overwrite or not values[index]:
+        values[index] = incoming[index]
+
+
+def _row_value_by_header(row: list[str], spec: GoogleSheetTabSpec, header: str) -> str:
+    index = _header_index(spec, header)
+    if index is None or index >= len(row):
+        return ""
+    return row[index].strip()
+
+
+def _header_index(spec: GoogleSheetTabSpec, header: str) -> int | None:
+    for index, candidate in enumerate(spec.headers):
+        if candidate == header:
+            return index
+    return None
+
+
+def _looks_like_richer_sheet_recommendation(candidate: str, current: str) -> bool:
+    return (
+        bool(re.search(r"\d{2}\.\d{2}\.\d{2,4}", candidate)),
+        len(candidate),
+    ) > (
+        bool(re.search(r"\d{2}\.\d{2}\.\d{2,4}", current)),
+        len(current),
+    )
+
+
+def _join_unique_sheet_values(values: tuple[str, ...], *, separator: str) -> str:
+    result: list[str] = []
+    for value in values:
+        for part in value.split(separator):
+            stripped = part.strip()
+            if stripped and stripped not in result:
+                result.append(stripped)
+    return separator.join(result)
 
 
 def _validate_sheet_row_width(tab: str, values: list[object], *, width: int) -> None:

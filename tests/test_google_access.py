@@ -684,6 +684,32 @@ class GoogleAccessTest(unittest.TestCase):
                     "1",
                     "2026-05-10",
                 ],
+                [
+                    "Banco Sabadell",
+                    "A0MRD4",
+                    "2,90 EUR",
+                    "",
+                    "",
+                    "2,50 EUR",
+                    "16,0 %",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "3,50 EUR",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "02/2026 07.01.26",
+                    "Previous comment",
+                    "2026-W02",
+                    "20",
+                    "2026-05-10",
+                ],
             ]
             workbook_plan = {
                 "issueId": "2026-W03",
@@ -697,7 +723,7 @@ class GoogleAccessTest(unittest.TestCase):
                             "3,33 EUR",
                             "2026-05-17",
                             "3,33 EUR",
-                            "",
+                            "18,6 %",
                             "",
                             "",
                             "",
@@ -758,6 +784,14 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn("Dividend Focus", result["clearedTabs"])
         self.assertEqual(stocks_write["values"][0][0], "Keep Different Issue")
         self.assertEqual(stocks_write["values"][1][0], "Banco Sabadell")
+        self.assertEqual(stocks_write["values"][1][2], "2,90 EUR")
+        self.assertEqual(stocks_write["values"][1][3], "3,33 EUR")
+        self.assertEqual(stocks_write["values"][1][5], "3,33 EUR")
+        self.assertEqual(stocks_write["values"][1][6], "18,6 %")
+        self.assertEqual(stocks_write["values"][1][11], "4,30 EUR")
+        self.assertIn("Previous comment", stocks_write["values"][1][20])
+        self.assertEqual(stocks_write["values"][1][21], "2026-W02, 2026-W03")
+        self.assertEqual(stocks_write["values"][1][22], "20, 22")
         self.assertIn("'Stocks'!A4:X", [request["range"] for request in values_resource.clear_requests])
 
     def test_google_sheet_export_rejects_short_rows(self) -> None:
