@@ -93,6 +93,7 @@ class GoogleSheetTabSpec:
 
 DATA_BACKED_TAB_TITLES = {
     "Navigation Dashboard",
+    "Refinement",
     "Stocks",
     "Derivative Tips",
     "AKTIONAER Depot",
@@ -183,6 +184,37 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Preserve this layout during data clears because it contains static navigation rows.",
         ),
         parser_status="layout_only",
+    ),
+    GoogleSheetTabSpec(
+        "Refinement",
+        (
+            "Page_number",
+            "section",
+            "page_titel",
+            "useful_info",
+            "suggested_destination",
+            "parser_hint",
+            "reason",
+            "reviewer_notes",
+            "issue",
+            "date_updated",
+        ),
+        "Page-by-page reviewer classification map for parser refinement.",
+        header_row=3,
+        metadata_cells=(
+            ("A1", "Der Aktionär Summaries"),
+            ("A2", "Refinement"),
+            ("B2", "Review and correct page classification before parser tuning."),
+        ),
+        frozen_rows=3,
+        frozen_columns=1,
+        table_starts_at="A3",
+        layout_notes=(
+            "Reviewer-facing page map; use this to decide which pages feed which parsers.",
+            "The assistant seeds all rows, then reviewer_notes can be filled manually.",
+            "This tab is not an investment-row export and does not trigger enrichment.",
+        ),
+        parser_status="parser_backed",
     ),
     GoogleSheetTabSpec(
         "Stocks",
@@ -1030,6 +1062,96 @@ def write_workbook_plan_to_google_sheet(
     }
 
 
+def write_refinement_plan_to_google_sheet(
+    config: GoogleAccessConfig,
+    refinement_plan: Mapping[str, object],
+    *,
+    sheets_service_factory=None,
+    tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
+) -> dict[str, object]:
+    """Write page-by-page refinement rows into the configured Sheet."""
+
+    if sheets_service_factory is None:
+        _drive_service_factory, sheets_service_factory = _google_service_factories(config)
+
+    issue_id = str(refinement_plan.get("issueId") or "").strip()
+    raw_rows = refinement_plan.get("rows")
+    if not issue_id:
+        raise GoogleAccessError("refinement plan is missing issueId")
+    if not isinstance(raw_rows, list):
+        raise GoogleAccessError("refinement plan is missing rows list")
+
+    spec = next((candidate for candidate in tab_specs if candidate.title == "Refinement"), None)
+    if spec is None:
+        raise GoogleAccessError("Refinement tab spec is not configured")
+
+    rows = [
+        _refinement_row_values(raw_row, spec=spec)
+        for raw_row in raw_rows
+        if isinstance(raw_row, Mapping)
+    ]
+    rows.sort(key=_refinement_page_sort_key)
+
+    sheets = sheets_service_factory()
+    bootstrap_result = bootstrap_google_sheet(
+        config,
+        sheets_service_factory=sheets_service_factory,
+        tab_specs=tab_specs,
+        write_headers=True,
+    )
+    body_start = spec.header_row + 1
+    body_range = f"{_quote_sheet_title(spec.title)}!A{body_start}:{_column_letter(len(spec.headers))}"
+
+    try:
+        existing_rows = [
+            _normalize_sheet_row_values(row, width=len(spec.headers))
+            for row in _sheet_values_get(
+                sheets,
+                spreadsheet_id=config.sheets_spreadsheet_id,
+                range_name=body_range,
+            )
+        ]
+        rows = _preserve_refinement_reviewer_notes(rows, existing_rows, spec=spec)
+        sheets.spreadsheets().values().clear(
+            spreadsheetId=config.sheets_spreadsheet_id,
+            range=body_range,
+            body={},
+        ).execute()
+        if rows:
+            sheets.spreadsheets().values().batchUpdate(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                body={
+                    "valueInputOption": "RAW",
+                    "data": [
+                        {
+                            "range": (
+                                f"{_quote_sheet_title(spec.title)}!A{body_start}:"
+                                f"{_column_letter(len(spec.headers))}"
+                                f"{body_start + len(rows) - 1}"
+                            ),
+                            "values": rows,
+                        }
+                    ],
+                },
+            ).execute()
+    except Exception as error:
+        raise GoogleAccessError(
+            "Google Sheets refinement export failed. Verify network access, API enablement, "
+            "service-account sheet sharing, and configured spreadsheet ID."
+        ) from error
+
+    return {
+        "ok": True,
+        "externalServicesEnabled": True,
+        "spreadsheetId": config.sheets_spreadsheet_id,
+        "issueId": issue_id,
+        "tabWritten": spec.title,
+        "rowsWritten": len(rows),
+        "reviewerNotesPreserved": _count_non_empty_reviewer_notes(rows, spec=spec),
+        "bootstrap": bootstrap_result,
+    }
+
+
 def list_drive_pdf_metadata(
     config: GoogleAccessConfig,
     *,
@@ -1285,6 +1407,59 @@ def _normalize_sheet_row_values(values: list[object], *, width: int) -> list[str
     if len(row) < width:
         row.extend("" for _ in range(width - len(row)))
     return row
+
+
+def _refinement_row_values(
+    raw_row: Mapping[str, object],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> list[str]:
+    values = [str(raw_row.get(header) or "") for header in spec.headers]
+    _validate_sheet_row_width(spec.title, values, width=len(spec.headers))
+    return values
+
+
+def _refinement_page_sort_key(row: list[str]) -> tuple[int, str]:
+    try:
+        return int(row[0]), row[0]
+    except (TypeError, ValueError):
+        return 10**9, row[0] if row else ""
+
+
+def _preserve_refinement_reviewer_notes(
+    rows: list[list[str]],
+    existing_rows: list[list[str]],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> list[list[str]]:
+    page_index = _header_index(spec, "Page_number")
+    notes_index = _header_index(spec, "reviewer_notes")
+    if page_index is None or notes_index is None:
+        return rows
+    existing_notes_by_page = {
+        row[page_index].strip(): row[notes_index].strip()
+        for row in existing_rows
+        if page_index < len(row) and notes_index < len(row) and row[notes_index].strip()
+    }
+    merged_rows: list[list[str]] = []
+    for row in rows:
+        merged = list(row)
+        page = merged[page_index].strip()
+        if not merged[notes_index].strip() and page in existing_notes_by_page:
+            merged[notes_index] = existing_notes_by_page[page]
+        merged_rows.append(merged)
+    return merged_rows
+
+
+def _count_non_empty_reviewer_notes(
+    rows: list[list[str]],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> int:
+    notes_index = _header_index(spec, "reviewer_notes")
+    if notes_index is None:
+        return 0
+    return sum(1 for row in rows if notes_index < len(row) and row[notes_index].strip())
 
 
 def _merge_stock_sheet_rows(

@@ -12,6 +12,7 @@ from stock_analyst.google_access import (
     load_env_file,
     load_google_access_config,
     run_google_access_smoke,
+    write_refinement_plan_to_google_sheet,
     write_workbook_plan_to_google_sheet,
     write_drive_pdf_metadata_manifest,
 )
@@ -867,6 +868,86 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["rowsWritten"], 0)
         self.assertEqual(result["rowsSkipped"], 1)
         self.assertNotIn("Navigation Dashboard", result["tabsWritten"])
+
+    def test_google_sheet_refinement_export_writes_page_map_and_preserves_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [{"properties": {"title": "Refinement"}}],
+                }
+            )
+            sheets.spreadsheets_resource.values_resource.values_by_range["'Refinement'!A4:J"] = [
+                [
+                    "18",
+                    "Dividenden",
+                    "Old title",
+                    "yes",
+                    "Dividend Focus",
+                    "",
+                    "",
+                    "Keep this page",
+                    "2026-W03",
+                    "2026-05-19",
+                ]
+            ]
+            refinement_plan = {
+                "issueId": "2026-W03",
+                "rows": [
+                    {
+                        "Page_number": "18",
+                        "section": "Dividenden",
+                        "page_titel": "Dividendenstrategie",
+                        "useful_info": "yes",
+                        "suggested_destination": "Dividend Focus",
+                        "parser_hint": "section_inventory:dividend_strategy",
+                        "reason": "Dividend table with payout timing.",
+                        "reviewer_notes": "",
+                        "issue": "2026-W03",
+                        "date_updated": "2026-05-20",
+                    },
+                    {
+                        "Page_number": "1",
+                        "section": "Inhalt/front-matter",
+                        "page_titel": "Inhalt",
+                        "useful_info": "no",
+                        "suggested_destination": "review",
+                        "parser_hint": "ignore_or_manual_review",
+                        "reason": "Early front matter.",
+                        "reviewer_notes": "",
+                        "issue": "2026-W03",
+                        "date_updated": "2026-05-20",
+                    },
+                ],
+            }
+
+            result = write_refinement_plan_to_google_sheet(
+                config,
+                refinement_plan,
+                sheets_service_factory=lambda: sheets,
+            )
+
+        values_resource = sheets.spreadsheets_resource.values_resource
+        data = values_resource.batch_update_requests[-1]["body"]["data"][0]
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["tabWritten"], "Refinement")
+        self.assertEqual(result["rowsWritten"], 2)
+        self.assertEqual(result["reviewerNotesPreserved"], 1)
+        self.assertEqual(data["range"], "'Refinement'!A4:J5")
+        self.assertEqual(data["values"][0][0], "1")
+        self.assertEqual(data["values"][1][0], "18")
+        self.assertEqual(data["values"][1][7], "Keep this page")
+        self.assertIn("'Refinement'!A4:J", [request["range"] for request in values_resource.clear_requests])
 
 
 if __name__ == "__main__":

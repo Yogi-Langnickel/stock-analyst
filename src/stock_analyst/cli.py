@@ -18,6 +18,7 @@ from stock_analyst.google_access import (
     clear_google_sheet_data_rows,
     load_google_access_config,
     run_google_access_smoke,
+    write_refinement_plan_to_google_sheet,
     write_workbook_plan_to_google_sheet,
     write_drive_pdf_metadata_manifest,
 )
@@ -50,6 +51,7 @@ from stock_analyst.pipeline import (
 )
 from stock_analyst.quality_report import build_extraction_quality_report
 from stock_analyst.quickcheck import extract_quickcheck_rows_from_page_lines
+from stock_analyst.refinement import build_refinement_plan_from_pdf
 from stock_analyst.recommendation_cards import extract_recommendation_cards_from_pdf
 from stock_analyst.review_queue import build_review_queue_from_manifest
 from stock_analyst.section_inventory import build_section_inventory_from_pdf
@@ -273,6 +275,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
     )
     workbook_export_plan.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
+    )
+
+    refinement_plan = subcommands.add_parser(
+        "refinement-plan",
+        help="Build a page-by-page refinement classification plan without writing to Sheets.",
+    )
+    refinement_plan.add_argument("pdf", type=Path)
+    refinement_plan.add_argument(
+        "--issue-id",
+        default=None,
+        help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
+    )
+    refinement_plan.add_argument(
         "--min-embedded-chars",
         type=int,
         default=40,
@@ -513,6 +532,29 @@ def build_parser() -> argparse.ArgumentParser:
         "--append",
         action="store_true",
         help="Append rows instead of replacing existing rows for the same issue.",
+    )
+
+    google_sheets_refinement = subcommands.add_parser(
+        "google-sheets-refinement",
+        help="Create/populate the Refinement tab from a local PDF page map.",
+    )
+    google_sheets_refinement.add_argument("pdf", type=Path)
+    google_sheets_refinement.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Optional local env file with GOOGLE_* config. Do not commit it.",
+    )
+    google_sheets_refinement.add_argument(
+        "--issue-id",
+        default=None,
+        help="Override issue ID. Defaults to DA_YYYY_week filename parsing.",
+    )
+    google_sheets_refinement.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
     )
 
     return parser
@@ -766,6 +808,22 @@ def run_workbook_export_plan(
     return plan.to_dict()
 
 
+def run_refinement_plan(
+    pdf_path: Path,
+    *,
+    issue_id: str | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    current_utc_date = datetime.now(timezone.utc).date()
+    plan = build_refinement_plan_from_pdf(
+        pdf_path,
+        issue_id=issue_id,
+        min_embedded_chars=min_embedded_chars,
+        current_utc_date=current_utc_date,
+    )
+    return plan.to_dict()
+
+
 def run_visual_ocr_review(
     pdf_path: Path,
     *,
@@ -951,6 +1009,23 @@ def run_google_sheets_export_plan_command(
     )
 
 
+def run_google_sheets_refinement_command(
+    pdf_path: Path,
+    *,
+    env_file: Path | None = None,
+    issue_id: str | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    config = load_google_access_config(env_file=env_file)
+    refinement_plan = build_refinement_plan_from_pdf(
+        pdf_path,
+        issue_id=issue_id,
+        min_embedded_chars=min_embedded_chars,
+        current_utc_date=datetime.now(timezone.utc).date(),
+    )
+    return write_refinement_plan_to_google_sheet(config, refinement_plan.to_dict())
+
+
 def _market_data_plan_to_dict(
     plan: MarketDataEnrichmentPlan,
     config: MarketDataPlanningConfig,
@@ -1087,6 +1162,12 @@ def main(argv: list[str] | None = None) -> int:
                 issue_id=args.issue_id,
                 min_embedded_chars=args.min_embedded_chars,
             )
+        elif args.command == "refinement-plan":
+            result = run_refinement_plan(
+                args.pdf,
+                issue_id=args.issue_id,
+                min_embedded_chars=args.min_embedded_chars,
+            )
         elif args.command == "visual-ocr-review":
             selected_pages = parse_page_selection(args.pages)
             if args.page:
@@ -1144,6 +1225,13 @@ def main(argv: list[str] | None = None) -> int:
                 args.workbook_plan_file,
                 env_file=args.env_file,
                 replace_issue=not args.append,
+            )
+        elif args.command == "google-sheets-refinement":
+            result = run_google_sheets_refinement_command(
+                args.pdf,
+                env_file=args.env_file,
+                issue_id=args.issue_id,
+                min_embedded_chars=args.min_embedded_chars,
             )
         else:
             parser.error(f"Unsupported command: {args.command}")

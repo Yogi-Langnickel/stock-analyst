@@ -27,6 +27,7 @@ Usage:
   scripts/stock-analyst test
   scripts/stock-analyst cli <stock_analyst.cli args...>
   scripts/stock-analyst workbook-export-plan <pdf> [args...]
+  scripts/stock-analyst refinement-plan <pdf> [args...]
   scripts/stock-analyst recommendation-cards <pdf> [args...]
   scripts/stock-analyst section-inventory <pdf> [args...]
   scripts/stock-analyst dividend-strategy <pdf> [args...]
@@ -39,6 +40,7 @@ Usage:
   scripts/stock-analyst market-symbol-map-template --workbook-plan-file path --output path
   scripts/stock-analyst google-sheets-clear-data [--env-file .env]
   scripts/stock-analyst google-sheets-export-plan <workbook-plan.json> [--env-file .env]
+  scripts/stock-analyst google-sheets-refinement <pdf> [--env-file .env]
   scripts/stock-analyst python <python args...>
 
 The wrapper prefers .venv/bin/python when present. It does not need shell
@@ -70,7 +72,7 @@ case "${COMMAND}" in
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "$@"
     ;;
-  workbook-export-plan|recommendation-cards|section-inventory|dividend-strategy|quick-check|chart-check|visual-ocr-review|ocr-fixture-plan|ocr-needed|market-data-plan|market-symbol-map-template|process-pdf|import-pdf-folder|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap|google-sheets-clear-data|google-sheets-export-plan)
+  workbook-export-plan|refinement-plan|recommendation-cards|section-inventory|dividend-strategy|quick-check|chart-check|visual-ocr-review|ocr-fixture-plan|ocr-needed|market-data-plan|market-symbol-map-template|process-pdf|import-pdf-folder|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap|google-sheets-clear-data|google-sheets-export-plan|google-sheets-refinement)
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "${COMMAND}" "$@"
     ;;
