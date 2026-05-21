@@ -138,6 +138,20 @@ Created: 2026-05-15
 - A page-by-page extraction map would help define which pages/sections populate
   which tabs and fields. Treat it as parser training/review guidance, not
   manual data entry.
+- `Refinement` tab writes must preserve reviewer-owned columns for existing
+  page rows: section, page title, useful-info, suggested destination, and
+  reviewer notes. Regeneration may update parser hints/reasons/date metadata,
+  but must not wipe completed manual review fields.
+- 2026-05-21 full-issue `Refinement` review confirmed that page labels are
+  issue-specific training signals, not page-number rules. General recognition
+  rules: compact ad-marker pages, cover/editorial/front matter, books,
+  impressum/last-page, social-media filler, generic crypto/forex/commodity/ETF
+  surfaces, and index-only pages are normally not useful extraction rows unless
+  a focused parser later owns them; explicit section markers such as
+  title-story, news, statistics, Dax/Wall-Street/Rohstoff checks, chart-check,
+  and quick-check should beat generic financial keywords. Generic stock/title
+  story/derivative pages need stronger extraction signals before marking
+  `useful_info=yes`.
 - Local visual review is available through `scripts/stock-analyst
   visual-ocr-review`. It renders selected pages to ignored private PNG
   artifacts using PyMuPDF and can optionally run local Tesseract OCR. Command

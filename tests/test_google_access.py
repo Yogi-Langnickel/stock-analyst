@@ -869,7 +869,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["rowsSkipped"], 1)
         self.assertNotIn("Navigation Dashboard", result["tabsWritten"])
 
-    def test_google_sheet_refinement_export_writes_page_map_and_preserves_notes(self) -> None:
+    def test_google_sheet_refinement_export_preserves_reviewer_owned_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
             credentials_path.write_text("{}", encoding="utf-8")
@@ -889,10 +889,10 @@ class GoogleAccessTest(unittest.TestCase):
             sheets.spreadsheets_resource.values_resource.values_by_range["'Refinement'!A4:J"] = [
                 [
                     "18",
-                    "Dividenden",
-                    "Old title",
-                    "yes",
-                    "Dividend Focus",
+                    "Titelstory",
+                    "Reviewed title",
+                    "no",
+                    "",
                     "",
                     "",
                     "Keep this page",
@@ -943,9 +943,14 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["tabWritten"], "Refinement")
         self.assertEqual(result["rowsWritten"], 2)
         self.assertEqual(result["reviewerNotesPreserved"], 1)
+        self.assertEqual(result["reviewerFieldsPreserved"], 1)
         self.assertEqual(data["range"], "'Refinement'!A4:J5")
         self.assertEqual(data["values"][0][0], "1")
         self.assertEqual(data["values"][1][0], "18")
+        self.assertEqual(data["values"][1][1], "Titelstory")
+        self.assertEqual(data["values"][1][2], "Reviewed title")
+        self.assertEqual(data["values"][1][3], "no")
+        self.assertEqual(data["values"][1][4], "")
         self.assertEqual(data["values"][1][7], "Keep this page")
         self.assertIn("'Refinement'!A4:J", [request["range"] for request in values_resource.clear_requests])
 
