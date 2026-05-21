@@ -167,7 +167,7 @@ def _section_for_page(
         return "Cover"
     if _contains_any(lines[:8], ("Editorial",)):
         return "Editorial"
-    if page_number <= 5 or _contains_any(lines[:8], ("Inhalt",)):
+    if page_number <= 5 or _contains_heading(lines[:8], ("Inhalt",)):
         return "Inhalt/front-matter"
     explicit_section = _explicit_section_for_page(lines)
     if explicit_section:
@@ -337,15 +337,15 @@ def _reason_for_page(
     candidates: Sequence[MagazineSectionCandidate],
 ) -> str:
     if section == "Cover":
-        return "Cover page is normally not useful for extraction."
+        return "Cover page normally has no explicit recommendation row to extract."
     if section == "Editorial":
-        return "Editorial/front matter is normally not useful for extraction."
+        return "Editorial/front matter normally has no explicit recommendation row to extract."
     if section == "Werbung":
-        return "Advertising or promotional page; do not extract investment rows."
+        return "Advertising or promotional page; do not extract recommendation rows automatically."
     if section in {"Bücher", "Impressum", "Letzte Seite", "Social Media Weekly", "AKTIONÄR-Indizes"}:
-        return "Reviewer-seeded non-digest surface; do not extract investment rows automatically."
+        return "Reviewer-seeded surface without explicit recommendation rows for the current workbook."
     if page_number <= 5:
-        return "Early front matter is normally not useful for extraction."
+        return "Early front matter normally has no explicit recommendation row to extract."
     if candidates:
         return "; ".join(_unique(candidate.reason for candidate in candidates))
     if section == "back-matter":
@@ -353,9 +353,9 @@ def _reason_for_page(
     if section == "unknown":
         return "No reliable parser marker found in embedded text."
     if section == "News":
-        return "Reviewer-confirmed news surface; use as a manual classification seed."
+        return "Reviewer-confirmed news surface with explicit extractable recommendation context."
     if section == "Titelstory":
-        return "Reviewer-confirmed title-story surface; route explicit instruments to Stocks."
+        return "Reviewer-confirmed title-story surface; route only explicit recommendations/instruments to Stocks."
     return f"Keyword-based first-pass classification as {section}."
 
 
@@ -461,6 +461,11 @@ def _looks_like_title(line: str, section: str) -> bool:
 def _contains_any(lines: Sequence[str], needles: Sequence[str]) -> bool:
     text = "\n".join(lines).casefold()
     return any(needle.casefold() in text for needle in needles)
+
+
+def _contains_heading(lines: Sequence[str], headings: Sequence[str]) -> bool:
+    normalized_headings = {heading.casefold() for heading in headings}
+    return any(line.strip().casefold() in normalized_headings for line in lines)
 
 
 def _unique(values: Sequence[str] | object) -> tuple[str, ...]:

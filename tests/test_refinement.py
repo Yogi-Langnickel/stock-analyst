@@ -214,6 +214,31 @@ class RefinementPlanTest(unittest.TestCase):
         self.assertEqual(rows[2]["useful_info"], "no")
         self.assertEqual(rows[2]["parser_hint"], "future_parser_needed")
 
+    def test_article_without_explicit_recommendation_is_not_extractable(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                article_lines = [
+                    "Aktie",
+                    "Ein redaktioneller Marktbericht mit Unternehmenserwaehnungen.",
+                    "Der Text kann inhaltlich lesenswert sein.",
+                ] + [f"Absatz {number}" for number in range(60)]
+                return (RawPageText(page_number=44, text="\n".join(article_lines)),)
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_03.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            row = build_refinement_plan_from_pdf(
+                pdf,
+                extractor=StubExtractor(),
+                current_utc_date="2026-05-22",
+            ).to_dict()["rows"][0]
+
+        self.assertEqual(row["section"], "Aktien")
+        self.assertEqual(row["useful_info"], "no")
+        self.assertEqual(row["suggested_destination"], "")
+
     def test_front_stock_and_depot_pages_require_different_evidence(self) -> None:
         class StubExtractor:
             extractor_name = "stub"

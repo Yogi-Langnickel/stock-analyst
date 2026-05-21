@@ -142,6 +142,11 @@ Created: 2026-05-15
   page rows: section, page title, useful-info, suggested destination, and
   reviewer notes. Regeneration may update parser hints/reasons/date metadata,
   but must not wipe completed manual review fields.
+- In the `Refinement` tab, `useful_info` means useful for extraction into
+  workbook rows because the page contains explicit recommendations,
+  instruments, tables, or row-level fields. `useful_info=no` does not mean the
+  page has no article value; it means no explicit extractable
+  recommendation/instrument row should be generated from that page.
 - 2026-05-21 full-issue `Refinement` review confirmed that page labels are
   issue-specific training signals, not page-number rules. General recognition
   rules: compact ad-marker pages, cover/editorial/front matter, books,

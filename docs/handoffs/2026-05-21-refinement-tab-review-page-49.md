@@ -12,8 +12,12 @@ exports to the repo.
 
 ## Recognition Updates
 
+- `useful_info` means useful for extraction into workbook rows, not useful as
+  article content. A page can contain a real article and still be
+  `useful_info=no` when it has no explicit recommendations, instruments,
+  tables, or row-level fields to extract.
 - `Cover`, `Editorial`, `Inhalt/front-matter`, and `Werbung` should be treated
-  as non-useful for investment-row extraction.
+  as having no explicit recommendation row for investment-row extraction.
 - `Bücher`, `Impressum`, `Letzte Seite`, social-media filler, index-only pages,
   and generic future-parser surfaces such as crypto/forex/commodity/ETF should
   not be marked useful unless a focused parser later owns them.
