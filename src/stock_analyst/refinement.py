@@ -139,8 +139,8 @@ def _classify_page(
         page_number=page_number,
     )
     section = _section_for_page(page_number, normalized_lines, candidates)
-    suggested_destination = _suggested_destination(section, candidates)
     useful_info = _useful_info(page_number, section, candidates, normalized_lines)
+    suggested_destination = _suggested_destination(section, candidates, normalized_lines, useful_info)
     parser_hint = _parser_hint(section, candidates)
     reason = _reason_for_page(page_number, section, candidates)
 
@@ -169,17 +169,19 @@ def _section_for_page(
         return "Editorial"
     if page_number <= 5 or _contains_any(lines[:8], ("Inhalt",)):
         return "Inhalt/front-matter"
-    if _looks_like_ad_page(lines):
-        return "Werbung"
     explicit_section = _explicit_section_for_page(lines)
     if explicit_section:
         return explicit_section
+    if _looks_like_ad_page(lines):
+        return "Werbung"
     if _contains_any(lines, ("Titelstory", "Titelthema", "Titel-Story")):
         return "Titelstory"
     if candidates:
         return SECTION_LABELS.get(candidates[0].section_kind, candidates[0].section_kind.value)
     if _contains_any(lines, ("Kryptow", "Bitcoin", "Ethereum", "Krypto")):
         return "Kryptowährungen"
+    if _contains_any(lines[:10], ("Derivate", "Zertifikat", "Hebel")):
+        return "Derivate"
     if _contains_any(lines, ("Aktie", "Hot-Stock")):
         return "Aktien"
     if _contains_any(lines, ("Dividende", "Dividendenrendite", "Ausschüttung")):
@@ -206,10 +208,22 @@ def _section_for_page(
 def _suggested_destination(
     section: str,
     candidates: Sequence[MagazineSectionCandidate],
+    lines: Sequence[str],
+    useful_info: str,
 ) -> str:
+    if section in {"Cover", "Editorial", "Inhalt/front-matter"}:
+        return "review"
+    if section == "Titelstory":
+        return "Stocks"
+    if useful_info == "no":
+        return ""
     destinations = {
-        "Aktien": "Stocks",
-        "Titelstory": "Stocks",
+        "Aktien": (
+            "Stocks / Derivative"
+            if _has_stock_extraction_signal(lines) and _count_any(lines, ("Call", "Put", "Zertifikat", "Hebel", "Basispreis", "Omega")) >= 4
+            else "Stocks"
+        ),
+        "AKTIONAER Depot": "Stocks",
         "Dividenden": "Dividend Focus",
         "Derivate": "Derivative Tips",
         "Kryptowährungen": "",
@@ -217,12 +231,14 @@ def _suggested_destination(
         "Forex": "",
         "ETF/Fonds": "",
         "chart-check": "Stocks",
-        "Chart der Woche": "Stocks",
+        "Chart der Woche": "Derivative Tips",
         "Dax-Check": "Stocks",
-        "Wall-Street-Check": "Stocks",
+        "Wall-Street-Check": (
+            "Derivative Tips / Stocks" if _count_any(lines, ("Call", "Put", "Zertifikat", "Hebel", "Basispreis", "Omega")) >= 3 else "Stocks"
+        ),
         "Rohstoff-Check": "Derivative Tips",
         "Quick-Check": "Stocks",
-        "Statistik": "Stocks",
+        "Statistik": _statistics_destination(lines),
         "AKTIONÄR-Indizes": "",
         "News": "",
         "Werbung": "",
@@ -276,9 +292,17 @@ def _useful_info(
         "Rohstoff-Check",
         "Quick-Check",
     }:
+        if section == "News" and page_number > 15:
+            return "no"
         return "yes"
-    if section in {"Aktien", "Titelstory", "Dividenden", "Derivate"}:
-        return "yes" if _has_extraction_signal(lines) else "no"
+    if section == "AKTIONAER Depot":
+        return "yes" if _has_stock_extraction_signal(lines) or _has_derivative_extraction_signal(lines) else "no"
+    if section == "Aktien":
+        return "yes" if _is_front_stock_context(page_number, lines) or _has_stock_extraction_signal(lines) else "no"
+    if section in {"Titelstory", "Dividenden"}:
+        return "yes" if _has_stock_extraction_signal(lines) else "no"
+    if section == "Derivate":
+        return "yes" if _has_derivative_extraction_signal(lines) else "no"
     return "yes"
 
 
@@ -341,16 +365,17 @@ def _explicit_section_for_page(lines: Sequence[str]) -> str:
         ("News", ("News", "Meldungen", "Kurzmeldungen")),
         ("Dividenden", ("Dividendenstrategie", "Dividenden-Strategie")),
         ("Social Media Weekly", ("Social Media Weekly",)),
-        ("AKTIONÄR-Indizes", ("AKTIONÄR-Indizes", "AKTIONAER-Indizes", "DER AKTIONÄR-Indizes")),
+        ("Statistik", ("Statistik",)),
+        ("AKTIONAER Depot", ("AKTIONÄR Depot", "AKTIONAER Depot", "AKTIONÄR-Depot", "AKTIONAER-Depot")),
         ("Chart der Woche", ("Chart der Woche",)),
         ("Dax-Check", ("Dax-Check", "DAX-Check")),
         ("Wall-Street-Check", ("Wall-Street-Check",)),
         ("Rohstoff-Check", ("Rohstoff-Check",)),
         ("Quick-Check", ("Aktien im Quick-Check", "Quick-Check", "Quickcheck")),
+        ("AKTIONÄR-Indizes", ("AKTIONÄR-Indizes", "AKTIONAER-Indizes", "DER AKTIONÄR-Indizes")),
         ("Bücher", ("Bücher", "Buchtipp", "Buchtipps")),
         ("Impressum", ("Impressum",)),
         ("Letzte Seite", ("Letzte Seite",)),
-        ("Statistik", ("Statistik",)),
     )
     top_lines = lines[:20]
     for section, markers in checks:
@@ -367,27 +392,35 @@ def _looks_like_ad_page(lines: Sequence[str]) -> bool:
     return len(lines) <= 35
 
 
-def _has_extraction_signal(lines: Sequence[str]) -> bool:
-    return _contains_any(
-        lines,
-        (
-            "WKN",
-            "ISIN",
-            "Kursziel",
-            "Stopp",
-            "Stop",
-            "Chance",
-            "Risiko",
-            "Marktkap",
-            "KGV",
-            "KUV",
-            "Dividendenrendite",
-            "Basispreis",
-            "Omega",
-            "Hebel",
-            "Zertifikat",
-        ),
-    )
+def _is_front_stock_context(page_number: int, lines: Sequence[str]) -> bool:
+    return page_number <= 12 and len(lines) >= 35 and _contains_any(lines, ("Aktie", "Hot-Stock"))
+
+
+def _has_stock_extraction_signal(lines: Sequence[str]) -> bool:
+    has_identifier = _contains_any(lines, ("WKN", "ISIN"))
+    has_recommendation = _contains_any(lines, ("Kursziel", "Marktkap", "Dividendenrendite", "KGV", "KUV"))
+    has_quality_pair = _contains_any(lines, ("Chance", "Risiko")) and _count_any(lines, ("Chance", "Risiko")) >= 2
+    return (has_identifier and (has_recommendation or has_quality_pair)) or _contains_any(lines, ("Kursziel",))
+
+
+def _has_derivative_extraction_signal(lines: Sequence[str]) -> bool:
+    derivative_markers = _count_any(lines, ("Call", "Put", "Zertifikat", "Hebel", "Basispreis", "Omega"))
+    return _contains_any(lines, ("WKN", "ISIN", "Basispreis", "Omega")) and derivative_markers >= 4
+
+
+def _statistics_destination(lines: Sequence[str]) -> str:
+    if _contains_any(lines[:40], ("ETF", "Fonds")):
+        return "ETF"
+    if _contains_any(lines, ("Devisen", "Forex", "Währung")):
+        return "Forex (devisen)"
+    if _count_any(lines, ("Index", "Indizes", "Hebel", "Zertifikat")) >= 8:
+        return "Index"
+    return "Stocks"
+
+
+def _count_any(lines: Sequence[str], needles: Sequence[str]) -> int:
+    text = "\n".join(lines).casefold()
+    return sum(text.count(needle.casefold()) for needle in needles)
 
 
 def _page_title(lines: Sequence[str], section: str) -> str:

@@ -151,7 +151,10 @@ Created: 2026-05-15
   title-story, news, statistics, Dax/Wall-Street/Rohstoff checks, chart-check,
   and quick-check should beat generic financial keywords. Generic stock/title
   story/derivative pages need stronger extraction signals before marking
-  `useful_info=yes`.
+  `useful_info=yes`. On the reviewed issue, a 2026-05-22 follow-up refinement
+  reached exact useful-info agreement with reviewer labels without hard-coding
+  page numbers; remaining section differences are mostly blank reviewer labels
+  versus coarse non-useful local labels.
 - Local visual review is available through `scripts/stock-analyst
   visual-ocr-review`. It renders selected pages to ignored private PNG
   artifacts using PyMuPDF and can optionally run local Tesseract OCR. Command

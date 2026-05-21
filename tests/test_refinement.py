@@ -214,6 +214,38 @@ class RefinementPlanTest(unittest.TestCase):
         self.assertEqual(rows[2]["useful_info"], "no")
         self.assertEqual(rows[2]["parser_hint"], "future_parser_needed")
 
+    def test_front_stock_and_depot_pages_require_different_evidence(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                front_stock_lines = ["Aktie", "Marktueberblick"] + [f"Absatz {number}" for number in range(40)]
+                return (
+                    RawPageText(page_number=10, text="\n".join(front_stock_lines)),
+                    RawPageText(page_number=68, text="AKTIONÄR Depot\nHebel\nAnzeige"),
+                    RawPageText(
+                        page_number=69,
+                        text="AKTIONÄR Depot\nWKN ABC123\nKursziel 42 Euro\nStopp 30 Euro",
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_03.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            rows = build_refinement_plan_from_pdf(
+                pdf,
+                extractor=StubExtractor(),
+                current_utc_date="2026-05-22",
+            ).to_dict()["rows"]
+
+        self.assertEqual(rows[0]["section"], "Aktien")
+        self.assertEqual(rows[0]["useful_info"], "yes")
+        self.assertEqual(rows[1]["section"], "AKTIONAER Depot")
+        self.assertEqual(rows[1]["useful_info"], "no")
+        self.assertEqual(rows[2]["section"], "AKTIONAER Depot")
+        self.assertEqual(rows[2]["useful_info"], "yes")
+        self.assertEqual(rows[2]["suggested_destination"], "Stocks")
+
 
 if __name__ == "__main__":
     unittest.main()

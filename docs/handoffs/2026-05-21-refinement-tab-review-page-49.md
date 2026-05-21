@@ -35,9 +35,14 @@ exports to the repo.
 - The sheet read used reviewed classification fields and formatting metadata
   only for parser-recognition learning; no private row text, page titles,
   reviewer notes, spreadsheet IDs, or extracted article text was committed.
-- Full-issue comparison after the update reduced mismatch counts on the reviewed
-  issue from 67 to 20 for section labels, 31 to 17 for useful-info, and 94 to
-  30 for suggested destination.
+- Full-issue comparison after the first update reduced mismatch counts on the
+  reviewed issue from 67 to 20 for section labels, 31 to 17 for useful-info,
+  and 94 to 30 for suggested destination.
+- A follow-up refinement pass on 2026-05-22 reduced the same comparison to 16
+  section-label mismatches, 0 useful-info mismatches, and 5 suggested-destination
+  mismatches. Remaining section differences are mostly blank reviewer labels
+  versus coarse non-useful local labels; avoid hard-coding page numbers to erase
+  those.
 - `google-sheets-refinement` now preserves reviewer-owned fields for existing
   page rows: section, page title, useful-info, suggested destination, and
   reviewer notes.
