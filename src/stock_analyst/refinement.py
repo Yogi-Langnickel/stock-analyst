@@ -35,7 +35,7 @@ SECTION_LABELS = {
     MagazineSectionKind.AKTIONAER_DEPOT_POSITIONS: "AKTIONAER Depot",
     MagazineSectionKind.AKTIONAER_DEPOT_TRANSACTIONS: "Depot Transactions",
     MagazineSectionKind.CHART_CHECK: "chart-check",
-    MagazineSectionKind.QUICK_CHECK: "Aktien Quickcheck",
+    MagazineSectionKind.QUICK_CHECK: "Quick-Check",
     MagazineSectionKind.STATISTICS_CONTEXT: "Statistik",
     MagazineSectionKind.LOW_PRIORITY_BACK_MATTER: "back-matter",
 }
@@ -139,8 +139,8 @@ def _classify_page(
         page_number=page_number,
     )
     section = _section_for_page(page_number, normalized_lines, candidates)
-    suggested_destination = _suggested_destination(section, candidates)
-    useful_info = _useful_info(page_number, section, candidates)
+    useful_info = _useful_info(page_number, section, candidates, normalized_lines)
+    suggested_destination = _suggested_destination(section, candidates, normalized_lines, useful_info)
     parser_hint = _parser_hint(section, candidates)
     reason = _reason_for_page(page_number, section, candidates)
 
@@ -163,25 +163,40 @@ def _section_for_page(
     lines: Sequence[str],
     candidates: Sequence[MagazineSectionCandidate],
 ) -> str:
-    if page_number <= 5 or _contains_any(lines[:8], ("Inhalt", "Editorial")):
+    if page_number == 1:
+        return "Cover"
+    if _contains_any(lines[:8], ("Editorial",)):
+        return "Editorial"
+    if page_number <= 5 or _contains_heading(lines[:8], ("Inhalt",)):
         return "Inhalt/front-matter"
+    explicit_section = _explicit_section_for_page(lines)
+    if explicit_section:
+        return explicit_section
+    if _looks_like_ad_page(lines):
+        return "Werbung"
+    if _contains_any(lines, ("Titelstory", "Titelthema", "Titel-Story")):
+        return "Titelstory"
     if candidates:
         return SECTION_LABELS.get(candidates[0].section_kind, candidates[0].section_kind.value)
     if _contains_any(lines, ("Kryptow", "Bitcoin", "Ethereum", "Krypto")):
         return "Kryptowährungen"
-    if _contains_any(lines, ("Derivate", "Call", "Put", "Zertifikat", "Hebel")):
+    if _contains_any(lines[:10], ("Derivate", "Zertifikat", "Hebel")):
         return "Derivate"
+    if _contains_any(lines, ("Aktie", "Hot-Stock")):
+        return "Aktien"
     if _contains_any(lines, ("Dividende", "Dividendenrendite", "Ausschüttung")):
         return "Dividenden"
+    if _contains_any(lines, ("Derivate", "Call", "Put", "Zertifikat", "Hebel", "Basispreis", "Omega")):
+        return "Derivate"
     if _contains_any(lines, ("Rohstoff", "Gold", "Silber", "Kupfer", "Öl")):
         return "Rohstoffe"
-    if _contains_any(lines, ("Währung", "Euro", "Dollar", "Devisen", "Forex")):
+    if _contains_any(lines, ("Währung", "Devisen", "Forex")):
         return "Forex"
     if _contains_any(lines, ("Fonds", "ETF")):
         return "ETF/Fonds"
     if _contains_any(lines, ("Chart-Check", "52-Wochen-Hoch", "52-Wochen-Tief")):
         return "chart-check"
-    if _contains_any(lines, ("Aktie", "Hot-Stock", "Kursziel", "WKN")):
+    if _contains_any(lines, ("Kursziel", "WKN")):
         return "Aktien"
     if _contains_any(lines, ("Statistik", "52-Wochen", "Indizes")):
         return "Statistik"
@@ -193,37 +208,101 @@ def _section_for_page(
 def _suggested_destination(
     section: str,
     candidates: Sequence[MagazineSectionCandidate],
+    lines: Sequence[str],
+    useful_info: str,
 ) -> str:
-    if candidates:
-        return "; ".join(_unique(candidate.suggested_sheet for candidate in candidates))
+    if section in {"Cover", "Editorial", "Inhalt/front-matter"}:
+        return "review"
+    if section == "Titelstory":
+        return "Stocks"
+    if useful_info == "no":
+        return ""
     destinations = {
-        "Aktien": "Stocks",
+        "Aktien": (
+            "Stocks / Derivative"
+            if _has_stock_extraction_signal(lines) and _count_any(lines, ("Call", "Put", "Zertifikat", "Hebel", "Basispreis", "Omega")) >= 4
+            else "Stocks"
+        ),
+        "AKTIONAER Depot": "Stocks",
         "Dividenden": "Dividend Focus",
         "Derivate": "Derivative Tips",
-        "Kryptowährungen": "future Crypto",
-        "Rohstoffe": "future Commodities",
-        "Forex": "future Forex",
-        "ETF/Fonds": "future ETF",
-        "chart-check": "Chart Check",
-        "Aktien Quickcheck": "Stock Quickcheck",
-        "Statistik": "Extraction Audit",
+        "Kryptowährungen": "",
+        "Rohstoffe": "",
+        "Forex": "",
+        "ETF/Fonds": "",
+        "chart-check": "Stocks",
+        "Chart der Woche": "Derivative Tips",
+        "Dax-Check": "Stocks",
+        "Wall-Street-Check": (
+            "Derivative Tips / Stocks" if _count_any(lines, ("Call", "Put", "Zertifikat", "Hebel", "Basispreis", "Omega")) >= 3 else "Stocks"
+        ),
+        "Rohstoff-Check": "Derivative Tips",
+        "Quick-Check": "Stocks",
+        "Statistik": _statistics_destination(lines),
+        "AKTIONÄR-Indizes": "",
+        "News": "",
+        "Werbung": "",
+        "Bücher": "",
+        "Impressum": "",
+        "Letzte Seite": "",
+        "Social Media Weekly": "",
     }
-    return destinations.get(section, "review")
+    if section in destinations:
+        return destinations[section]
+    if candidates:
+        return "; ".join(_unique(candidate.suggested_sheet for candidate in candidates))
+    return "review"
 
 
 def _useful_info(
     page_number: int,
     section: str,
     candidates: Sequence[MagazineSectionCandidate],
+    lines: Sequence[str],
 ) -> str:
+    if section in {
+        "Cover",
+        "Editorial",
+        "Inhalt/front-matter",
+        "Werbung",
+        "Bücher",
+        "Impressum",
+        "Letzte Seite",
+        "Social Media Weekly",
+        "AKTIONÄR-Indizes",
+        "Kryptowährungen",
+        "Rohstoffe",
+        "Forex",
+        "ETF/Fonds",
+    }:
+        return "no"
     if page_number <= 5:
         return "no"
     if candidates and any(candidate.priority in {"high", "medium"} for candidate in candidates):
         return "yes"
-    if section in {"back-matter", "Inhalt/front-matter", "unknown"}:
+    if section in {"back-matter", "unknown"}:
         return "no"
-    if section == "Statistik":
+    if section in {
+        "News",
+        "Statistik",
+        "chart-check",
+        "Chart der Woche",
+        "Dax-Check",
+        "Wall-Street-Check",
+        "Rohstoff-Check",
+        "Quick-Check",
+    }:
+        if section == "News" and page_number > 15:
+            return "no"
         return "yes"
+    if section == "AKTIONAER Depot":
+        return "yes" if _has_stock_extraction_signal(lines) or _has_derivative_extraction_signal(lines) else "no"
+    if section == "Aktien":
+        return "yes" if _is_front_stock_context(page_number, lines) or _has_stock_extraction_signal(lines) else "no"
+    if section in {"Titelstory", "Dividenden"}:
+        return "yes" if _has_stock_extraction_signal(lines) else "no"
+    if section == "Derivate":
+        return "yes" if _has_derivative_extraction_signal(lines) else "no"
     return "yes"
 
 
@@ -234,7 +313,18 @@ def _parser_hint(
     if candidates:
         kinds = ", ".join(_unique(candidate.section_kind.value for candidate in candidates))
         return f"section_inventory:{kinds}"
-    if section.startswith("future "):
+    if section in {
+        "Cover",
+        "Editorial",
+        "Werbung",
+        "Bücher",
+        "Impressum",
+        "Letzte Seite",
+        "Social Media Weekly",
+        "AKTIONÄR-Indizes",
+    }:
+        return "ignore_or_manual_review"
+    if section in {"Kryptowährungen", "Rohstoffe", "Forex"}:
         return "future_parser_needed"
     if section in {"back-matter", "Inhalt/front-matter", "unknown"}:
         return "ignore_or_manual_review"
@@ -246,15 +336,91 @@ def _reason_for_page(
     section: str,
     candidates: Sequence[MagazineSectionCandidate],
 ) -> str:
+    if section == "Cover":
+        return "Cover page normally has no explicit recommendation row to extract."
+    if section == "Editorial":
+        return "Editorial/front matter normally has no explicit recommendation row to extract."
+    if section == "Werbung":
+        return "Advertising or promotional page; do not extract recommendation rows automatically."
+    if section in {"Bücher", "Impressum", "Letzte Seite", "Social Media Weekly", "AKTIONÄR-Indizes"}:
+        return "Reviewer-seeded surface without explicit recommendation rows for the current workbook."
     if page_number <= 5:
-        return "Early front matter is normally not useful for extraction."
+        return "Early front matter normally has no explicit recommendation row to extract."
     if candidates:
         return "; ".join(_unique(candidate.reason for candidate in candidates))
     if section == "back-matter":
         return "Likely low-value back matter or promotional page."
     if section == "unknown":
         return "No reliable parser marker found in embedded text."
+    if section == "News":
+        return "Reviewer-confirmed news surface with explicit extractable recommendation context."
+    if section == "Titelstory":
+        return "Reviewer-confirmed title-story surface; route only explicit recommendations/instruments to Stocks."
     return f"Keyword-based first-pass classification as {section}."
+
+
+def _explicit_section_for_page(lines: Sequence[str]) -> str:
+    checks = (
+        ("Titelstory", ("Titelstory", "Titelthema", "Titel-Story")),
+        ("News", ("News", "Meldungen", "Kurzmeldungen")),
+        ("Dividenden", ("Dividendenstrategie", "Dividenden-Strategie")),
+        ("Social Media Weekly", ("Social Media Weekly",)),
+        ("Statistik", ("Statistik",)),
+        ("AKTIONAER Depot", ("AKTIONÄR Depot", "AKTIONAER Depot", "AKTIONÄR-Depot", "AKTIONAER-Depot")),
+        ("Chart der Woche", ("Chart der Woche",)),
+        ("Dax-Check", ("Dax-Check", "DAX-Check")),
+        ("Wall-Street-Check", ("Wall-Street-Check",)),
+        ("Rohstoff-Check", ("Rohstoff-Check",)),
+        ("Quick-Check", ("Aktien im Quick-Check", "Quick-Check", "Quickcheck")),
+        ("AKTIONÄR-Indizes", ("AKTIONÄR-Indizes", "AKTIONAER-Indizes", "DER AKTIONÄR-Indizes")),
+        ("Bücher", ("Bücher", "Buchtipp", "Buchtipps")),
+        ("Impressum", ("Impressum",)),
+        ("Letzte Seite", ("Letzte Seite",)),
+    )
+    top_lines = lines[:20]
+    for section, markers in checks:
+        if _contains_any(top_lines, markers):
+            return section
+    return ""
+
+
+def _looks_like_ad_page(lines: Sequence[str]) -> bool:
+    if not _contains_any(lines, ("Anzeige", "Werbung", "Advertorial", "Sonderveröffentlichung", "PR-Anzeige")):
+        return False
+    # Advertising markers can appear inside real articles. Treat them as a
+    # section marker only when the embedded text looks like a compact ad page.
+    return len(lines) <= 35
+
+
+def _is_front_stock_context(page_number: int, lines: Sequence[str]) -> bool:
+    return page_number <= 12 and len(lines) >= 35 and _contains_any(lines, ("Aktie", "Hot-Stock"))
+
+
+def _has_stock_extraction_signal(lines: Sequence[str]) -> bool:
+    has_identifier = _contains_any(lines, ("WKN", "ISIN"))
+    has_recommendation = _contains_any(lines, ("Kursziel", "Marktkap", "Dividendenrendite", "KGV", "KUV"))
+    has_quality_pair = _contains_any(lines, ("Chance", "Risiko")) and _count_any(lines, ("Chance", "Risiko")) >= 2
+    return (has_identifier and (has_recommendation or has_quality_pair)) or _contains_any(lines, ("Kursziel",))
+
+
+def _has_derivative_extraction_signal(lines: Sequence[str]) -> bool:
+    derivative_markers = _count_any(lines, ("Call", "Put", "Zertifikat", "Hebel", "Basispreis", "Omega"))
+    return _contains_any(lines, ("WKN", "ISIN", "Basispreis", "Omega")) and derivative_markers >= 4
+
+
+def _statistics_destination(lines: Sequence[str]) -> str:
+    if _contains_any(lines[:40], ("ETF", "Fonds")):
+        return "ETF"
+    if _contains_any(lines, ("Devisen", "Forex", "Währung")):
+        return "Forex (devisen)"
+    if _count_any(lines, ("Index", "Indizes", "Hebel", "Zertifikat")) >= 8:
+        return "Index"
+    return "Stocks"
+
+
+def _count_any(lines: Sequence[str], needles: Sequence[str]) -> int:
+    text = "\n".join(lines).casefold()
+    return sum(text.count(needle.casefold()) for needle in needles)
 
 
 def _page_title(lines: Sequence[str], section: str) -> str:
@@ -295,6 +461,11 @@ def _looks_like_title(line: str, section: str) -> bool:
 def _contains_any(lines: Sequence[str], needles: Sequence[str]) -> bool:
     text = "\n".join(lines).casefold()
     return any(needle.casefold() in text for needle in needles)
+
+
+def _contains_heading(lines: Sequence[str], headings: Sequence[str]) -> bool:
+    normalized_headings = {heading.casefold() for heading in headings}
+    return any(line.strip().casefold() in normalized_headings for line in lines)
 
 
 def _unique(values: Sequence[str] | object) -> tuple[str, ...]:

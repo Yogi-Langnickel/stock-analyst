@@ -1111,7 +1111,7 @@ def write_refinement_plan_to_google_sheet(
                 range_name=body_range,
             )
         ]
-        rows = _preserve_refinement_reviewer_notes(rows, existing_rows, spec=spec)
+        rows = _preserve_refinement_reviewer_fields(rows, existing_rows, spec=spec)
         sheets.spreadsheets().values().clear(
             spreadsheetId=config.sheets_spreadsheet_id,
             range=body_range,
@@ -1148,6 +1148,11 @@ def write_refinement_plan_to_google_sheet(
         "tabWritten": spec.title,
         "rowsWritten": len(rows),
         "reviewerNotesPreserved": _count_non_empty_reviewer_notes(rows, spec=spec),
+        "reviewerFieldsPreserved": _count_refinement_reviewer_fields_preserved(
+            rows,
+            existing_rows,
+            spec=spec,
+        ),
         "bootstrap": bootstrap_result,
     }
 
@@ -1426,27 +1431,47 @@ def _refinement_page_sort_key(row: list[str]) -> tuple[int, str]:
         return 10**9, row[0] if row else ""
 
 
-def _preserve_refinement_reviewer_notes(
+def _preserve_refinement_reviewer_fields(
     rows: list[list[str]],
     existing_rows: list[list[str]],
     *,
     spec: GoogleSheetTabSpec,
 ) -> list[list[str]]:
     page_index = _header_index(spec, "Page_number")
-    notes_index = _header_index(spec, "reviewer_notes")
-    if page_index is None or notes_index is None:
+    issue_index = _header_index(spec, "issue")
+    reviewer_field_indexes = tuple(
+        index
+        for header in (
+            "section",
+            "page_titel",
+            "useful_info",
+            "suggested_destination",
+            "reviewer_notes",
+        )
+        if (index := _header_index(spec, header)) is not None
+    )
+    if page_index is None or not reviewer_field_indexes:
         return rows
-    existing_notes_by_page = {
-        row[page_index].strip(): row[notes_index].strip()
+    existing_by_page = {
+        row[page_index].strip(): row
         for row in existing_rows
-        if page_index < len(row) and notes_index < len(row) and row[notes_index].strip()
+        if page_index < len(row) and row[page_index].strip()
     }
     merged_rows: list[list[str]] = []
     for row in rows:
         merged = list(row)
         page = merged[page_index].strip()
-        if not merged[notes_index].strip() and page in existing_notes_by_page:
-            merged[notes_index] = existing_notes_by_page[page]
+        existing = existing_by_page.get(page)
+        if existing and (
+            issue_index is None
+            or issue_index >= len(existing)
+            or issue_index >= len(merged)
+            or not existing[issue_index].strip()
+            or existing[issue_index].strip() == merged[issue_index].strip()
+        ):
+            for index in reviewer_field_indexes:
+                if index < len(existing):
+                    merged[index] = existing[index]
         merged_rows.append(merged)
     return merged_rows
 
@@ -1460,6 +1485,23 @@ def _count_non_empty_reviewer_notes(
     if notes_index is None:
         return 0
     return sum(1 for row in rows if notes_index < len(row) and row[notes_index].strip())
+
+
+def _count_refinement_reviewer_fields_preserved(
+    rows: list[list[str]],
+    existing_rows: list[list[str]],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> int:
+    page_index = _header_index(spec, "Page_number")
+    if page_index is None:
+        return 0
+    existing_pages = {
+        row[page_index].strip()
+        for row in existing_rows
+        if page_index < len(row) and row[page_index].strip()
+    }
+    return sum(1 for row in rows if page_index < len(row) and row[page_index].strip() in existing_pages)
 
 
 def _merge_stock_sheet_rows(

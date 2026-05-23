@@ -138,6 +138,28 @@ Created: 2026-05-15
 - A page-by-page extraction map would help define which pages/sections populate
   which tabs and fields. Treat it as parser training/review guidance, not
   manual data entry.
+- `Refinement` tab writes must preserve reviewer-owned columns for existing
+  page rows: section, page title, useful-info, suggested destination, and
+  reviewer notes. Regeneration may update parser hints/reasons/date metadata,
+  but must not wipe completed manual review fields.
+- In the `Refinement` tab, `useful_info` means useful for extraction into
+  workbook rows because the page contains explicit recommendations,
+  instruments, tables, or row-level fields. `useful_info=no` does not mean the
+  page has no article value; it means no explicit extractable
+  recommendation/instrument row should be generated from that page.
+- 2026-05-21 full-issue `Refinement` review confirmed that page labels are
+  issue-specific training signals, not page-number rules. General recognition
+  rules: compact ad-marker pages, cover/editorial/front matter, books,
+  impressum/last-page, social-media filler, generic crypto/forex/commodity/ETF
+  surfaces, and index-only pages are normally not useful extraction rows unless
+  a focused parser later owns them; explicit section markers such as
+  title-story, news, statistics, Dax/Wall-Street/Rohstoff checks, chart-check,
+  and quick-check should beat generic financial keywords. Generic stock/title
+  story/derivative pages need stronger extraction signals before marking
+  `useful_info=yes`. On the reviewed issue, a 2026-05-22 follow-up refinement
+  reached exact useful-info agreement with reviewer labels without hard-coding
+  page numbers; remaining section differences are mostly blank reviewer labels
+  versus coarse non-useful local labels.
 - Local visual review is available through `scripts/stock-analyst
   visual-ocr-review`. It renders selected pages to ignored private PNG
   artifacts using PyMuPDF and can optionally run local Tesseract OCR. Command
