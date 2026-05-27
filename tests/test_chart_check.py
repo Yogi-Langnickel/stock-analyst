@@ -103,12 +103,8 @@ class ChartCheckTest(unittest.TestCase):
                 "Termin",
                 "310,00 €",
                 "10,50 €",
-                "224,00 €",
-                "7,25 €",
                 "199,00 €",
                 "6,21 €",
-                "278,00 €",
-                "8,73 €",
                 "284,50 €",
                 "8,83 €",
                 "114,00 €",
@@ -117,18 +113,18 @@ class ChartCheckTest(unittest.TestCase):
                 "+112,6 %",
                 "+224,8 %",
                 "+81,8 %",
-                "1,4 %",
-                "2,9 %",
-                "Quartalszahlen",
-                "Quartalszahlen",
-                "16.01.26",
-                "03.03.26",
+                "224,00 €",
+                "7,25 €",
+                "278,00 €",
+                "8,73 €",
+                "37/25",
+                "42/25",
                 "+39,7 %",
                 "+40,5 %",
-                "37/25",
-                "03.09.25",
-                "42/25",
-                "08.10.25",
+                "1,4 %",
+                "2,9 %",
+                "Quartalszahlen 16.01.26",
+                "Quartalszahlen 03.03.26",
                 "•••••",
                 "•••••",
             ),
@@ -140,7 +136,8 @@ class ChartCheckTest(unittest.TestCase):
         self.assertEqual(rows[0].stop, "224,00 EUR")
         self.assertEqual(rows[0].current_price, "199,00 EUR")
         self.assertEqual(rows[0].recommendation_price, "278,00 EUR")
-        self.assertEqual(rows[0].recommended_issue, "37/25 03.09.25")
+        self.assertEqual(rows[0].recommended_issue, "37/25")
+        self.assertEqual(rows[0].next_report_date, "Quartalszahlen 16.01.26")
         self.assertEqual(rows[1].dividend_yield, "2,9 %")
 
     def test_returns_empty_when_chart_check_marker_is_missing(self) -> None:

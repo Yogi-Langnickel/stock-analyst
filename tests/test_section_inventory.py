@@ -120,7 +120,7 @@ class SectionInventoryTest(unittest.TestCase):
         self.assertEqual(chart_sections[0].section_kind, MagazineSectionKind.CHART_CHECK)
         self.assertEqual(chart_sections[0].extraction_notes, ("attach_to_stock_when_wkn_matches",))
         self.assertEqual(quick_sections[0].section_kind, MagazineSectionKind.QUICK_CHECK)
-        self.assertEqual(quick_sections[0].suggested_sheet, "Stock Quickcheck")
+        self.assertEqual(quick_sections[0].suggested_sheet, "Stocks")
 
     def test_detects_statistics_as_context_only(self) -> None:
         sections = extract_section_candidates_from_lines(

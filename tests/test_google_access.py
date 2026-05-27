@@ -306,7 +306,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("Derivative Tips", result["createdTabs"])
         self.assertIn("Dividend Focus", result["createdTabs"])
-        self.assertIn("Chart Check", result["createdTabs"])
+        self.assertIn("Insider Activity", result["createdTabs"])
         self.assertEqual(result["headerRowsWritten"], len(result["tabs"]))
         batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
         self.assertIn(
@@ -359,7 +359,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertNotIn({"range": "'Stocks'!B1", "values": [[""]]}, values_body["data"])
         self.assertIn(
             {
-                "range": "'Stocks'!A3:X3",
+                "range": "'Stocks'!A3:AA3",
                 "values": [[
                     "Company",
                     "WKN",
@@ -380,7 +380,10 @@ class GoogleAccessTest(unittest.TestCase):
                     "1Y Performance",
                     "5Y Performance",
                     "Next Report",
+                    "Report Type",
                     "Recommendation",
+                    "Held since",
+                    "Insider Activity",
                     "Comment",
                     "issue",
                     "page",
@@ -413,8 +416,9 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(tab_status["Extraction Audit"], "parser_backed")
         self.assertEqual(tab_status["AKTIONAER Depot"], "parser_backed")
         self.assertEqual(tab_status["Depot Transactions"], "parser_backed")
-        self.assertEqual(tab_status["Chart Check"], "parser_backed")
-        self.assertEqual(tab_status["Stock Quickcheck"], "parser_backed")
+        self.assertNotIn("Chart Check", tab_status)
+        self.assertNotIn("Stock Quickcheck", tab_status)
+        self.assertEqual(tab_status["Insider Activity"], "planned")
         self.assertEqual(tab_status["Navigation Dashboard"], "layout_only")
         navigation_tab = next(tab for tab in result["tabs"] if tab["title"] == "Navigation Dashboard")
         self.assertEqual(navigation_tab["headerRow"], 5)
@@ -427,13 +431,11 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(headers_by_tab["AKTIONAER Depot"][4], "Magazine Buy Price")
         self.assertEqual(headers_by_tab["AKTIONAER Depot"][5], "Magazine Current Price")
         self.assertEqual(headers_by_tab["Depot Transactions"][5], "Magazine Transaction Price")
-        self.assertEqual(headers_by_tab["Chart Check"][6], "Magazine Price")
-        self.assertEqual(headers_by_tab["Chart Check"][7], "Magazine Price at Recommendation")
-        self.assertEqual(headers_by_tab["Stock Quickcheck"][4], "Magazine Price")
-        self.assertEqual(
-            headers_by_tab["Stock Quickcheck"][5],
-            "Magazine Price at Recommendation",
-        )
+        self.assertEqual(headers_by_tab["Stocks"][18], "Next Report")
+        self.assertEqual(headers_by_tab["Stocks"][19], "Report Type")
+        self.assertEqual(headers_by_tab["Stocks"][21], "Held since")
+        self.assertEqual(headers_by_tab["Stocks"][22], "Insider Activity")
+        self.assertEqual(headers_by_tab["Insider Activity"][14], "SEC filing URL")
         self.assertEqual(headers_by_tab["Dividend Focus"][3], "Magazine Price")
         for tab in result["tabs"]:
             self.assertGreaterEqual(tab["frozenRows"], 1)
@@ -606,7 +608,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["headersRewritten"])
         self.assertEqual(result["clearedTabCount"], len(result["clearedRanges"]))
-        self.assertIn("'Stocks'!A4:X", clear_ranges)
+        self.assertIn("'Stocks'!A4:AA", clear_ranges)
         self.assertNotIn("'Navigation Dashboard'!A5:E", clear_ranges)
         self.assertGreater(len(values_resource.batch_update_requests), 0)
 
@@ -631,13 +633,16 @@ class GoogleAccessTest(unittest.TestCase):
                 }
             )
             sheets.spreadsheets_resource.values_resource.values_by_range[
-                "'Stocks'!A4:X"
+                "'Stocks'!A4:AA"
             ] = [
                 [
                     "Old Same Issue",
                     "OLD",
                     "",
                     "1 EUR",
+                    "",
+                    "",
+                    "",
                     "",
                     "",
                     "",
@@ -681,6 +686,9 @@ class GoogleAccessTest(unittest.TestCase):
                     "",
                     "",
                     "",
+                    "",
+                    "",
+                    "",
                     "2026-W02",
                     "1",
                     "2026-05-10",
@@ -705,7 +713,10 @@ class GoogleAccessTest(unittest.TestCase):
                     "",
                     "",
                     "",
-                    "02/2026 07.01.26",
+                    "",
+                    "hold",
+                    "02/2026",
+                    "",
                     "Previous comment",
                     "2026-W02",
                     "20",
@@ -737,7 +748,10 @@ class GoogleAccessTest(unittest.TestCase):
                             "",
                             "",
                             "",
+                            "",
                             "new_recommendation",
+                            "",
+                            "",
                             "",
                             "2026-W03",
                             "22",
@@ -776,7 +790,7 @@ class GoogleAccessTest(unittest.TestCase):
 
         values_resource = sheets.spreadsheets_resource.values_resource
         data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
-        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:X5")
+        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:AA5")
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["enrichmentProviderCalls"], 0)
@@ -790,10 +804,11 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(stocks_write["values"][1][5], "3,33 EUR")
         self.assertEqual(stocks_write["values"][1][6], "18,6 %")
         self.assertEqual(stocks_write["values"][1][11], "4,30 EUR")
-        self.assertIn("Previous comment", stocks_write["values"][1][20])
-        self.assertEqual(stocks_write["values"][1][21], "2026-W02, 2026-W03")
-        self.assertEqual(stocks_write["values"][1][22], "20, 22")
-        self.assertIn("'Stocks'!A4:X", [request["range"] for request in values_resource.clear_requests])
+        self.assertEqual(stocks_write["values"][1][20], "new_recommendation")
+        self.assertIn("Previous comment", stocks_write["values"][1][23])
+        self.assertEqual(stocks_write["values"][1][24], "2026-W02, 2026-W03")
+        self.assertEqual(stocks_write["values"][1][25], "20, 22")
+        self.assertIn("'Stocks'!A4:AA", [request["range"] for request in values_resource.clear_requests])
 
     def test_google_sheet_export_rejects_short_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -829,7 +844,7 @@ class GoogleAccessTest(unittest.TestCase):
                 ],
             }
 
-            with self.assertRaisesRegex(GoogleAccessError, "Stocks.*24 values.*got 11"):
+            with self.assertRaisesRegex(GoogleAccessError, "Stocks.*27 values.*got 11"):
                 write_workbook_plan_to_google_sheet(
                     config,
                     workbook_plan,

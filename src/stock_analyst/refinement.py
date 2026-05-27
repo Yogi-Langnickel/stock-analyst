@@ -204,8 +204,8 @@ def _suggested_destination(
         "Rohstoffe": "future Commodities",
         "Forex": "future Forex",
         "ETF/Fonds": "future ETF",
-        "chart-check": "Chart Check",
-        "Aktien Quickcheck": "Stock Quickcheck",
+        "chart-check": "Stocks",
+        "Aktien Quickcheck": "Stocks",
         "Statistik": "Extraction Audit",
     }
     return destinations.get(section, "review")

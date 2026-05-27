@@ -61,14 +61,16 @@ Created: 2026-05-15
 - Remote OCR planning has a 900-page monthly budget guard. Provider adapters
   must block or require manual approval above that budget before making Google
   Vision calls.
-- `Aktien im Quick-Check` rows are parser-backed into `Stock Quickcheck` and
-  also surface in `Stocks` as previous-recommendation stock rows with split
-  current price, price at recommendation, target, stop, and comment fields.
-- `Chart-Check` pages are parser-backed into `Chart Check` as explicit
+- `Aktien im Quick-Check` rows are parser-backed into `Stocks` as
+  previous-recommendation stock rows with split current price, price at
+  recommendation, target, stop, and comment fields. The separate
+  `Stock Quickcheck` tab is intentionally inactive.
+- `Chart-Check` pages are parser-backed into `Stocks` as explicit
   instrument/WKN rows with the publisher bullet summary and parsed table fields
   such as price, target, stop, 52-week range, performance, dividend yield, and
-  next report date. They also surface into `Stocks` by WKN/normalized company,
-  remain `needs_review`, and must not invent missing values.
+  next report date. They remain `needs_review` and must not invent missing
+  values. `Akt. Kurs` is current price; `Empf.- Kurs` is price at
+  recommendation. The separate `Chart Check` tab is intentionally inactive.
 - A local workbook export-plan command can route draft recommendation cards,
   derivative cards, derivative overview rows, dividend strategy rows, AKTIONAER
   depot positions, depot transaction/no-transaction rows, and section-inventory
@@ -95,10 +97,11 @@ Created: 2026-05-15
   stock rows go there.
 - Active workbook tabs are pruned to the layout-only `Navigation Dashboard`
   plus data-backed surfaces: `Stocks`, `Derivative Tips`, `AKTIONAER Depot`,
-  `Depot Transactions`, `Chart Check`, `Stock Quickcheck`, `Dividend Focus`,
-  and `Extraction Audit`. Planned tabs are removed from the live workbook until
-  they have real emitted rows; pruning is limited to project-known generated
-  tabs so manual user tabs survive.
+  `Depot Transactions`, `Dividend Focus`, `Extraction Audit`, and the planned
+  `Insider Activity` review tab. Planned tabs are removed from the live
+  workbook until they have real emitted rows, except `Insider Activity` which
+  is kept as the SEC Form 4 destination; pruning is limited to project-known
+  generated tabs so manual user tabs survive.
 - `Navigation Dashboard` is a static reviewer cockpit only. Do not emit
   workbook rows to it, do not trigger enrichment from it, and preserve its body
   rows during generated data clears. Its row-count cells are spreadsheet

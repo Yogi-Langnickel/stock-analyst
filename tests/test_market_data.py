@@ -65,7 +65,10 @@ def stock_values(
         "",
         "",
         "",
+        "",
         recommendation,
+        "",
+        "",
         "",
         issue,
         page,
@@ -446,7 +449,7 @@ class MarketDataTest(unittest.TestCase):
             ]
         }
 
-        with self.assertRaisesRegex(ValueError, "Stocks.*24 values.*got 11"):
+        with self.assertRaisesRegex(ValueError, "Stocks.*27 values.*got 11"):
             market_data_candidates_from_workbook_plan(payload)
 
     def test_workbook_plan_candidates_only_plan_mapped_stock_rows(self) -> None:

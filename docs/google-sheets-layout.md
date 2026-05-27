@@ -40,9 +40,11 @@ long/short products, certificates, and derivative overview rows all use
    `Dividend Yield`, `Market Cap`, `Chance/Risk`, `P/S Ratio 26e`,
    `P/E Ratio 26e`, `Target`, `Stop`, `Performance since Recommendation`,
    `52w High`, `52w Low`, `1Y Performance`, `5Y Performance`,
-   `Next Report`, `Recommendation`, `Comment`, `issue`, `page`, and
-   `date updated`. `Current Price*` stays blank until a future enrichment job
-   writes a provider-backed value.
+   `Next Report`, `Report Type`, `Recommendation`, `Held since`,
+   `Insider Activity`, `Comment`, `issue`, `page`, and `date updated`.
+   `Next Report` is date-only; report labels such as quarterly or year-end
+   results live in `Report Type`. `Current Price*` stays blank until a future
+   enrichment job writes a provider-backed value.
 
 3. `Derivative Tips`
    Unified detailed options/derivatives table. Issue and page are trailing
@@ -66,18 +68,11 @@ long/short products, certificates, and derivative overview rows all use
    transaction, including explicit no-transaction weeks. Performance cells use
    the same positive/negative conditional formatting as the depot tab.
 
-7. `Chart Check`
-   Dedicated traceability export for chart-check source rows, including the
-   parsed table fields for magazine price, magazine recommendation price,
-   target, stop, 52-week range, performance, dividend yield, and next report
-   date. Parsed fields also surface into the matching `Stocks` row by
-   WKN/normalized company while remaining `needs_review`.
+7. `Insider Activity`
+   Dedicated review destination for future SEC EDGAR Form 4 insider activity
+   rows. Stock rows can link to a reviewed buy/sell indicator from this tab.
 
-8. `Stock Quickcheck`
-   Dedicated normalized quick-check table with printed magazine price labels.
-   Parsed rows also update the matching `Stocks` row by WKN/normalized company.
-
-9. `Extraction Audit`
+8. `Extraction Audit`
    Internal audit tab for skipped pages, low-priority back matter, OCR-needed
    pages, parser warnings, and row-level review notes.
 
@@ -91,13 +86,12 @@ the live Sheet; those should be added only after this layout is accepted.
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `Navigation Dashboard` | `layout_only` | 5 rows, 2 cols | `A5` | Workbook title, static navigation rows, and row-count formulas | Entry dashboard based on the active tabs. Keep rows concise, source-neutral, and review-oriented; data clears preserve this layout. Row counts are spreadsheet formulas over active tab data ranges and do not trigger enrichment. |
-| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current Price*` is reserved for provider-backed enrichment and remains blank in local magazine-only plans; `Magazine Price` and `Magazine Price As Of` preserve the latest printed source price; `Price at Recommendation` preserves the printed recommendation price where available; includes market cap, P/S ratio, P/E ratio, Chance/Risk, dividend yield, chart fields, and comments where available; `date updated` is the last row field. |
+| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current Price*` is reserved for provider-backed enrichment and remains blank in local magazine-only plans; printed price fields contain only price and currency; `Next Report` is date-only; `Report Type` stores the event label; `Recommendation` stores action/status such as `hold`, `new_recommendation`, `no_buy`, or `verkauft`; `Held since` stores the issue only for holds; `Insider Activity` is reserved for reviewed SEC Form 4 signal links. |
 | `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Printed source prices use `Magazine Entry Price` and `Magazine Current Price`; source ID stays in row metadata; visible provenance is trailing issue/page columns. |
 | `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; printed source prices use `Magazine Buy Price` and `Magazine Current Price`; performance cells are green for positive values and red for negative values. |
 | `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks; printed source transaction prices use `Magazine Transaction Price`; performance cells use positive/negative conditional formatting. |
-| `Chart Check` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full chart-check traceability here, including `Magazine Price` and `Magazine Price at Recommendation`, while also merging parsed stock fields into `Stocks`. |
-| `Stock Quickcheck` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Keep full quick-check table here with split `Magazine Price`, `Magazine Price at Recommendation`, target, and stop fields; also surface each row in `Stocks`. |
 | `Dividend Focus` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Multi-period dividend context including `Magazine Price`, ex/cum date, pay date, and payout frequency; concise decision fields may surface in `Stocks`. |
+| `Insider Activity` | `planned` | 1 row, 3 cols | `A1` | Header row | Planned SEC Form 4 source rows with direct filing links; stock-row indicators should summarize only reviewed rows from this tab. |
 | `Extraction Audit` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | First stop for parser warnings and planned-tab surfaces before row emitters exist. |
 <!-- markdownlint-enable MD013 -->
 
@@ -217,8 +211,8 @@ tabs:
 | `derivative_tips_overview` | `Derivative Tips` | Derivative overview pages such as 62-63. |
 | `aktionaer_depot_positions` | `AKTIONAER Depot` | Model-depot position snapshot. |
 | `aktionaer_depot_transactions` | `Depot Transactions` | Transaction ledger/no-transaction weeks. |
-| `chart_check` | `Chart Check` | Parser-backed Chart-Check stocks and technical context. |
-| `quick_check` | `Stock Quickcheck` | Parser-backed publisher quick-check evaluations. |
+| `chart_check` | `Stocks` | Parser-backed Chart-Check stocks and technical context. |
+| `quick_check` | `Stocks` | Parser-backed publisher quick-check evaluations. |
 | `statistics_context` | `Extraction Audit` | Context-only statistics tables until a parser-backed statistics tab is reintroduced. |
 | `low_priority_back_matter` | `Extraction Audit` | Back matter after statistics. |
 <!-- markdownlint-enable MD013 -->
@@ -229,8 +223,8 @@ The local `workbook-export-plan` command builds a JSON dry run of planned row
 DTOs for the workbook tabs. It currently routes:
 
 - stock recommendation cards to `Stocks`
-- chart-check stock rows to `Stocks` and `Chart Check`
-- quick-check stock rows to `Stocks` and `Stock Quickcheck`
+- chart-check stock rows to `Stocks`
+- quick-check stock rows to `Stocks`
 - derivative cards to `Derivative Tips`
 - derivative overview table rows to `Derivative Tips`
 - dividend strategy rows to `Dividend Focus`
@@ -258,8 +252,9 @@ issues, and makes no enrichment provider calls.
 
 Broad index, statistics, or constituent-table context must not fan out into
 individual `Stocks` rows. Parsed Quick Check and Chart Check rows are explicit
-stock mentions and should create/update `Stocks` rows, while the dedicated
-`Stock Quickcheck` and `Chart Check` tabs remain detailed traceability views.
+stock mentions and should create/update `Stocks` rows; the separate Quickcheck
+and Chart Check tabs are intentionally inactive because those rows already
+surface on `Stocks`.
 
 ## Reviewer Rule
 

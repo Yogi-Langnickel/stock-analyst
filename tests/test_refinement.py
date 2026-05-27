@@ -65,7 +65,7 @@ class RefinementPlanTest(unittest.TestCase):
         self.assertEqual(rows[1]["suggested_destination"], "Dividend Focus")
         self.assertEqual(rows[1]["useful_info"], "yes")
         self.assertEqual(rows[2]["section"], "chart-check")
-        self.assertEqual(rows[2]["suggested_destination"], "Chart Check")
+        self.assertEqual(rows[2]["suggested_destination"], "Stocks")
         self.assertEqual(rows[3]["section"], "back-matter")
         self.assertEqual(rows[3]["useful_info"], "no")
         self.assertEqual(rows[3]["date_updated"], "2026-05-20")
