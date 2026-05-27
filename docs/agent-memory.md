@@ -156,13 +156,16 @@ Created: 2026-05-15
   designed. Arbitrary watchlist symbols are not an approved live-enrichment
   source.
   Provider metadata/config scaffolding exists for disabled, Stooq CSV, Alpha
-  Vantage, Twelve Data, FMP, and SEC companyfacts, but live adapters are not
-  implemented. Cache request metadata and FMP dry-run request plans can be
-  built deterministically for known providers without exposing credential-like
-  parameters, reading secrets, or making network calls. Dry-run planning reads a
-  local provider/day budget ledger so prior same-day usage counts against the
-  hard cap. FMP planning defaults to a 235 calls/day hard limit, treats local
-  cache hits as budget-free, and carries a 512MB/month bandwidth note.
+  Vantage, Twelve Data, FMP, SEC companyfacts, and SEC EDGAR Form 4, but live
+  adapters are not implemented. Cache request metadata plus FMP and SEC Form 4
+  dry-run request plans can be built deterministically for known providers
+  without exposing credential-like parameters, reading secrets, or making
+  network calls. Dry-run planning reads a local provider/day budget ledger so
+  prior same-day usage counts against the hard cap. FMP planning defaults to a
+  235 calls/day hard limit, treats local cache hits as budget-free, and carries
+  a 512MB/month bandwidth note. SEC Form 4 planning defaults to a conservative
+  100 calls/day local cap and still requires `SEC_USER_AGENT` before any future
+  live access.
   Structured cache records can persist provider response payloads with
   credential-free metadata, freshness fields, source URL hashes, and terms
   review fields; raw provider URLs and API keys must not be stored.

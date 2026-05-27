@@ -25,7 +25,7 @@ the provider's ticker format.
 | `finnhub` | Metadata and dry-run planner only | `FINNHUB_API_KEY`; `FINNHUB_SECRET` kept private but unused by REST planner | No | Analyst, insider, earnings, quote, news, and sentiment context planning |
 | `fmp` | Metadata and dry-run planner only | `FMP_API_KEY` | No | Optional future Financial Modeling Prep quote/profile/fundamentals context |
 | `sec_companyfacts` | Metadata only | No key; `SEC_USER_AGENT` before live access | No | Optional future US issuer fundamentals and filing metadata |
-| `sec_edgar_form4` | Planned | No key; `SEC_USER_AGENT` before live access | No | Preferred official source for US insider activity from Form 4 filings |
+| `sec_edgar_form4` | Metadata and dry-run planner only | No key; `SEC_USER_AGENT` before live access | No | Preferred official source for US insider activity from Form 4 filings |
 
 `STOCK_ANALYST_MARKET_DATA_PROVIDER` defaults to `disabled`. Selecting
 `stooq_csv` only enables parsing caller-supplied CSV text; it does not fetch
@@ -267,8 +267,8 @@ recommendations, target prices, stop prices, or WKN/source fields.
   `FINNHUB_SECRET` may exist in `.env` but is not used by the dry-run REST
   planner.
 - `market-data-plan` can dry-run request budgets for `alpha_vantage`,
-  `twelve_data`, `finnhub`, and `fmp` with provider-specific default endpoint
-  sets and budgets.
+  `twelve_data`, `finnhub`, `fmp`, and `sec_edgar_form4` with
+  provider-specific default endpoint sets and budgets.
 - Live network adapters remain disabled until persistent cache storage, request
   accounting, response-header limit capture, and endpoint-specific credit
   weights are implemented.

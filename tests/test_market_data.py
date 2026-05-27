@@ -84,6 +84,7 @@ class MarketDataTest(unittest.TestCase):
         self.assertIn("finnhub", providers)
         self.assertIn("fmp", providers)
         self.assertIn("sec_companyfacts", providers)
+        self.assertIn("sec_edgar_form4", providers)
         self.assertFalse(any(provider.network_access for provider in providers.values()))
         self.assertTrue(providers["alpha_vantage"].cache_required_before_live)
         self.assertTrue(providers["alpha_vantage"].rate_limit_notes)
@@ -96,6 +97,9 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(providers["fmp"].credential_env_var, "FMP_API_KEY")
         self.assertEqual(providers["fmp"].daily_call_budget, 235)
         self.assertIn("512MB/month", providers["fmp"].bandwidth_notes[0])
+        self.assertEqual(providers["sec_edgar_form4"].user_agent_env_var, "SEC_USER_AGENT")
+        self.assertEqual(providers["sec_edgar_form4"].daily_call_budget, 100)
+        self.assertIn("magazine-backed Stocks rows", providers["sec_edgar_form4"].safety_notes[1])
 
     def test_market_data_config_defaults_to_disabled(self) -> None:
         config = load_market_data_config({})
@@ -192,6 +196,23 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(config.provider.provider_id, "fmp")
         self.assertFalse(config.enabled)
         self.assertEqual(config.reason, "missing credential environment variable: FMP_API_KEY")
+
+    def test_sec_edgar_form4_requires_user_agent_and_remains_metadata_only(self) -> None:
+        missing_user_agent = load_market_data_config({"STOCK_ANALYST_MARKET_DATA_PROVIDER": "sec_edgar_form4"})
+        configured = load_market_data_config(
+            {
+                "STOCK_ANALYST_MARKET_DATA_PROVIDER": "sec_edgar_form4",
+                "SEC_USER_AGENT": "Stock Analyst private reviewer contact@example.test",
+            }
+        )
+
+        self.assertEqual(missing_user_agent.provider.provider_id, "sec_edgar_form4")
+        self.assertFalse(missing_user_agent.enabled)
+        self.assertEqual(missing_user_agent.reason, "missing user-agent environment variable: SEC_USER_AGENT")
+        self.assertEqual(configured.provider.provider_id, "sec_edgar_form4")
+        self.assertFalse(configured.enabled)
+        self.assertFalse(configured.provider.network_access)
+        self.assertEqual(configured.reason, "live provider adapter is not implemented")
 
     def test_market_data_planning_config_loads_env_file_without_exposing_secret(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -832,6 +853,22 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(plan.daily_call_limit, 500)
         self.assertEqual(plan.planned_call_count, 3)
         self.assertFalse(plan.network_access)
+
+    def test_sec_edgar_form4_dry_run_planner_uses_official_source_endpoints(self) -> None:
+        plan = plan_market_data_enrichment_requests("sec_edgar_form4", ("AAPL", "MSFT"))
+
+        self.assertEqual(plan.provider, "sec_edgar_form4")
+        self.assertEqual(plan.status, "planned")
+        self.assertTrue(plan.dry_run)
+        self.assertFalse(plan.network_access)
+        self.assertEqual(plan.daily_call_limit, 100)
+        self.assertEqual(plan.planned_call_count, 6)
+        self.assertEqual(plan.remaining_daily_call_budget, 94)
+        self.assertEqual(
+            tuple(request.descriptor.endpoint for request in plan.requests[:3]),
+            ("ticker-cik-map", "submissions", "form4-xml"),
+        )
+        self.assertTrue(all(request.descriptor.provider == "sec_edgar_form4" for request in plan.requests))
 
     def test_market_data_plan_command_uses_env_file_and_redacts_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
