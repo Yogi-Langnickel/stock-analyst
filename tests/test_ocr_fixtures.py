@@ -28,6 +28,13 @@ class OcrFixturePlanTest(unittest.TestCase):
             [18, 19, 22, 37, 61, 62, 63, 66, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89],
         )
         self.assertIn("Dividend Focus", json.dumps(payload))
+        target_sets = [
+            fixture["intendedExtractionTargets"]
+            for fixture in payload["fixtures"]
+        ]
+        flattened_targets = {target for targets in target_sets for target in targets}
+        self.assertNotIn("Chart Check", flattened_targets)
+        self.assertNotIn("Stock Quickcheck", flattened_targets)
 
     def test_artifact_metadata_reports_hashes_and_counts_without_ocr_text(self) -> None:
         with TemporaryDirectory() as directory:

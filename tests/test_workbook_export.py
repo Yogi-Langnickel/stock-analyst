@@ -351,6 +351,35 @@ class WorkbookExportPlanTest(unittest.TestCase):
 
         self.assertEqual(stock_row["values"][-1], "2026-05-16")
 
+    def test_stock_price_cells_keep_thousands_and_strip_notes(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            stock_update_date="2026-05-17",
+            recommendation_cards=(
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=22,
+                    instrument_name="Large Price AG",
+                    instrument_type=InstrumentType.STOCK,
+                    wkn="ABC123",
+                    current_price="1.234,56 EUR (Xetra)",
+                    target="2.500,00 EUR Ziel",
+                    stop="987,65 EUR !",
+                    chance=None,
+                    risk=None,
+                    recommendation_status="new_recommendation",
+                ),
+            ),
+        )
+
+        stock_row = next(row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks")
+
+        self.assertEqual(stock_row["values"][3], "1.234,56 EUR")
+        self.assertEqual(stock_row["values"][5], "1.234,56 EUR")
+        self.assertEqual(stock_row["values"][11], "2.500,00 EUR")
+        self.assertEqual(stock_row["values"][12], "987,65 EUR")
+
     def test_stock_dividend_prefers_current_yield_over_per_share_trend(self) -> None:
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),

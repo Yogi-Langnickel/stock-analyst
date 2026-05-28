@@ -355,6 +355,13 @@ class GoogleAccessTest(unittest.TestCase):
             },
             values_body["data"],
         )
+        self.assertIn(
+            {
+                "range": "'Navigation Dashboard'!F11",
+                "values": [["planned; review required"]],
+            },
+            values_body["data"],
+        )
         self.assertNotIn({"range": "'Stocks'!A1", "values": [["date updated"]]}, values_body["data"])
         self.assertNotIn({"range": "'Stocks'!B1", "values": [[""]]}, values_body["data"])
         self.assertIn(

@@ -61,7 +61,8 @@ from stock_analyst.section_inventory import (
 MANUAL_REVIEW_WARNING = "manual_review_required_before_family_visible_export"
 WORKBOOK_EXPORT_PROCESSING_POLICY = MagazineProcessingPolicy(cut_after_statistics=False)
 MONEY_WITH_CURRENCY_RE = re.compile(
-    r"([+-]?\d+(?:[.,]\d+)?)\s*(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\b"
+    r"([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?)\s*"
+    r"(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\b"
 )
 REPORT_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{2,4}\b")
 ISSUE_TOKEN_RE = re.compile(r"\b\d{1,2}/\d{2,4}\b")

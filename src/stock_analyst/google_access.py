@@ -148,7 +148,7 @@ NAVIGATION_DASHBOARD_CELLS: tuple[tuple[str, str], ...] = (
     ("C11", "SEC Form 4 insider activity rows and stock-level signal context."),
     ("D11", "Review filing links and transaction classification."),
     ("E11", "=COUNTA('Insider Activity'!A2:A)"),
-    ("F11", "parser-backed; review required"),
+    ("F11", "planned; review required"),
     ("G11", "Signals are context only and must link to source filings."),
     ("A12", "QA"),
     ("B12", "Extraction Audit"),
