@@ -60,6 +60,12 @@ from stock_analyst.section_inventory import (
 
 MANUAL_REVIEW_WARNING = "manual_review_required_before_family_visible_export"
 WORKBOOK_EXPORT_PROCESSING_POLICY = MagazineProcessingPolicy(cut_after_statistics=False)
+MONEY_WITH_CURRENCY_RE = re.compile(
+    r"([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?)\s*"
+    r"(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\b"
+)
+REPORT_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{2,4}\b")
+ISSUE_TOKEN_RE = re.compile(r"\b\d{1,2}/\d{2,4}\b")
 
 
 class WorkbookExportPlanError(ValueError):
@@ -270,11 +276,17 @@ def build_workbook_export_plan(
         )
     )
     non_stock_card_rows = [row for row in card_rows if row.tab != "Stocks"]
+    dividend_focus_rows = _dividend_rows(
+        _dividend_rows_from(dividend_strategy),
+        instrument_update_date=resolved_stock_update_date,
+    )
     rows = tuple(
         stock_rows
         + non_stock_card_rows
-        + _dividend_rows(
-            _dividend_rows_from(dividend_strategy),
+        + dividend_focus_rows
+        + _dividend_rows_from_stock_rows(
+            stock_rows,
+            existing_dividend_rows=dividend_focus_rows,
             instrument_update_date=resolved_stock_update_date,
         )
         + _derivative_overview_rows(
@@ -289,8 +301,6 @@ def build_workbook_export_plan(
             depot_transactions,
             instrument_update_date=resolved_stock_update_date,
         )
-        + _chart_check_rows(chart_check_rows)
-        + _quickcheck_rows(quickcheck_rows)
         + _section_audit_rows(_sections_from(section_inventory))
     )
     return WorkbookExportPlan(
@@ -341,6 +351,11 @@ def _recommendation_card_row(
     stock_update_date: str,
     dividend_yield: str = "",
 ) -> WorkbookDraftRow:
+    report_date, report_type = _split_next_report(card.next_report_date or "")
+    recommendation, held_since = _recommendation_cells(
+        card.recommendation_status,
+        card.recommended_issue,
+    )
     return WorkbookDraftRow(
         tab="Stocks",
         row_kind="stock_recommendation",
@@ -353,23 +368,28 @@ def _recommendation_card_row(
             card.instrument_name,
             card.wkn or "",
             "",
-            card.current_price or "",
+            _price_currency_only(card.current_price),
             stock_update_date if card.current_price else "",
-            card.current_price if card.recommendation_status == "new_recommendation" else "",
+            _price_currency_only(card.current_price)
+            if card.recommendation_status == "new_recommendation"
+            else "",
             dividend_yield,
             card.market_cap or "",
             _chance_risk(card.chance, card.risk),
             card.kuv_26e or "",
             card.kgv_26e or "",
-            card.target or "",
-            card.stop or "",
+            _price_currency_only(card.target),
+            _price_currency_only(card.stop),
             card.performance_since_recommendation or "",
             "",
             "",
             "",
             "",
-            card.next_report_date or "",
-            card.recommended_issue or card.recommendation_status or "",
+            report_date,
+            report_type,
+            recommendation,
+            held_since,
+            "",
             "",
             card.issue_id,
             str(card.page),
@@ -598,6 +618,61 @@ def _dividend_rows(
     return draft_rows
 
 
+def _dividend_rows_from_stock_rows(
+    stock_rows: Sequence[WorkbookDraftRow],
+    *,
+    existing_dividend_rows: Sequence[WorkbookDraftRow],
+    instrument_update_date: str,
+) -> list[WorkbookDraftRow]:
+    existing_keys = {
+        _stock_identity_key(row.values)
+        for row in existing_dividend_rows
+        if row.values and row.values[0]
+    }
+    rows: list[WorkbookDraftRow] = []
+    for stock_row in stock_rows:
+        values = stock_row.values
+        key = _stock_identity_key(values)
+        if key in existing_keys or not _dividend_yield_over_threshold(_value_at(values, 6)):
+            continue
+        rows.append(
+            WorkbookDraftRow(
+                tab="Dividend Focus",
+                row_kind="dividend_stock_focus",
+                source_id=_source_id(
+                    "dividend-stock",
+                    stock_row.issue_id,
+                    stock_row.page,
+                    _value_at(values, 1) or _value_at(values, 0),
+                ),
+                issue_id=stock_row.issue_id,
+                page=stock_row.page,
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="manual_review_pending",
+                values=(
+                    _value_at(values, 0),
+                    _value_at(values, 1),
+                    "",
+                    _value_at(values, 3),
+                    _value_at(values, 7),
+                    _value_at(values, 6),
+                    _value_at(values, 10),
+                    "",
+                    "",
+                    "",
+                    _value_at(values, 11),
+                    _value_at(values, 12),
+                    ReviewStatus.NEEDS_REVIEW.value,
+                    _value_at(values, 24),
+                    _value_at(values, 25),
+                    instrument_update_date,
+                ),
+            )
+        )
+        existing_keys.add(key)
+    return rows
+
+
 def _derivative_overview_rows(
     rows: Sequence[DerivativeOverviewRow],
     *,
@@ -719,38 +794,6 @@ def _depot_transaction_rows(
     return draft_rows
 
 
-def _quickcheck_rows(rows: Sequence[QuickcheckRow]) -> list[WorkbookDraftRow]:
-    draft_rows: list[WorkbookDraftRow] = []
-    for row in rows:
-        source_id = _source_id("quickcheck", row.issue_id, row.page, row.wkn)
-        draft_rows.append(
-            WorkbookDraftRow(
-                tab="Stock Quickcheck",
-                row_kind="stock_quickcheck",
-                source_id=source_id,
-                issue_id=row.issue_id,
-                page=row.page,
-                review_status=ReviewStatus.NEEDS_REVIEW,
-                source_block="manual_review_pending",
-                values=(
-                    row.issue_id,
-                    str(row.page),
-                    row.instrument,
-                    row.wkn,
-                    row.current_price,
-                    row.recommendation_price,
-                    row.recommended_issue,
-                    row.performance_since_recommendation,
-                    row.target,
-                    row.stop,
-                    row.comment,
-                    row.review_status.value,
-                ),
-            )
-        )
-    return draft_rows
-
-
 def _quickcheck_stock_rows(
     rows: Sequence[QuickcheckRow],
     *,
@@ -759,6 +802,10 @@ def _quickcheck_stock_rows(
     draft_rows: list[WorkbookDraftRow] = []
     for row in rows:
         source_id = _source_id("quickcheck-stock", row.issue_id, row.page, row.wkn)
+        recommendation, held_since = _recommendation_cells(
+            "sold" if row.current_price.casefold() == "verkauft" else None,
+            row.recommended_issue,
+        )
         draft_rows.append(
             WorkbookDraftRow(
                 tab="Stocks",
@@ -772,23 +819,26 @@ def _quickcheck_stock_rows(
                     row.instrument,
                     row.wkn,
                     "",
-                    row.current_price,
-                    stock_update_date if row.current_price else "",
-                    row.recommendation_price,
+                    _price_currency_only(row.current_price),
+                    stock_update_date if _price_currency_only(row.current_price) else "",
+                    _price_currency_only(row.recommendation_price),
                     "",
                     "",
                     "",
                     "",
                     "",
-                    row.target,
-                    row.stop,
+                    _price_currency_only(row.target),
+                    _price_currency_only(row.stop),
                     row.performance_since_recommendation,
                     "",
                     "",
                     "",
                     "",
                     "",
-                    row.recommended_issue,
+                    "",
+                    recommendation,
+                    held_since,
+                    "",
                     row.comment,
                     row.issue_id,
                     str(row.page),
@@ -807,6 +857,8 @@ def _chart_check_stock_rows(
     draft_rows: list[WorkbookDraftRow] = []
     for row in rows:
         source_id = _source_id("chart-check-stock", row.issue_id, row.page, row.wkn)
+        report_date, report_type = _split_next_report(row.next_report_date)
+        recommendation, held_since = _recommendation_cells(None, row.recommended_issue)
         draft_rows.append(
             WorkbookDraftRow(
                 tab="Stocks",
@@ -820,23 +872,26 @@ def _chart_check_stock_rows(
                     row.instrument,
                     row.wkn,
                     "",
-                    row.current_price,
+                    _price_currency_only(row.current_price),
                     stock_update_date if row.current_price else "",
-                    row.recommendation_price,
+                    _price_currency_only(row.recommendation_price),
                     row.dividend_yield,
                     "",
                     "",
                     "",
                     "",
-                    row.target,
-                    row.stop,
+                    _price_currency_only(row.target),
+                    _price_currency_only(row.stop),
                     row.performance_since_recommendation,
-                    row.high_52w,
-                    row.low_52w,
+                    _price_currency_only(row.high_52w),
+                    _price_currency_only(row.low_52w),
                     row.performance_1y,
                     row.performance_5y,
-                    row.next_report_date,
-                    row.recommended_issue,
+                    report_date,
+                    report_type,
+                    recommendation,
+                    held_since,
+                    "",
                     row.signal,
                     row.issue_id,
                     str(row.page),
@@ -877,8 +932,8 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
     incoming_values = list(incoming.values)
     _ensure_width(values, len(incoming_values))
 
-    latest_wins_indexes = {2, 3, 4, 5, 11, 12, 13, 14, 15, 16, 17, 18}
-    fill_only_indexes = {0, 1, 6, 7, 8, 9, 10, 19, 23}
+    latest_wins_indexes = {2, 3, 4, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19, 26}
+    fill_only_indexes = {0, 1, 6, 7, 8, 9, 10, 21, 22}
     for index in latest_wins_indexes:
         if index < len(incoming_values) and incoming_values[index]:
             values[index] = incoming_values[index]
@@ -886,23 +941,23 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
         if index < len(incoming_values) and incoming_values[index] and not values[index]:
             values[index] = incoming_values[index]
 
-    recommendation_index = 19
+    recommendation_index = 20
     if recommendation_index < len(incoming_values) and incoming_values[recommendation_index]:
         current = values[recommendation_index]
         candidate = incoming_values[recommendation_index]
-        if not current or _looks_like_richer_recommendation(candidate, current):
+        if not current or _recommendation_priority(candidate) >= _recommendation_priority(current):
             values[recommendation_index] = candidate
 
-    comment_parts = _split_comment(values[20]) if len(values) > 20 else []
-    if len(incoming_values) > 20 and incoming_values[20]:
-        comment_parts.append(incoming_values[20])
-    if len(values) > 20:
-        values[20] = _join_unique(comment_parts)
+    comment_parts = _split_comment(values[23]) if len(values) > 23 else []
+    if len(incoming_values) > 23 and incoming_values[23]:
+        comment_parts.append(incoming_values[23])
+    if len(values) > 23:
+        values[23] = _join_unique(comment_parts)
 
-    if len(values) > 21 and len(incoming_values) > 21:
-        values[21] = _join_unique((values[21], incoming_values[21]))
-    if len(values) > 22 and len(incoming_values) > 22:
-        values[22] = _join_unique((values[22], incoming_values[22]), separator=", ")
+    if len(values) > 24 and len(incoming_values) > 24:
+        values[24] = _join_unique((values[24], incoming_values[24]))
+    if len(values) > 25 and len(incoming_values) > 25:
+        values[25] = _join_unique((values[25], incoming_values[25]), separator=", ")
 
     return WorkbookDraftRow(
         tab="Stocks",
@@ -921,8 +976,25 @@ def _ensure_width(values: list[str], width: int) -> None:
         values.extend("" for _ in range(width - len(values)))
 
 
+def _value_at(values: Sequence[str], index: int) -> str:
+    return values[index] if index < len(values) else ""
+
+
 def _looks_like_richer_recommendation(candidate: str, current: str) -> bool:
     return (_contains_date(candidate), len(candidate)) > (_contains_date(current), len(current))
+
+
+def _recommendation_priority(value: str) -> int:
+    normalized = value.casefold().strip()
+    if normalized == "verkauft":
+        return 4
+    if normalized == "new_recommendation":
+        return 3
+    if normalized == "no_buy":
+        return 2
+    if normalized == "hold":
+        return 1
+    return 0
 
 
 def _contains_date(value: str) -> bool:
@@ -942,46 +1014,56 @@ def _join_unique(values: Iterable[str], *, separator: str = " | ") -> str:
     return separator.join(result)
 
 
-def _chart_check_rows(rows: Sequence[ChartCheckRow]) -> list[WorkbookDraftRow]:
-    draft_rows: list[WorkbookDraftRow] = []
-    for row in rows:
-        source_id = _source_id("chart-check", row.issue_id, row.page, row.wkn)
-        draft_rows.append(
-            WorkbookDraftRow(
-                tab="Chart Check",
-                row_kind="chart_check",
-                source_id=source_id,
-                issue_id=row.issue_id,
-                page=row.page,
-                review_status=ReviewStatus.NEEDS_REVIEW,
-                source_block="manual_review_pending",
-                values=(
-                    row.issue_id,
-                    str(row.page),
-                    row.instrument,
-                    row.wkn,
-                    row.sector,
-                    row.signal,
-                    row.current_price,
-                    row.recommendation_price,
-                    row.recommended_issue,
-                    row.performance_since_recommendation,
-                    row.target,
-                    row.stop,
-                    row.dividend_yield,
-                    row.next_report_date,
-                    row.high_52w,
-                    row.low_52w,
-                    row.performance_1y,
-                    row.performance_5y,
-                    row.trend,
-                    row.support,
-                    row.resistance,
-                    row.review_status.value,
-                ),
-            )
-        )
-    return draft_rows
+def _split_next_report(value: str) -> tuple[str, str]:
+    compacted = " ".join((value or "").split())
+    if not compacted:
+        return "", ""
+    match = REPORT_DATE_RE.search(compacted)
+    if match is None:
+        return "", compacted
+    report_date = match.group(0)
+    report_type = (compacted[: match.start()] + " " + compacted[match.end() :]).strip()
+    return report_date, " ".join(report_type.split())
+
+
+def _recommendation_cells(
+    status: str | None,
+    recommended_issue: str | None,
+) -> tuple[str, str]:
+    normalized = (status or "").casefold().strip()
+    if normalized in {"sold", "verkauft"}:
+        return "verkauft", _issue_only(recommended_issue or "")
+    if normalized == "new_recommendation":
+        return "new_recommendation", ""
+    if normalized == "no_buy":
+        return "no_buy", ""
+    issue = _issue_only(recommended_issue or "")
+    if normalized == "follow_up" or issue:
+        return "hold", issue
+    return status or "", ""
+
+
+def _issue_only(value: str) -> str:
+    match = ISSUE_TOKEN_RE.search(value)
+    return match.group(0) if match else value.strip()
+
+
+def _price_currency_only(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = value.replace("€", "EUR").replace("$", "USD")
+    match = MONEY_WITH_CURRENCY_RE.search(normalized)
+    if match is None:
+        return ""
+    amount, currency = match.groups()
+    return f"{amount} {currency}"
+
+
+def _dividend_yield_over_threshold(value: str, *, threshold: float = 3.0) -> bool:
+    match = re.search(r"(\d+(?:[,.]\d+)?)\s*%", value or "")
+    if match is None:
+        return False
+    return float(match.group(1).replace(",", ".")) > threshold
 
 
 def _section_audit_rows(sections: Sequence[MagazineSectionCandidate]) -> list[WorkbookDraftRow]:

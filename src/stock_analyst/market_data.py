@@ -28,6 +28,7 @@ DEFAULT_ALPHA_VANTAGE_DAILY_CALL_LIMIT = 25
 DEFAULT_FMP_DAILY_CALL_LIMIT = 235
 DEFAULT_TWELVE_DATA_DAILY_CALL_LIMIT = 800
 DEFAULT_FINNHUB_DAILY_CALL_LIMIT = 500
+DEFAULT_SEC_EDGAR_DAILY_CALL_LIMIT = 100
 DEFAULT_ALPHA_VANTAGE_ENDPOINTS = ("global-quote", "overview")
 DEFAULT_FMP_ENDPOINTS = ("batch-quote-short", "profile", "dividends")
 DEFAULT_TWELVE_DATA_ENDPOINTS = ("price", "quote", "statistics")
@@ -38,11 +39,13 @@ DEFAULT_FINNHUB_ENDPOINTS = (
     "earnings-surprises",
     "company-news",
 )
+DEFAULT_SEC_EDGAR_FORM4_ENDPOINTS = ("ticker-cik-map", "submissions", "form4-xml")
 DEFAULT_PROVIDER_ENDPOINTS = {
     "alpha_vantage": DEFAULT_ALPHA_VANTAGE_ENDPOINTS,
     "fmp": DEFAULT_FMP_ENDPOINTS,
     "twelve_data": DEFAULT_TWELVE_DATA_ENDPOINTS,
     "finnhub": DEFAULT_FINNHUB_ENDPOINTS,
+    "sec_edgar_form4": DEFAULT_SEC_EDGAR_FORM4_ENDPOINTS,
 }
 SECRET_PARAM_MARKERS = ("authorization", "credential", "key", "password", "secret", "token")
 
@@ -211,6 +214,27 @@ PROVIDER_METADATA: dict[str, ProviderMetadata] = {
             "Fair-access user-agent and request throttling are required before live calls.",
         ),
         rate_limit_notes=("SEC fair-access throttling is required before live calls.",),
+    ),
+    "sec_edgar_form4": ProviderMetadata(
+        provider_id="sec_edgar_form4",
+        display_name="SEC EDGAR Form 4",
+        status="metadata_only",
+        credentials_required=False,
+        network_access=False,
+        user_agent_env_var="SEC_USER_AGENT",
+        purpose="Planned official insider-activity enrichment for US-listed stocks already present in Stocks rows.",
+        safety_notes=(
+            "Adapter is not implemented.",
+            "Only magazine-backed Stocks rows may become candidates.",
+            "Non-US issuers and unresolved ticker-to-CIK mappings must be marked not covered or needs_review.",
+            "Insider activity is external context and cannot change magazine recommendation, target, stop, WKN, or printed price fields.",
+        ),
+        rate_limit_notes=(
+            "SEC fair-access user-agent and throttling are required before live calls.",
+            "Submissions should be cached per CIK for at least 24 hours before any live adapter is enabled.",
+            "Dry-run planning uses a conservative 100 request/day local cap.",
+        ),
+        daily_call_budget=DEFAULT_SEC_EDGAR_DAILY_CALL_LIMIT,
     ),
 }
 

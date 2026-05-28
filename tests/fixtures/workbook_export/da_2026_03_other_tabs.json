@@ -139,18 +139,16 @@
         "chart_check",
         "info",
         "Chart-check section with multiple stocks, technical context, and recommendation metadata.",
-        "review_for_Chart Check",
+        "review_for_Stocks",
         ""
       ],
       "warnings": [
         "manual_review_required_before_family_visible_export",
-        "suggested_sheet=Chart Check"
+        "suggested_sheet=Stocks"
       ]
     }
   ],
   "plannedButNotYetParsedAsRows": [
-    "Chart Check",
-    "Stock Quickcheck",
     "Statistics Context"
   ]
 }

@@ -69,7 +69,10 @@ class RefinementPageRow:
         )
 
     def to_dict(self) -> dict[str, object]:
-        return dict(zip(REFINEMENT_HEADERS, self.values(), strict=True))
+        values = self.values()
+        if len(REFINEMENT_HEADERS) != len(values):
+            raise ValueError("refinement row width does not match headers")
+        return dict(zip(REFINEMENT_HEADERS, values))
 
 
 @dataclass(frozen=True)
@@ -204,8 +207,8 @@ def _suggested_destination(
         "Rohstoffe": "future Commodities",
         "Forex": "future Forex",
         "ETF/Fonds": "future ETF",
-        "chart-check": "Chart Check",
-        "Aktien Quickcheck": "Stock Quickcheck",
+        "chart-check": "Stocks",
+        "Aktien Quickcheck": "Stocks",
         "Statistik": "Extraction Audit",
     }
     return destinations.get(section, "review")

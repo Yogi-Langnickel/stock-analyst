@@ -34,9 +34,9 @@ SHEET_DESTINATIONS = {
     MagazineSectionKind.DERIVATIVE_TIPS_OVERVIEW: "Derivative Tips",
     MagazineSectionKind.AKTIONAER_DEPOT_POSITIONS: "AKTIONAER Depot",
     MagazineSectionKind.AKTIONAER_DEPOT_TRANSACTIONS: "Depot Transactions",
-    MagazineSectionKind.CHART_CHECK: "Chart Check",
-    MagazineSectionKind.QUICK_CHECK: "Stock Quickcheck",
-    MagazineSectionKind.STATISTICS_CONTEXT: "Statistics Context",
+    MagazineSectionKind.CHART_CHECK: "Stocks",
+    MagazineSectionKind.QUICK_CHECK: "Stocks",
+    MagazineSectionKind.STATISTICS_CONTEXT: "Extraction Audit",
     MagazineSectionKind.LOW_PRIORITY_BACK_MATTER: "Extraction Audit",
 }
 

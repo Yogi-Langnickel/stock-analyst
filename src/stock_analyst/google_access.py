@@ -93,13 +93,11 @@ class GoogleSheetTabSpec:
 
 DATA_BACKED_TAB_TITLES = {
     "Navigation Dashboard",
-    "Refinement",
     "Stocks",
     "Derivative Tips",
     "AKTIONAER Depot",
     "Depot Transactions",
-    "Chart Check",
-    "Stock Quickcheck",
+    "Insider Activity",
     "Dividend Focus",
     "Extraction Audit",
 }
@@ -145,26 +143,19 @@ NAVIGATION_DASHBOARD_CELLS: tuple[tuple[str, str], ...] = (
     ("F10", "parser-backed; review required"),
     ("G10", "Use for source history and transaction evidence."),
     ("A11", "Source detail"),
-    ("B11", "Chart Check"),
-    ("C11", "Full parsed chart-check source rows."),
-    ("D11", "Trace stock fields back to source."),
-    ("E11", "=COUNTA('Chart Check'!A2:A)"),
-    ("F11", "parser-backed; review required"),
-    ("G11", "Also feeds matching stock rows where possible."),
-    ("A12", "Source detail"),
-    ("B12", "Stock Quickcheck"),
-    ("C12", "Full parsed quick-check rows."),
-    ("D12", "Trace stock fields back to source."),
-    ("E12", "=COUNTA('Stock Quickcheck'!A2:A)"),
-    ("F12", "parser-backed; review required"),
-    ("G12", "Also feeds matching stock rows where possible."),
-    ("A13", "QA"),
-    ("B13", "Extraction Audit"),
-    ("C13", "Parser warnings, skipped sections, OCR-needed pages, and review notes."),
-    ("D13", "Fix blockers before relying on rows."),
-    ("E13", "=COUNTA('Extraction Audit'!A2:A)"),
-    ("F13", "parser-backed; internal"),
-    ("G13", "Check this tab after each import."),
+    ("B11", "Insider Activity"),
+    ("C11", "SEC Form 4 insider activity rows and stock-level signal context."),
+    ("D11", "Review filing links and transaction classification."),
+    ("E11", "=COUNTA('Insider Activity'!A2:A)"),
+    ("F11", "planned; review required"),
+    ("G11", "Signals are context only and must link to source filings."),
+    ("A12", "QA"),
+    ("B12", "Extraction Audit"),
+    ("C12", "Parser warnings, skipped sections, OCR-needed pages, and review notes."),
+    ("D12", "Fix blockers before relying on rows."),
+    ("E12", "=COUNTA('Extraction Audit'!A2:A)"),
+    ("F12", "parser-backed; internal"),
+    ("G12", "Check this tab after each import."),
 )
 
 
@@ -238,7 +229,10 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "1Y Performance",
             "5Y Performance",
             "Next Report",
+            "Report Type",
             "Recommendation",
+            "Held since",
+            "Insider Activity",
             "Comment",
             "issue",
             "page",
@@ -254,6 +248,9 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Quick-check and chart-check stock rows also surface here with split source fields.",
             "Current Price* is daily enrichment and stays blank until enrichment writes it.",
             "Magazine Price and Price at Recommendation preserve printed magazine source values.",
+            "Next Report stores only the date; Report Type stores the event label.",
+            "Recommendation stores the current action/status; Held since stores the source issue for holds.",
+            "Insider Activity is reserved for SEC Form 4 signal links from the dedicated tab.",
             "Row-level date updated is the last field and advances on enrichment or newer mention.",
         ),
         parser_status="parser_backed",
@@ -533,62 +530,37 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         parser_status="parser_backed",
     ),
     GoogleSheetTabSpec(
-        "Chart Check",
+        "Insider Activity",
         (
-            "Issue",
-            "Page",
-            "Instrument",
+            "Company",
             "WKN",
-            "Sector",
+            "Ticker",
+            "CIK",
+            "Insider",
+            "Relationship",
+            "Transaction date",
+            "Transaction code",
+            "Direction",
+            "Shares",
+            "Price",
+            "Transaction value",
+            "Shares owned after",
+            "Filing date",
+            "SEC filing URL",
             "Signal",
-            "Magazine Price",
-            "Magazine Price at Recommendation",
-            "Recommended issue",
-            "Performance since recommendation",
-            "Target",
-            "Stop",
-            "Dividend Yield",
-            "Next Report",
-            "52w High",
-            "52w Low",
-            "1Y Performance",
-            "5Y Performance",
-            "Trend",
-            "Support",
-            "Resistance",
             "Review status",
-        ),
-        "Chart-check section extraction.",
-        frozen_columns=3,
-        layout_notes=(
-            "Parser-backed for Chart-Check instrument rows, publisher bullet summaries, and table fields.",
-            "Also surface parsed chart fields into matching stock rows by WKN or normalized company.",
-        ),
-        parser_status="parser_backed",
-    ),
-    GoogleSheetTabSpec(
-        "Stock Quickcheck",
-        (
             "Issue",
             "Page",
-            "Instrument",
-            "WKN",
-            "Magazine Price",
-            "Magazine Price at Recommendation",
-            "Recommended issue",
-            "Performance since recommendation",
-            "Target",
-            "Stop",
-            "Comment",
-            "Review status",
+            "date updated",
         ),
-        "Normalized quick-check table rows.",
+        "SEC Form 4 insider activity context for reviewed stock rows.",
         frozen_columns=3,
         layout_notes=(
-            "Parser-backed for Aktien im Quick-Check table rows.",
-            "Keep full publisher quick-check table here and also surface stock rows in Stocks.",
+            "Planned parser-backed destination for SEC EDGAR Form 4 enrichment rows.",
+            "Rows remain review-gated and must retain direct SEC filing URLs.",
+            "Stock-level Insider Activity indicators should summarize only reviewed rows from this tab.",
         ),
-        parser_status="parser_backed",
+        parser_status="planned",
     ),
     GoogleSheetTabSpec(
         "Statistics Context",
@@ -644,12 +616,19 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
 )
 
 ALL_SHEET_TABS = DEFAULT_SHEET_TABS
-GENERATED_SHEET_TAB_TITLES = {spec.title for spec in ALL_SHEET_TABS}
+RETIRED_GENERATED_SHEET_TAB_TITLES = {
+    "Chart Check",
+    "Stock Quickcheck",
+}
+GENERATED_SHEET_TAB_TITLES = {
+    spec.title for spec in ALL_SHEET_TABS
+} | RETIRED_GENERATED_SHEET_TAB_TITLES
 
 
 DEFAULT_SHEET_TABS = tuple(
     spec for spec in DEFAULT_SHEET_TABS if spec.title in DATA_BACKED_TAB_TITLES
 )
+REFINEMENT_SHEET_TABS = tuple(spec for spec in ALL_SHEET_TABS if spec.title == "Refinement")
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -1067,7 +1046,7 @@ def write_refinement_plan_to_google_sheet(
     refinement_plan: Mapping[str, object],
     *,
     sheets_service_factory=None,
-    tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
+    tab_specs: tuple[GoogleSheetTabSpec, ...] = REFINEMENT_SHEET_TABS,
 ) -> dict[str, object]:
     """Write page-by-page refinement rows into the configured Sheet."""
 
@@ -1098,6 +1077,7 @@ def write_refinement_plan_to_google_sheet(
         sheets_service_factory=sheets_service_factory,
         tab_specs=tab_specs,
         write_headers=True,
+        prune_extra_tabs=False,
     )
     body_start = spec.header_row + 1
     body_range = f"{_quote_sheet_title(spec.title)}!A{body_start}:{_column_letter(len(spec.headers))}"
@@ -1512,6 +1492,8 @@ def _merge_stock_sheet_row(
         "1Y Performance",
         "5Y Performance",
         "Next Report",
+        "Report Type",
+        "Insider Activity",
         "date updated",
     }
     fill_only_headers = {
@@ -1525,10 +1507,10 @@ def _merge_stock_sheet_row(
 
     recommendation_index = _header_index(spec, "Recommendation")
     if recommendation_index is not None and incoming[recommendation_index]:
-        current = values[recommendation_index]
-        candidate = incoming[recommendation_index]
-        if not current or _looks_like_richer_sheet_recommendation(candidate, current):
-            values[recommendation_index] = candidate
+        values[recommendation_index] = incoming[recommendation_index]
+        held_since_index = _header_index(spec, "Held since")
+        if held_since_index is not None:
+            values[held_since_index] = incoming[held_since_index]
 
     comment_index = _header_index(spec, "Comment")
     if comment_index is not None:

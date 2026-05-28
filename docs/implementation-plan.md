@@ -341,8 +341,9 @@ Acceptance:
   across issue variants without manual row entry.
 - Broad index constituents, statistics tables, or other section inventories
   must not fan out into `Stocks` rows. Parsed Quick Check and Chart Check rows
-  are explicit stock mentions and should create/update stock rows while keeping
-  the dedicated `Stock Quickcheck` and `Chart Check` traceability rows.
+  are explicit stock mentions and should create/update stock rows; the separate
+  `Stock Quickcheck` and `Chart Check` workbook tabs are intentionally inactive
+  because those rows now surface through `Stocks`.
 
 - No missing value is invented.
 - Each row has issue and page references. Source block references must be added

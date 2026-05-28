@@ -25,6 +25,34 @@ TABLE_LABELS = {
     "Dividenden- rendite",
     "Nächster Termin",
 }
+TABLE_FIELD_MAP = {
+    "Ziel": "target",
+    "Akt. Kurs": "current_price",
+    "52-W.- Hoch": "high_52w",
+    "52-W.- Tief": "low_52w",
+    "Perform. 1 Jahr": "performance_1y",
+    "Perform. 5 Jahre": "performance_5y",
+    "Stopp": "stop",
+    "Empf.- Kurs": "recommendation_price",
+    "Perform. seit Empf.": "performance_since_recommendation",
+    "Dividenden- rendite": "dividend_yield",
+    "Nächster Termin": "next_report_date",
+}
+TABLE_LABEL_PARTS = (
+    ("Perform. 1 Jahr", ("Perform.", "1 Jahr")),
+    ("Perform. 5 Jahre", ("Perform.", "5 Jahre")),
+    ("Perform. seit Empf.", ("Perform.", "seit Empf.")),
+    ("Dividenden- rendite", ("Dividenden-", "rendite")),
+    ("Empfehlung in Ausgabe", ("Empfehlung", "in Ausgabe")),
+    ("52-W.- Hoch", ("52-W.-", "Hoch")),
+    ("52-W.- Tief", ("52-W.-", "Tief")),
+    ("Akt. Kurs", ("Akt.", "Kurs")),
+    ("Empf.- Kurs", ("Empf.-", "Kurs")),
+    ("Nächster Termin", ("Nächster", "Termin")),
+    ("Weitere Infos unter", ("Weitere", "Infos", "unter")),
+    ("Ziel", ("Ziel",)),
+    ("Stopp", ("Stopp",)),
+)
 
 
 @dataclass(frozen=True)
@@ -167,38 +195,52 @@ def _extract_table_fields(
             break
         values.append(_normalize_money(line))
 
+    group_labels = _chart_table_group_labels(lines[:start], row_count=row_count)
     groups: list[list[str]] = []
     index = 0
-    for _ in range(12):
+    for _ in range(len(group_labels) or 12):
         if index + row_count > len(values):
             break
         groups.append(values[index : index + row_count])
         index += row_count
 
     rows = [dict() for _ in range(row_count)]
-    mapping = (
-        ("target", 0),
-        ("stop", 1),
-        ("current_price", 2),
-        ("recommendation_price", 3),
-        ("high_52w", 4),
-        ("low_52w", 5),
-        ("performance_1y", 6),
-        ("performance_5y", 7),
-        ("dividend_yield", 8),
-    )
-    for field_name, group_index in mapping:
-        if group_index >= len(groups):
-            continue
-        for row_index, value in enumerate(groups[group_index]):
-            rows[row_index][field_name] = value
+    if group_labels:
+        for group_index, label in enumerate(group_labels[: len(groups)]):
+            if label == "Empfehlung in Ausgabe":
+                for row_index, value in enumerate(groups[group_index]):
+                    if re.match(r"^\d{2}/\d{2}$", value):
+                        rows[row_index]["recommended_issue"] = value
+                continue
+            field_name = TABLE_FIELD_MAP.get(label)
+            if field_name is None:
+                continue
+            for row_index, value in enumerate(groups[group_index]):
+                rows[row_index][field_name] = value
+    else:
+        mapping = (
+            ("target", 0),
+            ("stop", 1),
+            ("current_price", 2),
+            ("recommendation_price", 3),
+            ("high_52w", 4),
+            ("low_52w", 5),
+            ("performance_1y", 6),
+            ("performance_5y", 7),
+            ("dividend_yield", 8),
+        )
+        for field_name, group_index in mapping:
+            if group_index >= len(groups):
+                continue
+            for row_index, value in enumerate(groups[group_index]):
+                rows[row_index][field_name] = value
 
-    if len(groups) > 10:
-        for row_index, value in enumerate(groups[10]):
-            rows[row_index]["next_report_date"] = value
-    if len(groups) > 11:
-        for row_index, value in enumerate(groups[11]):
-            rows[row_index]["performance_since_recommendation"] = value
+        if len(groups) > 10:
+            for row_index, value in enumerate(groups[10]):
+                rows[row_index]["next_report_date"] = value
+        if len(groups) > 11:
+            for row_index, value in enumerate(groups[11]):
+                rows[row_index]["performance_since_recommendation"] = value
 
     remaining = values[index:]
     for row_index in range(row_count):
@@ -210,6 +252,46 @@ def _extract_table_fields(
                 rows[row_index]["recommended_issue"] = f"{issue} {issue_date}"
 
     return rows
+
+
+def _chart_table_group_labels(lines: Sequence[str], *, row_count: int) -> list[str]:
+    if row_count <= 0:
+        return []
+    labels = _chart_table_labels(lines)
+    if not labels:
+        return []
+
+    groups: list[str] = []
+    index = 0
+    while index < len(labels):
+        chunk = labels[index : index + row_count]
+        if len(chunk) == row_count and len(set(chunk)) == 1:
+            groups.append(chunk[0])
+            index += row_count
+        else:
+            groups.append(labels[index])
+            index += 1
+    return groups
+
+
+def _chart_table_labels(lines: Sequence[str]) -> list[str]:
+    labels: list[str] = []
+    index = 0
+    while index < len(lines):
+        matched = ""
+        matched_length = 0
+        for label, parts in TABLE_LABEL_PARTS:
+            candidate = " ".join(lines[index : index + len(parts)])
+            if candidate == " ".join(parts):
+                matched = label
+                matched_length = len(parts)
+                break
+        if matched:
+            labels.append(matched)
+            index += matched_length
+        else:
+            index += 1
+    return labels
 
 
 def _extract_instruments(lines: Sequence[str]) -> list[dict[str, str]]:

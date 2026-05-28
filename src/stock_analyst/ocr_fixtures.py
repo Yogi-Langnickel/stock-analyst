@@ -250,7 +250,7 @@ DEFAULT_OCR_FIXTURES: tuple[OcrFixtureDefinition, ...] = (
         issue_id=DEFAULT_OCR_FIXTURE_ISSUE_ID,
         pages=(37,),
         expected_section_labels=("Chart Check",),
-        intended_extraction_targets=("Chart Check", "Stocks", "Extraction Audit"),
+        intended_extraction_targets=("Stocks", "Extraction Audit"),
         notes=("Review chart table fields without treating commentary as approved rows.",),
     ),
     OcrFixtureDefinition(
@@ -278,7 +278,7 @@ DEFAULT_OCR_FIXTURES: tuple[OcrFixtureDefinition, ...] = (
         issue_id=DEFAULT_OCR_FIXTURE_ISSUE_ID,
         pages=tuple(range(78, 90)),
         expected_section_labels=("Stock review pages", "Chart Check", "Quick Check"),
-        intended_extraction_targets=("Stocks", "Chart Check", "Stock Quickcheck"),
+        intended_extraction_targets=("Stocks", "Extraction Audit"),
         notes=("Review high-value stock sections before broad parser expansion.",),
     ),
 )
