@@ -36,7 +36,7 @@ SHEET_DESTINATIONS = {
     MagazineSectionKind.AKTIONAER_DEPOT_TRANSACTIONS: "Depot Transactions",
     MagazineSectionKind.CHART_CHECK: "Stocks",
     MagazineSectionKind.QUICK_CHECK: "Stocks",
-    MagazineSectionKind.STATISTICS_CONTEXT: "Statistics Context",
+    MagazineSectionKind.STATISTICS_CONTEXT: "Extraction Audit",
     MagazineSectionKind.LOW_PRIORITY_BACK_MATTER: "Extraction Audit",
 }
 

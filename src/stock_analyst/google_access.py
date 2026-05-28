@@ -93,7 +93,6 @@ class GoogleSheetTabSpec:
 
 DATA_BACKED_TAB_TITLES = {
     "Navigation Dashboard",
-    "Refinement",
     "Stocks",
     "Derivative Tips",
     "AKTIONAER Depot",
@@ -629,6 +628,7 @@ GENERATED_SHEET_TAB_TITLES = {
 DEFAULT_SHEET_TABS = tuple(
     spec for spec in DEFAULT_SHEET_TABS if spec.title in DATA_BACKED_TAB_TITLES
 )
+REFINEMENT_SHEET_TABS = tuple(spec for spec in ALL_SHEET_TABS if spec.title == "Refinement")
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -1046,7 +1046,7 @@ def write_refinement_plan_to_google_sheet(
     refinement_plan: Mapping[str, object],
     *,
     sheets_service_factory=None,
-    tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
+    tab_specs: tuple[GoogleSheetTabSpec, ...] = REFINEMENT_SHEET_TABS,
 ) -> dict[str, object]:
     """Write page-by-page refinement rows into the configured Sheet."""
 
@@ -1077,6 +1077,7 @@ def write_refinement_plan_to_google_sheet(
         sheets_service_factory=sheets_service_factory,
         tab_specs=tab_specs,
         write_headers=True,
+        prune_extra_tabs=False,
     )
     body_start = spec.header_row + 1
     body_range = f"{_quote_sheet_title(spec.title)}!A{body_start}:{_column_letter(len(spec.headers))}"
@@ -1498,7 +1499,6 @@ def _merge_stock_sheet_row(
     fill_only_headers = {
         "Company",
         "WKN",
-        "Held since",
     }
     for header in latest_wins_headers:
         _copy_stock_sheet_value(values, incoming, spec, header, overwrite=True)
@@ -1507,10 +1507,10 @@ def _merge_stock_sheet_row(
 
     recommendation_index = _header_index(spec, "Recommendation")
     if recommendation_index is not None and incoming[recommendation_index]:
-        current = values[recommendation_index]
-        candidate = incoming[recommendation_index]
-        if not current or _sheet_recommendation_priority(candidate) >= _sheet_recommendation_priority(current):
-            values[recommendation_index] = candidate
+        values[recommendation_index] = incoming[recommendation_index]
+        held_since_index = _header_index(spec, "Held since")
+        if held_since_index is not None:
+            values[held_since_index] = incoming[held_since_index]
 
     comment_index = _header_index(spec, "Comment")
     if comment_index is not None:
@@ -1573,19 +1573,6 @@ def _looks_like_richer_sheet_recommendation(candidate: str, current: str) -> boo
         bool(re.search(r"\d{2}\.\d{2}\.\d{2,4}", current)),
         len(current),
     )
-
-
-def _sheet_recommendation_priority(value: str) -> int:
-    normalized = value.casefold().strip()
-    if normalized == "verkauft":
-        return 4
-    if normalized == "new_recommendation":
-        return 3
-    if normalized == "no_buy":
-        return 2
-    if normalized == "hold":
-        return 1
-    return 0
 
 
 def _join_unique_sheet_values(values: tuple[str, ...], *, separator: str) -> str:

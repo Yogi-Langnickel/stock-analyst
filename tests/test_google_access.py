@@ -100,6 +100,29 @@ class _FakeSheets:
 
 
 class GoogleAccessTest(unittest.TestCase):
+    def _stock_sheet_row(
+        self,
+        *,
+        company: str = "Banco Sabadell",
+        wkn: str = "A0MRD4",
+        recommendation: str = "",
+        held_since: str = "",
+        comment: str = "",
+        issue: str = "2026-W03",
+        page: str = "22",
+        date_updated: str = "2026-05-17",
+    ) -> list[str]:
+        row = ["" for _ in range(27)]
+        row[0] = company
+        row[1] = wkn
+        row[20] = recommendation
+        row[21] = held_since
+        row[23] = comment
+        row[24] = issue
+        row[25] = page
+        row[26] = date_updated
+        return row
+
     def test_load_env_file_parses_quoted_google_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_file = Path(temp_dir) / ".env.google"
@@ -425,6 +448,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(tab_status["Depot Transactions"], "parser_backed")
         self.assertNotIn("Chart Check", tab_status)
         self.assertNotIn("Stock Quickcheck", tab_status)
+        self.assertNotIn("Refinement", tab_status)
         self.assertEqual(tab_status["Insider Activity"], "planned")
         self.assertEqual(tab_status["Navigation Dashboard"], "layout_only")
         navigation_tab = next(tab for tab in result["tabs"] if tab["title"] == "Navigation Dashboard")
@@ -812,10 +836,68 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(stocks_write["values"][1][6], "18,6 %")
         self.assertEqual(stocks_write["values"][1][11], "4,30 EUR")
         self.assertEqual(stocks_write["values"][1][20], "new_recommendation")
+        self.assertEqual(stocks_write["values"][1][21], "")
         self.assertIn("Previous comment", stocks_write["values"][1][23])
         self.assertEqual(stocks_write["values"][1][24], "2026-W02, 2026-W03")
         self.assertEqual(stocks_write["values"][1][25], "20, 22")
         self.assertIn("'Stocks'!A4:AA", [request["range"] for request in values_resource.clear_requests])
+
+    def test_google_sheet_export_uses_latest_stock_recommendation_and_held_since(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [{"properties": {"title": "Stocks"}}],
+                }
+            )
+            sheets.spreadsheets_resource.values_resource.values_by_range[
+                "'Stocks'!A4:AA"
+            ] = [
+                self._stock_sheet_row(
+                    recommendation="new_recommendation",
+                    issue="2026-W02",
+                    page="20",
+                    date_updated="2026-05-10",
+                )
+            ]
+            workbook_plan = {
+                "issueId": "2026-W03",
+                "rows": [
+                    {
+                        "tab": "Stocks",
+                        "values": self._stock_sheet_row(
+                            recommendation="hold",
+                            held_since="02/2026",
+                            comment="Follow-up coverage.",
+                        ),
+                    }
+                ],
+            }
+
+            result = write_workbook_plan_to_google_sheet(
+                config,
+                workbook_plan,
+                sheets_service_factory=lambda: sheets,
+            )
+
+        values_resource = sheets.spreadsheets_resource.values_resource
+        data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
+        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:AA4")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(stocks_write["values"][0][20], "hold")
+        self.assertEqual(stocks_write["values"][0][21], "02/2026")
+        self.assertEqual(stocks_write["values"][0][24], "2026-W02, 2026-W03")
+        self.assertEqual(stocks_write["values"][0][25], "20, 22")
 
     def test_google_sheet_export_rejects_short_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
