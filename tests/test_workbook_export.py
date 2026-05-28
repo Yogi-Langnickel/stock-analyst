@@ -1090,7 +1090,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
                     performance_since_recommendation="+39,7 %",
                     target="310,00 EUR",
                     stop="224,00 EUR",
-                    dividend_yield="1,4 %",
+                    dividend_yield="2026-05-27",
                     next_report_date="Quartalszahlen 16.01.26",
                     high_52w="284,50 EUR",
                     low_52w="114,00 EUR",
@@ -1108,6 +1108,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(stock_row["values"][3], "199,00 EUR")
         self.assertEqual(stock_row["values"][4], stock_row["values"][-1])
         self.assertEqual(stock_row["values"][5], "278,00 EUR")
+        self.assertEqual(stock_row["values"][6], "")
         self.assertEqual(stock_row["values"][18], "16.01.26")
         self.assertEqual(stock_row["values"][19], "Quartalszahlen")
         self.assertEqual(stock_row["values"][20], "hold")

@@ -66,6 +66,7 @@ MONEY_WITH_CURRENCY_RE = re.compile(
 )
 REPORT_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{2,4}\b")
 ISSUE_TOKEN_RE = re.compile(r"\b\d{1,2}/\d{2,4}\b")
+PERCENT_VALUE_RE = re.compile(r"^\s*[+-]?\d+(?:[,.]\d+)?\s*%\s*$")
 
 
 class WorkbookExportPlanError(ValueError):
@@ -255,9 +256,9 @@ def build_workbook_export_plan(
 
     resolved_stock_update_date = _date_cell_value(stock_update_date) or _current_utc_date()
     dividend_yield_by_wkn = {
-        row.wkn: row.dividend_yield
+        row.wkn: _percent_only(row.dividend_yield)
         for row in _dividend_rows_from(dividend_strategy)
-        if row.wkn and row.dividend_yield
+        if row.wkn and _percent_only(row.dividend_yield)
     }
     card_rows = _card_rows(
         _cards_from(recommendation_cards),
@@ -373,7 +374,7 @@ def _recommendation_card_row(
             _price_currency_only(card.current_price)
             if card.recommendation_status == "new_recommendation"
             else "",
-            dividend_yield,
+            _percent_only(dividend_yield),
             card.market_cap or "",
             _chance_risk(card.chance, card.risk),
             card.kuv_26e or "",
@@ -601,7 +602,7 @@ def _dividend_rows(
                     row.month,
                     row.current_price or "",
                     row.market_cap_billions_eur or "",
-                    row.dividend_yield or "",
+                    _percent_only(row.dividend_yield),
                     row.kgv_2026e or "",
                     row.payout_count or "",
                     row.next_cum_day or "",
@@ -875,7 +876,7 @@ def _chart_check_stock_rows(
                     _price_currency_only(row.current_price),
                     stock_update_date if row.current_price else "",
                     _price_currency_only(row.recommendation_price),
-                    row.dividend_yield,
+                    _percent_only(row.dividend_yield),
                     "",
                     "",
                     "",
@@ -1057,6 +1058,13 @@ def _price_currency_only(value: str | None) -> str:
         return ""
     amount, currency = match.groups()
     return f"{amount} {currency}"
+
+
+def _percent_only(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = " ".join(value.split())
+    return normalized if PERCENT_VALUE_RE.match(normalized) else ""
 
 
 def _dividend_yield_over_threshold(value: str, *, threshold: float = 3.0) -> bool:

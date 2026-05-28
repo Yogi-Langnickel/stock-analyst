@@ -318,8 +318,8 @@ class GoogleAccessTest(unittest.TestCase):
                     "spreadsheetId": config.sheets_spreadsheet_id,
                     "properties": {"title": "Der Aktionär Summaries"},
                     "sheets": [
-                        {"properties": {"title": "Navigation Dashboard"}},
-                        {"properties": {"title": "Stocks"}},
+                        {"properties": {"sheetId": 10, "title": "Navigation Dashboard"}},
+                        {"properties": {"sheetId": 20, "title": "Stocks"}},
                     ],
                 }
             )
@@ -367,7 +367,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn(
             {
                 "range": "'Navigation Dashboard'!B6",
-                "values": [["Stocks"]],
+                "values": [['=HYPERLINK("#gid=20","Stocks")']],
             },
             values_body["data"],
         )
@@ -387,6 +387,10 @@ class GoogleAccessTest(unittest.TestCase):
         )
         self.assertNotIn({"range": "'Stocks'!A1", "values": [["date updated"]]}, values_body["data"])
         self.assertNotIn({"range": "'Stocks'!B1", "values": [[""]]}, values_body["data"])
+        self.assertIn(
+            "'Stocks'!A1:AA2",
+            [request["range"] for request in sheets.spreadsheets_resource.values_resource.clear_requests],
+        )
         self.assertIn(
             {
                 "range": "'Stocks'!A3:AA3",
@@ -639,6 +643,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["headersRewritten"])
         self.assertEqual(result["clearedTabCount"], len(result["clearedRanges"]))
+        self.assertIn("'Stocks'!A1:AA2", clear_ranges)
         self.assertIn("'Stocks'!A4:AA", clear_ranges)
         self.assertNotIn("'Navigation Dashboard'!A5:E", clear_ranges)
         self.assertGreater(len(values_resource.batch_update_requests), 0)
@@ -702,13 +707,13 @@ class GoogleAccessTest(unittest.TestCase):
                     "2 EUR",
                     "",
                     "",
+                    "2026-05-27",
                     "",
                     "",
                     "",
                     "",
                     "",
-                    "",
-                    "",
+                    "!",
                     "",
                     "",
                     "",
@@ -830,6 +835,8 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn("Dividend Focus", result["clearedTabs"])
         self.assertEqual(stocks_write["values"][0][0], "Keep Different Issue")
         self.assertEqual(stocks_write["values"][1][0], "Banco Sabadell")
+        self.assertEqual(stocks_write["values"][0][6], "")
+        self.assertEqual(stocks_write["values"][0][12], "")
         self.assertEqual(stocks_write["values"][1][2], "2,90 EUR")
         self.assertEqual(stocks_write["values"][1][3], "3,33 EUR")
         self.assertEqual(stocks_write["values"][1][5], "3,33 EUR")

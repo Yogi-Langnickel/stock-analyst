@@ -15,6 +15,12 @@ GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 
 GOOGLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
+SHEET_MONEY_WITH_CURRENCY_RE = re.compile(
+    r"([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?)\s*"
+    r"(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\b",
+    re.IGNORECASE,
+)
+SHEET_PERCENT_VALUE_RE = re.compile(r"^\s*[+-]?\d+(?:[,.]\d+)?\s*%\s*$")
 
 
 class GoogleAccessError(ValueError):
@@ -108,49 +114,49 @@ NAVIGATION_DASHBOARD_CELLS: tuple[tuple[str, str], ...] = (
     ("A2", "Navigation Dashboard"),
     ("A3", "Draft reviewer workbook. Verify issue/page/source fields before family-facing export."),
     ("A6", "Core review"),
-    ("B6", "Stocks"),
+    ("B6", "__sheet_link__:Stocks"),
     ("C6", "Canonical equity rows merged from recommendation cards, Quick Check, and Chart Check."),
     ("D6", "Start here for stock review."),
     ("E6", "=COUNTA('Stocks'!A4:A)"),
     ("F6", "parser-backed; review required"),
     ("G6", "Current Price* stays blank until provider enrichment writes it."),
     ("A7", "Core review"),
-    ("B7", "Dividend Focus"),
+    ("B7", "__sheet_link__:Dividend Focus"),
     ("C7", "Dividend table rows and multi-period dividend context."),
     ("D7", "Validate yield/date/price fields."),
     ("E7", "=COUNTA('Dividend Focus'!A2:A)"),
     ("F7", "parser-backed; review required"),
     ("G7", "Dividend yield is source context, not a guaranteed future payout."),
     ("A8", "Core review"),
-    ("B8", "Derivative Tips"),
+    ("B8", "__sheet_link__:Derivative Tips"),
     ("C8", "Calls, puts, certificates, and derivative overview rows."),
     ("D8", "Check derivative WKN/product terms."),
     ("E8", "=COUNTA('Derivative Tips'!A2:A)"),
     ("F8", "parser-backed; review required"),
     ("G8", "Highest risk surface; do not group rows by underlying alone."),
     ("A9", "Publisher portfolio"),
-    ("B9", "AKTIONAER Depot"),
+    ("B9", "__sheet_link__:AKTIONAER Depot"),
     ("C9", "Publisher model-depot position snapshots."),
     ("D9", "Treat as source context, not advice."),
     ("E9", "=COUNTA('AKTIONAER Depot'!A2:A)"),
     ("F9", "parser-backed; review required"),
     ("G9", "This is the publisher's model portfolio, not a household portfolio."),
     ("A10", "Publisher portfolio"),
-    ("B10", "Depot Transactions"),
+    ("B10", "__sheet_link__:Depot Transactions"),
     ("C10", "Publisher transaction and no-transaction ledger."),
     ("D10", "Check event history."),
     ("E10", "=COUNTA('Depot Transactions'!A2:A)"),
     ("F10", "parser-backed; review required"),
     ("G10", "Use for source history and transaction evidence."),
     ("A11", "Source detail"),
-    ("B11", "Insider Activity"),
+    ("B11", "__sheet_link__:Insider Activity"),
     ("C11", "SEC Form 4 insider activity rows and stock-level signal context."),
     ("D11", "Review filing links and transaction classification."),
     ("E11", "=COUNTA('Insider Activity'!A2:A)"),
     ("F11", "planned; review required"),
     ("G11", "Signals are context only and must link to source filings."),
     ("A12", "QA"),
-    ("B12", "Extraction Audit"),
+    ("B12", "__sheet_link__:Extraction Audit"),
     ("C12", "Parser warnings, skipped sections, OCR-needed pages, and review notes."),
     ("D12", "Fix blockers before relying on rows."),
     ("E12", "=COUNTA('Extraction Audit'!A2:A)"),
@@ -809,7 +815,20 @@ def bootstrap_google_sheet(
             )
             sheet_properties = _sheet_properties_with_formats(spreadsheet)
 
-        header_ranges = _build_sheet_header_ranges(tab_specs) if write_headers else ()
+        pre_header_clear_ranges = (
+            _build_sheet_pre_header_clear_ranges(tab_specs) if write_headers else ()
+        )
+        for range_name in pre_header_clear_ranges:
+            sheets.spreadsheets().values().clear(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                range=range_name,
+                body={},
+            ).execute()
+        header_ranges = (
+            _build_sheet_header_ranges(tab_specs, sheet_properties=sheet_properties)
+            if write_headers
+            else ()
+        )
         if header_ranges:
             sheets.spreadsheets().values().batchUpdate(
                 spreadsheetId=config.sheets_spreadsheet_id,
@@ -838,6 +857,9 @@ def bootstrap_google_sheet(
         "createdTabs": list(missing_titles),
         "deletedTabCount": len(delete_sheet_ids),
         "headerRowsWritten": len(tab_specs) if write_headers else 0,
+        "preHeaderRangesCleared": list(pre_header_clear_ranges)
+        if "pre_header_clear_ranges" in locals()
+        else [],
         "formatRulesWritten": len(format_requests) if "format_requests" in locals() else 0,
         "tabs": [
             {
@@ -948,6 +970,8 @@ def write_workbook_plan_to_google_sheet(
             continue
         _validate_sheet_row_width(tab, values, width=len(spec.headers))
         normalized_values = _normalize_sheet_row_values(values, width=len(spec.headers))
+        if tab == "Stocks":
+            normalized_values = _sanitize_stock_sheet_row(normalized_values, spec=spec)
         rows_by_tab.setdefault(tab, []).append(normalized_values)
 
     sheets = sheets_service_factory()
@@ -985,6 +1009,12 @@ def write_workbook_plan_to_google_sheet(
                     for row in existing_rows
                 ]
             )
+            if tab == "Stocks":
+                kept_rows = [
+                    _sanitize_stock_sheet_row(row, spec=spec)
+                    for row in kept_rows
+                    if not _is_header_row(row, spec=spec)
+                ]
             restored_existing_count += len(kept_rows)
             combined_rows = (
                 _merge_stock_sheet_rows(kept_rows + new_rows, spec=spec)
@@ -1232,11 +1262,18 @@ def write_drive_pdf_metadata_manifest(
 
 def _build_sheet_header_ranges(
     tab_specs: tuple[GoogleSheetTabSpec, ...],
+    *,
+    sheet_properties: tuple[Mapping[str, object], ...] = (),
 ) -> tuple[dict[str, object], ...]:
+    sheet_ids_by_title = {
+        str(properties.get("title")): int(properties["sheetId"])
+        for properties in sheet_properties
+        if properties.get("title") and "sheetId" in properties
+    }
     metadata_ranges = tuple(
         {
             "range": f"{_quote_sheet_title(spec.title)}!{cell}",
-            "values": [[value]],
+            "values": [[_resolve_metadata_cell_value(value, sheet_ids_by_title)]],
         }
         for spec in tab_specs
         for cell, value in spec.metadata_cells
@@ -1252,6 +1289,27 @@ def _build_sheet_header_ranges(
         for spec in tab_specs
     )
     return metadata_ranges + header_ranges
+
+
+def _resolve_metadata_cell_value(value: str, sheet_ids_by_title: Mapping[str, int]) -> str:
+    prefix = "__sheet_link__:"
+    if not value.startswith(prefix):
+        return value
+    title = value[len(prefix) :]
+    sheet_id = sheet_ids_by_title.get(title)
+    if sheet_id is None:
+        return title
+    return f'=HYPERLINK("#gid={sheet_id}","{title}")'
+
+
+def _build_sheet_pre_header_clear_ranges(
+    tab_specs: tuple[GoogleSheetTabSpec, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        f"{_quote_sheet_title(spec.title)}!A1:{_column_letter(len(spec.headers))}{spec.header_row - 1}"
+        for spec in tab_specs
+        if spec.header_row > 1 and not spec.metadata_cells
+    )
 
 
 def _build_sheet_body_clear_ranges(
@@ -1387,6 +1445,46 @@ def _normalize_sheet_row_values(values: list[object], *, width: int) -> list[str
     if len(row) < width:
         row.extend("" for _ in range(width - len(row)))
     return row
+
+
+def _sanitize_stock_sheet_row(row: list[str], *, spec: GoogleSheetTabSpec) -> list[str]:
+    values = list(row)
+    for header in (
+        "Current Price*",
+        "Magazine Price",
+        "Price at Recommendation",
+        "Target",
+        "Stop",
+        "52w High",
+        "52w Low",
+    ):
+        index = _header_index(spec, header)
+        if index is not None:
+            values[index] = _sheet_price_currency_only(values[index])
+    dividend_yield_index = _header_index(spec, "Dividend Yield")
+    if dividend_yield_index is not None:
+        values[dividend_yield_index] = _sheet_percent_only(values[dividend_yield_index])
+    return values
+
+
+def _sheet_price_currency_only(value: str) -> str:
+    if not value:
+        return ""
+    normalized = value.replace("€", "EUR").replace("$", "USD")
+    match = SHEET_MONEY_WITH_CURRENCY_RE.search(normalized)
+    if match is None:
+        return ""
+    amount, currency = match.groups()
+    return f"{amount} {currency}"
+
+
+def _sheet_percent_only(value: str) -> str:
+    normalized = " ".join((value or "").split())
+    return normalized if SHEET_PERCENT_VALUE_RE.match(normalized) else ""
+
+
+def _is_header_row(row: list[str], *, spec: GoogleSheetTabSpec) -> bool:
+    return tuple(row[: len(spec.headers)]) == spec.headers
 
 
 def _refinement_row_values(
