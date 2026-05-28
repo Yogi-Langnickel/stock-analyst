@@ -35,16 +35,15 @@ long/short products, certificates, and derivative overview rows all use
    Canonical equity row per WKN/normalized company. Stock recommendation cards,
    `Aktien im Quick-Check`, and `Chart-Check` rows all surface here, with
    duplicate mentions consolidated and non-empty fields merged. The stock table
-   header starts on row 3 with `Company`, `WKN`, `Current Price*`,
-   `Magazine Price`, `Magazine Price As Of`, `Price at Recommendation`,
-   `Dividend Yield`, `Market Cap`, `Chance/Risk`, `P/S Ratio 26e`,
-   `P/E Ratio 26e`, `Target`, `Stop`, `Performance since Recommendation`,
-   `52w High`, `52w Low`, `1Y Performance`, `5Y Performance`,
-   `Next Report`, `Report Type`, `Recommendation`, `Held since`,
+   header starts on row 1 with `Company`, `WKN`, `Target`, `Stop`,
+   `Current price`, `Market Cap`, `Dividend Yield`, `Recommendation`,
+   `Held since`, `Performance since Recommendation`, `Next Report`,
+   `Report type`, `P/S Ratio 26e`, `P/E Ratio 26e`, `Chance/Risk`,
    `Insider Activity`, `Comment`, `issue`, `page`, and `date updated`.
    `Next Report` is date-only; report labels such as quarterly or year-end
-   results live in `Report Type`. `Current Price*` stays blank until a future
-   enrichment job writes a provider-backed value.
+   results live in `Report type`. `Current price` preserves the printed
+   `Akt. Kurs` value as amount and currency until reviewed enrichment refreshes
+   it.
 
 3. `Derivative Tips`
    Unified detailed options/derivatives table. Issue and page are trailing
@@ -86,7 +85,7 @@ the live Sheet; those should be added only after this layout is accepted.
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `Navigation Dashboard` | `layout_only` | 5 rows, 2 cols | `A5` | Workbook title, static navigation rows, and row-count formulas | Entry dashboard based on the active tabs. Keep rows concise, source-neutral, and review-oriented; data clears preserve this layout. Row counts are spreadsheet formulas over active tab data ranges and do not trigger enrichment. |
-| `Stocks` | `parser_backed` | 3 rows, 2 cols | `A3` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current Price*` is reserved for provider-backed enrichment and remains blank in local magazine-only plans; printed price fields contain only price and currency; `Next Report` is date-only; `Report Type` stores the event label; `Recommendation` stores action/status such as `hold`, `new_recommendation`, `no_buy`, or `verkauft`; `Held since` stores the issue only for holds; `Insider Activity` is reserved for reviewed SEC Form 4 signal links. |
+| `Stocks` | `parser_backed` | 1 row, 2 cols | `A1` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current price`, `Target`, and `Stop` contain only amount and currency; `Dividend Yield` accepts only unsigned yield percentages; `P/S Ratio 26e` and `P/E Ratio 26e` accept only plain ratio values; `Next Report` is date-only; `Report type` stores the event label; `Recommendation` stores action/status such as `hold`, `new_recommendation`, `no_buy`, or `verkauft`; `Held since` stores the issue only for holds; `Insider Activity` links to the dedicated insider transaction tab. |
 | `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Printed source prices use `Magazine Entry Price` and `Magazine Current Price`; source ID stays in row metadata; visible provenance is trailing issue/page columns. |
 | `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; printed source prices use `Magazine Buy Price` and `Magazine Current Price`; performance cells are green for positive values and red for negative values. |
 | `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks; printed source transaction prices use `Magazine Transaction Price`; performance cells use positive/negative conditional formatting. |
@@ -120,8 +119,8 @@ manual review.
 ## Currency Display
 
 Preserve every magazine-source price in its printed currency. Do not overwrite
-`Magazine Price`, `Price at Recommendation`, `Target`, `Stop`, derivative
-strike/base values, or publisher portfolio values during currency conversion.
+`Current price`, `Target`, `Stop`, derivative strike/base values, or publisher
+portfolio values during currency conversion.
 
 Add a display-currency control to the dashboard layer once daily enrichment is
 active:

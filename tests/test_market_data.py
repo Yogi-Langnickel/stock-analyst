@@ -30,6 +30,14 @@ from stock_analyst.market_data import (
     parse_stooq_daily_csv,
 )
 from stock_analyst.cli import run_market_data_plan_command, run_market_symbol_map_template_command
+from stock_analyst.google_access import DEFAULT_SHEET_TABS
+
+
+def headers_for(tab: str) -> tuple[str, ...]:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == tab:
+            return spec.headers
+    raise AssertionError(f"unknown tab: {tab}")
 
 
 def stock_values(
@@ -45,35 +53,20 @@ def stock_values(
     page: str = "22",
     updated: str = "2026-05-17",
 ) -> list[str]:
-    return [
-        name,
-        wkn,
-        "",
-        magazine_price,
-        updated if magazine_price else "",
-        price_at_recommendation,
-        "",
-        "",
-        "",
-        "",
-        "",
-        target,
-        stop,
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        recommendation,
-        "",
-        "",
-        "",
-        issue,
-        page,
-        updated,
-    ]
+    values_by_header = {
+        "Company": name,
+        "WKN": wkn,
+        "Target": target,
+        "Stop": stop,
+        "Current price": magazine_price,
+        "Recommendation": recommendation,
+        "issue": issue,
+        "page": page,
+        "date updated": updated,
+    }
+    if price_at_recommendation:
+        values_by_header["Comment"] = f"Price at recommendation: {price_at_recommendation}"
+    return [values_by_header.get(header, "") for header in headers_for("Stocks")]
 
 
 class MarketDataTest(unittest.TestCase):
@@ -449,7 +442,7 @@ class MarketDataTest(unittest.TestCase):
             ]
         }
 
-        with self.assertRaisesRegex(ValueError, "Stocks.*27 values.*got 11"):
+        with self.assertRaisesRegex(ValueError, "Stocks.*20 values.*got 11"):
             market_data_candidates_from_workbook_plan(payload)
 
     def test_workbook_plan_candidates_only_plan_mapped_stock_rows(self) -> None:
