@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import os
 import re
-from typing import Mapping
 
 
 GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
@@ -16,11 +16,14 @@ GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 
 GOOGLE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
 SHEET_MONEY_WITH_CURRENCY_RE = re.compile(
+    r"(?:(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\s*"
+    r"([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?)|"
     r"([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?)\s*"
-    r"(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\b",
+    r"(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\b)",
     re.IGNORECASE,
 )
-SHEET_PERCENT_VALUE_RE = re.compile(r"^\s*[+-]?\d+(?:[,.]\d+)?\s*%\s*$")
+SHEET_UNSIGNED_PERCENT_VALUE_RE = re.compile(r"^\s*\d+(?:[,.]\d+)?\s*%\s*$")
+SHEET_RATIO_VALUE_RE = re.compile(r"^\s*\d+(?:[,.]\d+)?\s*$")
 
 
 class GoogleAccessError(ValueError):
@@ -117,9 +120,9 @@ NAVIGATION_DASHBOARD_CELLS: tuple[tuple[str, str], ...] = (
     ("B6", "__sheet_link__:Stocks"),
     ("C6", "Canonical equity rows merged from recommendation cards, Quick Check, and Chart Check."),
     ("D6", "Start here for stock review."),
-    ("E6", "=COUNTA('Stocks'!A4:A)"),
+    ("E6", "=COUNTA('Stocks'!A2:A)"),
     ("F6", "parser-backed; review required"),
-    ("G6", "Current Price* stays blank until provider enrichment writes it."),
+    ("G6", "Price, target, stop, yield, and ratio columns are shape-sanitized."),
     ("A7", "Core review"),
     ("B7", "__sheet_link__:Dividend Focus"),
     ("C7", "Dividend table rows and multi-period dividend context."),
@@ -218,26 +221,19 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         (
             "Company",
             "WKN",
-            "Current Price*",
-            "Magazine Price",
-            "Magazine Price As Of",
-            "Price at Recommendation",
-            "Dividend Yield",
-            "Market Cap",
-            "Chance/Risk",
-            "P/S Ratio 26e",
-            "P/E Ratio 26e",
             "Target",
             "Stop",
-            "Performance since Recommendation",
-            "52w High",
-            "52w Low",
-            "1Y Performance",
-            "5Y Performance",
-            "Next Report",
-            "Report Type",
+            "Current price",
+            "Market Cap",
+            "Dividend Yield",
             "Recommendation",
             "Held since",
+            "Performance since Recommendation",
+            "Next Report",
+            "Report type",
+            "P/S Ratio 26e",
+            "P/E Ratio 26e",
+            "Chance/Risk",
             "Insider Activity",
             "Comment",
             "issue",
@@ -245,16 +241,16 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "date updated",
         ),
         "Equity dashboard and reviewed stock mentions.",
-        header_row=3,
-        frozen_rows=3,
+        header_row=1,
+        frozen_rows=1,
         frozen_columns=2,
-        table_starts_at="A3",
+        table_starts_at="A1",
         layout_notes=(
             "Only explicit stock mentions become rows; do not fan out index constituents.",
             "Quick-check and chart-check stock rows also surface here with split source fields.",
-            "Current Price* is daily enrichment and stays blank until enrichment writes it.",
-            "Magazine Price and Price at Recommendation preserve printed magazine source values.",
-            "Next Report stores only the date; Report Type stores the event label.",
+            "Current price preserves printed Akt. Kurs as amount and currency until reviewed enrichment refreshes it.",
+            "Target, Stop, and Current price must contain only amount and currency.",
+            "Next Report stores only the date; Report type stores the event label.",
             "Recommendation stores the current action/status; Held since stores the source issue for holds.",
             "Insider Activity is reserved for SEC Form 4 signal links from the dedicated tab.",
             "Row-level date updated is the last field and advances on enrichment or newer mention.",
@@ -266,7 +262,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         (
             "ETF",
             "WKN",
-            "Current Price*",
+            "Current price",
             "Price at Recommendation",
             "Distribution/Yield",
             "Recommendation",
@@ -290,7 +286,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         (
             "Commodity",
             "Instrument",
-            "Current Price*",
+            "Current price",
             "Recommendation",
             "Context",
             "Issue",
@@ -338,7 +334,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         (
             "Crypto",
             "Symbol",
-            "Current Price*",
+            "Current price",
             "Price at Recommendation",
             "Recommendation",
             "Context",
@@ -492,6 +488,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "WKN",
             "Quantity",
             "Buy date",
+            "Sale date",
             "Magazine Buy Price",
             "Magazine Current Price",
             "Value",
@@ -981,6 +978,10 @@ def write_workbook_plan_to_google_sheet(
         tab_specs=tab_specs,
         write_headers=True,
     )
+    sheet_ids_by_title = _fetch_sheet_ids_by_title(
+        sheets,
+        spreadsheet_id=config.sheets_spreadsheet_id,
+    )
     try:
         write_ranges: list[dict[str, object]] = []
         cleared_tabs: list[str] = []
@@ -1021,6 +1022,15 @@ def write_workbook_plan_to_google_sheet(
                 if tab == "Stocks"
                 else kept_rows + new_rows
             )
+            if tab == "Stocks":
+                combined_rows = [
+                    _sanitize_stock_sheet_row(
+                        row,
+                        spec=spec,
+                        sheet_ids_by_title=sheet_ids_by_title,
+                    )
+                    for row in combined_rows
+                ]
             if replace_issue:
                 sheets.spreadsheets().values().clear(
                     spreadsheetId=config.sheets_spreadsheet_id,
@@ -1440,6 +1450,23 @@ def _sheet_values_get(
     return values if isinstance(values, list) else []
 
 
+def _fetch_sheet_ids_by_title(sheets, *, spreadsheet_id: str) -> dict[str, int]:
+    response = (
+        sheets.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties(sheetId,title)")
+        .execute()
+    )
+    return {
+        str(properties.get("title")): int(properties["sheetId"])
+        for properties in (
+            sheet.get("properties", {})
+            for sheet in response.get("sheets", [])
+            if isinstance(sheet, Mapping)
+        )
+        if properties.get("title") and "sheetId" in properties
+    }
+
+
 def _normalize_sheet_row_values(values: list[object], *, width: int) -> list[str]:
     row = [str(value) if value is not None else "" for value in values[:width]]
     if len(row) < width:
@@ -1447,23 +1474,38 @@ def _normalize_sheet_row_values(values: list[object], *, width: int) -> list[str
     return row
 
 
-def _sanitize_stock_sheet_row(row: list[str], *, spec: GoogleSheetTabSpec) -> list[str]:
+def _sanitize_stock_sheet_row(
+    row: list[str],
+    *,
+    spec: GoogleSheetTabSpec,
+    sheet_ids_by_title: Mapping[str, int] | None = None,
+) -> list[str]:
     values = list(row)
     for header in (
-        "Current Price*",
-        "Magazine Price",
-        "Price at Recommendation",
         "Target",
         "Stop",
-        "52w High",
-        "52w Low",
+        "Current price",
     ):
         index = _header_index(spec, header)
         if index is not None:
             values[index] = _sheet_price_currency_only(values[index])
     dividend_yield_index = _header_index(spec, "Dividend Yield")
     if dividend_yield_index is not None:
-        values[dividend_yield_index] = _sheet_percent_only(values[dividend_yield_index])
+        values[dividend_yield_index] = _sheet_unsigned_percent_only(
+            values[dividend_yield_index]
+        )
+    for header in ("P/S Ratio 26e", "P/E Ratio 26e"):
+        index = _header_index(spec, header)
+        if index is not None:
+            values[index] = _sheet_ratio_only(values[index])
+    insider_index = _header_index(spec, "Insider Activity")
+    if insider_index is not None and not values[insider_index] and sheet_ids_by_title:
+        sheet_id = sheet_ids_by_title.get("Insider Activity")
+        if sheet_id is not None and (
+            _row_value_by_header(values, spec, "WKN")
+            or _row_value_by_header(values, spec, "Company")
+        ):
+            values[insider_index] = f'=HYPERLINK("#gid={sheet_id}","Insiders")'
     return values
 
 
@@ -1474,13 +1516,20 @@ def _sheet_price_currency_only(value: str) -> str:
     match = SHEET_MONEY_WITH_CURRENCY_RE.search(normalized)
     if match is None:
         return ""
-    amount, currency = match.groups()
+    prefix_currency, prefix_amount, suffix_amount, suffix_currency = match.groups()
+    amount = prefix_amount or suffix_amount
+    currency = prefix_currency or suffix_currency
     return f"{amount} {currency}"
 
 
-def _sheet_percent_only(value: str) -> str:
+def _sheet_unsigned_percent_only(value: str) -> str:
     normalized = " ".join((value or "").split())
-    return normalized if SHEET_PERCENT_VALUE_RE.match(normalized) else ""
+    return normalized if SHEET_UNSIGNED_PERCENT_VALUE_RE.match(normalized) else ""
+
+
+def _sheet_ratio_only(value: str) -> str:
+    normalized = " ".join((value or "").split())
+    return normalized if SHEET_RATIO_VALUE_RE.match(normalized) else ""
 
 
 def _is_header_row(row: list[str], *, spec: GoogleSheetTabSpec) -> bool:
@@ -1573,24 +1622,17 @@ def _merge_stock_sheet_row(
 ) -> list[str]:
     values = list(existing)
     latest_wins_headers = {
-        "Current Price*",
-        "Magazine Price",
-        "Magazine Price As Of",
-        "Price at Recommendation",
-        "Dividend Yield",
-        "Market Cap",
-        "Chance/Risk",
-        "P/S Ratio 26e",
-        "P/E Ratio 26e",
         "Target",
         "Stop",
+        "Current price",
+        "Market Cap",
+        "Dividend Yield",
         "Performance since Recommendation",
-        "52w High",
-        "52w Low",
-        "1Y Performance",
-        "5Y Performance",
         "Next Report",
-        "Report Type",
+        "Report type",
+        "P/S Ratio 26e",
+        "P/E Ratio 26e",
+        "Chance/Risk",
         "Insider Activity",
         "date updated",
     }

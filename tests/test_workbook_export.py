@@ -36,6 +36,12 @@ def headers_for(tab: str) -> tuple[str, ...]:
     raise AssertionError(f"unknown tab: {tab}")
 
 
+def value_for(row: dict[str, object], header: str, *, tab: str = "Stocks") -> str:
+    values = row["values"]
+    assert isinstance(values, list)
+    return values[headers_for(tab).index(header)]
+
+
 def load_workbook_fixture(name: str) -> dict[str, object]:
     return json.loads((FIXTURE_ROOT / name).read_text(encoding="utf-8"))
 
@@ -44,7 +50,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
     def test_plan_rejects_stale_row_width_before_serialization(self) -> None:
         with self.assertRaisesRegex(
             WorkbookExportPlanError,
-            r"workbook export row for Stocks must contain 27 values, got 26",
+            r"workbook export row for Stocks must contain 20 values, got 19",
         ):
             WorkbookExportPlan(
                 issue_id="2026-W03",
@@ -305,34 +311,30 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["reviewStatus"], ReviewStatus.NEEDS_REVIEW.value)
         self.assertEqual(row["sourceBlock"], "manual_review_pending")
         self.assertEqual(len(row["values"]), len(headers_for("Stocks")))
-        self.assertEqual(stock_tab["headerRow"], 3)
-        self.assertEqual(stock_tab["frozenRows"], 3)
+        self.assertEqual(stock_tab["headerRow"], 1)
+        self.assertEqual(stock_tab["frozenRows"], 1)
         self.assertEqual(stock_tab["frozenColumns"], 2)
-        self.assertEqual(stock_tab["tableStartsAt"], "A3")
+        self.assertEqual(stock_tab["tableStartsAt"], "A1")
         self.assertEqual(stock_tab["parserStatus"], "parser_backed")
         self.assertTrue(stock_tab["layoutNotes"])
         self.assertEqual(stock_tab["metadataCells"], [])
         self.assertEqual(row["values"][0], "Banco Sabadell")
         self.assertEqual(row["values"][1], "A0MRD4")
-        self.assertEqual(row["values"][2], "")
-        self.assertEqual(row["values"][3], "3,33 EUR")
-        self.assertEqual(row["values"][4], "2026-05-17")
-        self.assertEqual(row["values"][5], "3,33 EUR")
-        self.assertEqual(row["values"][6], "18,6 %")
-        self.assertEqual(row["values"][7], "16,8 Mrd. EUR")
-        self.assertEqual(row["values"][8], "5/5")
-        self.assertEqual(row["values"][9], "")
-        self.assertEqual(row["values"][10], "10")
-        self.assertEqual(row["values"][11], "4,30 EUR")
-        self.assertEqual(row["values"][12], "2,70 EUR")
-        self.assertEqual(row["values"][13], "")
-        self.assertEqual(row["values"][20], "new_recommendation")
-        self.assertEqual(row["values"][21], "")
-        self.assertEqual(row["values"][22], "")
-        self.assertEqual(row["values"][23], "")
-        self.assertEqual(row["values"][24], "2026-W03")
-        self.assertEqual(row["values"][25], "22")
-        self.assertEqual(row["values"][26], "2026-05-17")
+        self.assertEqual(value_for(row, "Target"), "4,30 EUR")
+        self.assertEqual(value_for(row, "Stop"), "2,70 EUR")
+        self.assertEqual(value_for(row, "Current price"), "3,33 EUR")
+        self.assertEqual(value_for(row, "Market Cap"), "16,8 Mrd. EUR")
+        self.assertEqual(value_for(row, "Dividend Yield"), "18,6 %")
+        self.assertEqual(value_for(row, "Recommendation"), "new_recommendation")
+        self.assertEqual(value_for(row, "Held since"), "")
+        self.assertEqual(value_for(row, "P/S Ratio 26e"), "")
+        self.assertEqual(value_for(row, "P/E Ratio 26e"), "10")
+        self.assertEqual(value_for(row, "Chance/Risk"), "Chance ★★★★★ / Risk ★★★★★")
+        self.assertEqual(value_for(row, "Insider Activity"), "")
+        self.assertEqual(value_for(row, "Comment"), "")
+        self.assertEqual(value_for(row, "issue"), "2026-W03")
+        self.assertEqual(value_for(row, "page"), "22")
+        self.assertEqual(value_for(row, "date updated"), "2026-05-17")
         self.assertIn("manual_review_required", row["warnings"][0])
 
     def test_stock_update_date_prefers_explicit_import_date(self) -> None:
@@ -375,10 +377,9 @@ class WorkbookExportPlanTest(unittest.TestCase):
 
         stock_row = next(row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks")
 
-        self.assertEqual(stock_row["values"][3], "1.234,56 EUR")
-        self.assertEqual(stock_row["values"][5], "1.234,56 EUR")
-        self.assertEqual(stock_row["values"][11], "2.500,00 EUR")
-        self.assertEqual(stock_row["values"][12], "987,65 EUR")
+        self.assertEqual(value_for(stock_row, "Current price"), "1.234,56 EUR")
+        self.assertEqual(value_for(stock_row, "Target"), "2.500,00 EUR")
+        self.assertEqual(value_for(stock_row, "Stop"), "987,65 EUR")
 
     def test_stock_dividend_prefers_current_yield_over_per_share_trend(self) -> None:
         plan = build_workbook_export_plan(
@@ -955,19 +956,16 @@ class WorkbookExportPlanTest(unittest.TestCase):
         stock_row = next(row for row in rows if row["tab"] == "Stocks")
 
         self.assertEqual(stock_row["rowKind"], "stock_quickcheck_summary")
-        self.assertEqual(stock_row["values"][0], "2G Energy")
-        self.assertEqual(stock_row["values"][1], "A0HL8N")
-        self.assertEqual(stock_row["values"][2], "")
-        self.assertEqual(stock_row["values"][3], "36,70 EUR")
-        self.assertEqual(stock_row["values"][4], "2026-05-17")
-        self.assertEqual(stock_row["values"][5], "34,80 EUR")
-        self.assertEqual(stock_row["values"][11], "52,50 EUR")
-        self.assertEqual(stock_row["values"][12], "27,50 EUR")
-        self.assertEqual(stock_row["values"][13], "+5,5 %")
-        self.assertEqual(stock_row["values"][20], "hold")
-        self.assertEqual(stock_row["values"][21], "52/25")
-        self.assertIn("Aufwärtstrend", stock_row["values"][23])
-        self.assertEqual(stock_row["values"][26], "2026-05-17")
+        self.assertEqual(value_for(stock_row, "Company"), "2G Energy")
+        self.assertEqual(value_for(stock_row, "WKN"), "A0HL8N")
+        self.assertEqual(value_for(stock_row, "Current price"), "36,70 EUR")
+        self.assertEqual(value_for(stock_row, "Target"), "52,50 EUR")
+        self.assertEqual(value_for(stock_row, "Stop"), "27,50 EUR")
+        self.assertEqual(value_for(stock_row, "Performance since Recommendation"), "+5,5 %")
+        self.assertEqual(value_for(stock_row, "Recommendation"), "hold")
+        self.assertEqual(value_for(stock_row, "Held since"), "52/25")
+        self.assertIn("Aufwärtstrend", value_for(stock_row, "Comment"))
+        self.assertEqual(value_for(stock_row, "date updated"), "2026-05-17")
         self.assertEqual(len(stock_row["values"]), len(headers_for("Stocks")))
         self.assertFalse(any(row["tab"] == "Stock Quickcheck" for row in rows))
 
@@ -1015,16 +1013,16 @@ class WorkbookExportPlanTest(unittest.TestCase):
 
         self.assertEqual(len(stock_rows), 1)
         values = stock_rows[0]["values"]
-        self.assertEqual(values[1], "A1CX3T")
-        self.assertEqual(values[2], "")
-        self.assertEqual(values[3], "371,90 EUR")
-        self.assertEqual(values[4], "2026-05-17")
-        self.assertEqual(values[5], "398,00 EUR")
-        self.assertEqual(values[13], "-6,6 %")
-        self.assertEqual(values[20], "hold")
-        self.assertEqual(values[21], "02/2026")
-        self.assertIn("Rekordhoch", values[23])
-        self.assertEqual(values[25], "42, 90")
+        row = stock_rows[0]
+        self.assertEqual(value_for(row, "WKN"), "A1CX3T")
+        self.assertEqual(value_for(row, "Current price"), "371,90 EUR")
+        self.assertEqual(value_for(row, "Target"), "480,00 EUR")
+        self.assertEqual(value_for(row, "Stop"), "295,00 EUR")
+        self.assertEqual(value_for(row, "Performance since Recommendation"), "-6,6 %")
+        self.assertEqual(value_for(row, "Recommendation"), "hold")
+        self.assertEqual(value_for(row, "Held since"), "02/2026")
+        self.assertIn("Rekordhoch", value_for(row, "Comment"))
+        self.assertEqual(value_for(row, "page"), "42, 90")
 
     def test_consolidates_wkn_less_stock_mentions_by_normalized_name(self) -> None:
         plan = build_workbook_export_plan(
@@ -1064,13 +1062,13 @@ class WorkbookExportPlanTest(unittest.TestCase):
         stock_rows = [row for row in plan.to_dict()["rows"] if row["tab"] == "Stocks"]
 
         self.assertEqual(len(stock_rows), 1)
-        values = stock_rows[0]["values"]
-        self.assertEqual(values[0], "ACME Energy")
-        self.assertEqual(values[3], "10,50 EUR")
-        self.assertEqual(values[11], "12,50 EUR")
-        self.assertIn("Quick-check comment.", values[23])
-        self.assertIn("Follow-up wording.", values[23])
-        self.assertEqual(values[25], "90, 91")
+        row = stock_rows[0]
+        self.assertEqual(value_for(row, "Company"), "ACME Energy")
+        self.assertEqual(value_for(row, "Current price"), "10,50 EUR")
+        self.assertEqual(value_for(row, "Target"), "12,50 EUR")
+        self.assertIn("Quick-check comment.", value_for(row, "Comment"))
+        self.assertIn("Follow-up wording.", value_for(row, "Comment"))
+        self.assertEqual(value_for(row, "page"), "90, 91")
 
     def test_routes_chart_check_rows_to_stock_tab_only(self) -> None:
         plan = build_workbook_export_plan(
@@ -1104,15 +1102,15 @@ class WorkbookExportPlanTest(unittest.TestCase):
         stock_row = next(row for row in rows if row["tab"] == "Stocks")
 
         self.assertEqual(stock_row["rowKind"], "stock_chart_check_summary")
-        self.assertEqual(stock_row["values"][2], "")
-        self.assertEqual(stock_row["values"][3], "199,00 EUR")
-        self.assertEqual(stock_row["values"][4], stock_row["values"][-1])
-        self.assertEqual(stock_row["values"][5], "278,00 EUR")
-        self.assertEqual(stock_row["values"][6], "")
-        self.assertEqual(stock_row["values"][18], "16.01.26")
-        self.assertEqual(stock_row["values"][19], "Quartalszahlen")
-        self.assertEqual(stock_row["values"][20], "hold")
-        self.assertEqual(stock_row["values"][21], "37/25")
+        self.assertEqual(value_for(stock_row, "Current price"), "199,00 EUR")
+        self.assertEqual(value_for(stock_row, "Target"), "310,00 EUR")
+        self.assertEqual(value_for(stock_row, "Stop"), "224,00 EUR")
+        self.assertEqual(value_for(stock_row, "Dividend Yield"), "")
+        self.assertEqual(value_for(stock_row, "Performance since Recommendation"), "+39,7 %")
+        self.assertEqual(value_for(stock_row, "Next Report"), "16.01.26")
+        self.assertEqual(value_for(stock_row, "Report type"), "Quartalszahlen")
+        self.assertEqual(value_for(stock_row, "Recommendation"), "hold")
+        self.assertEqual(value_for(stock_row, "Held since"), "37/25")
         self.assertEqual(len(stock_row["values"]), len(headers_for("Stocks")))
         self.assertFalse(any(row["tab"] == "Chart Check" for row in rows))
 

@@ -122,10 +122,10 @@ Created: 2026-05-15
   `P/E Ratio 26e`, `Marktkap.` / `Marktkapitalisierung` maps to `Market Cap`,
   and the printed chance/risk dot ratings map to `Chance/Risk`. `Kein Kauf`
   maps to `recommendation_status=no_buy`.
-- In `Stocks`, `Current Price*` is reserved for provider-backed enrichment and
-  stays blank in local magazine-only workbook plans. Printed source values go
-  to `Magazine Price` with `Magazine Price As Of`; `Price at Recommendation`
-  remains the printed recommendation price when available.
+- In `Stocks`, `Current price` preserves the printed `Akt. Kurs` value as
+  amount and currency until reviewed enrichment refreshes it. `Target`, `Stop`,
+  and ratio/yield columns are shape-sanitized so nearby notes, dates, or
+  recommendation text cannot shift into financial value columns.
 - Source-specific review tabs use printed-price labels such as
   `Magazine Price`, `Magazine Current Price`, and
   `Magazine Price at Recommendation` so they are not mistaken for live

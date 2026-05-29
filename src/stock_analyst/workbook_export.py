@@ -13,7 +13,7 @@ from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 import re
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from stock_analyst.chart_check import (
     ChartCheckRow,
@@ -61,12 +61,15 @@ from stock_analyst.section_inventory import (
 MANUAL_REVIEW_WARNING = "manual_review_required_before_family_visible_export"
 WORKBOOK_EXPORT_PROCESSING_POLICY = MagazineProcessingPolicy(cut_after_statistics=False)
 MONEY_WITH_CURRENCY_RE = re.compile(
+    r"(?:(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\s*"
+    r"([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?)|"
     r"([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?)\s*"
-    r"(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\b"
+    r"(EUR|USD|CHF|GBP|GBX|AUD|CAD|JPY|HKD|CNY|NOK|SEK|DKK|€|\$)\b)"
 )
 REPORT_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{2,4}\b")
 ISSUE_TOKEN_RE = re.compile(r"\b\d{1,2}/\d{2,4}\b")
-PERCENT_VALUE_RE = re.compile(r"^\s*[+-]?\d+(?:[,.]\d+)?\s*%\s*$")
+PERCENT_VALUE_RE = re.compile(r"^\s*\d+(?:[,.]\d+)?\s*%\s*$")
+RATIO_VALUE_RE = re.compile(r"^\s*\d+(?:[,.]\d+)?\s*$")
 
 
 class WorkbookExportPlanError(ValueError):
@@ -365,38 +368,44 @@ def _recommendation_card_row(
         page=card.page,
         review_status=ReviewStatus.NEEDS_REVIEW,
         source_block="manual_review_pending",
-        values=(
-            card.instrument_name,
-            card.wkn or "",
-            "",
-            _price_currency_only(card.current_price),
-            stock_update_date if card.current_price else "",
-            _price_currency_only(card.current_price)
-            if card.recommendation_status == "new_recommendation"
-            else "",
-            _percent_only(dividend_yield),
-            card.market_cap or "",
-            _chance_risk(card.chance, card.risk),
-            card.kuv_26e or "",
-            card.kgv_26e or "",
-            _price_currency_only(card.target),
-            _price_currency_only(card.stop),
-            card.performance_since_recommendation or "",
-            "",
-            "",
-            "",
-            "",
-            report_date,
-            report_type,
-            recommendation,
-            held_since,
-            "",
-            "",
-            card.issue_id,
-            str(card.page),
-            stock_update_date,
+        values=_stock_values(
+            {
+                "Company": card.instrument_name,
+                "WKN": card.wkn or "",
+                "Target": _price_currency_only(card.target),
+                "Stop": _price_currency_only(card.stop),
+                "Current price": _price_currency_only(card.current_price),
+                "Market Cap": card.market_cap or "",
+                "Dividend Yield": _percent_only(dividend_yield),
+                "Recommendation": recommendation,
+                "Held since": held_since,
+                "Performance since Recommendation": card.performance_since_recommendation or "",
+                "Next Report": report_date,
+                "Report type": report_type,
+                "P/S Ratio 26e": _ratio_only(card.kuv_26e),
+                "P/E Ratio 26e": _ratio_only(card.kgv_26e),
+                "Chance/Risk": _chance_risk(card.chance, card.risk),
+                "Insider Activity": "",
+                "Comment": "",
+                "issue": card.issue_id,
+                "page": str(card.page),
+                "date updated": stock_update_date,
+            }
         ),
     )
+
+
+def _stock_values(values_by_header: Mapping[str, str]) -> tuple[str, ...]:
+    return tuple(values_by_header.get(header, "") for header in _headers_for_tab("Stocks"))
+
+
+def _stock_header_index(header: str) -> int:
+    return _headers_for_tab("Stocks").index(header)
+
+
+def _stock_value(values: Sequence[str], header: str) -> str:
+    index = _stock_header_index(header)
+    return values[index].strip() if index < len(values) else ""
 
 
 def _derivative_card_row(
@@ -634,7 +643,9 @@ def _dividend_rows_from_stock_rows(
     for stock_row in stock_rows:
         values = stock_row.values
         key = _stock_identity_key(values)
-        if key in existing_keys or not _dividend_yield_over_threshold(_value_at(values, 6)):
+        if key in existing_keys or not _dividend_yield_over_threshold(
+            _stock_value(values, "Dividend Yield")
+        ):
             continue
         rows.append(
             WorkbookDraftRow(
@@ -644,28 +655,28 @@ def _dividend_rows_from_stock_rows(
                     "dividend-stock",
                     stock_row.issue_id,
                     stock_row.page,
-                    _value_at(values, 1) or _value_at(values, 0),
+                    _stock_value(values, "WKN") or _stock_value(values, "Company"),
                 ),
                 issue_id=stock_row.issue_id,
                 page=stock_row.page,
                 review_status=ReviewStatus.NEEDS_REVIEW,
                 source_block="manual_review_pending",
                 values=(
-                    _value_at(values, 0),
-                    _value_at(values, 1),
+                    _stock_value(values, "Company"),
+                    _stock_value(values, "WKN"),
                     "",
-                    _value_at(values, 3),
-                    _value_at(values, 7),
-                    _value_at(values, 6),
-                    _value_at(values, 10),
+                    _stock_value(values, "Current price"),
+                    _stock_value(values, "Market Cap"),
+                    _stock_value(values, "Dividend Yield"),
+                    _stock_value(values, "P/E Ratio 26e"),
                     "",
                     "",
                     "",
-                    _value_at(values, 11),
-                    _value_at(values, 12),
+                    _stock_value(values, "Target"),
+                    _stock_value(values, "Stop"),
                     ReviewStatus.NEEDS_REVIEW.value,
-                    _value_at(values, 24),
-                    _value_at(values, 25),
+                    _stock_value(values, "issue"),
+                    _stock_value(values, "page"),
                     instrument_update_date,
                 ),
             )
@@ -740,6 +751,7 @@ def _depot_position_rows(
                     row.wkn,
                     row.quantity,
                     row.buy_date,
+                    "",
                     row.buy_price,
                     row.current_price,
                     row.value,
@@ -816,34 +828,29 @@ def _quickcheck_stock_rows(
                 page=row.page,
                 review_status=ReviewStatus.NEEDS_REVIEW,
                 source_block="manual_review_pending",
-                values=(
-                    row.instrument,
-                    row.wkn,
-                    "",
-                    _price_currency_only(row.current_price),
-                    stock_update_date if _price_currency_only(row.current_price) else "",
-                    _price_currency_only(row.recommendation_price),
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    _price_currency_only(row.target),
-                    _price_currency_only(row.stop),
-                    row.performance_since_recommendation,
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    recommendation,
-                    held_since,
-                    "",
-                    row.comment,
-                    row.issue_id,
-                    str(row.page),
-                    stock_update_date,
+                values=_stock_values(
+                    {
+                        "Company": row.instrument,
+                        "WKN": row.wkn,
+                        "Target": _price_currency_only(row.target),
+                        "Stop": _price_currency_only(row.stop),
+                        "Current price": _price_currency_only(row.current_price),
+                        "Market Cap": "",
+                        "Dividend Yield": "",
+                        "Recommendation": recommendation,
+                        "Held since": held_since,
+                        "Performance since Recommendation": row.performance_since_recommendation,
+                        "Next Report": "",
+                        "Report type": "",
+                        "P/S Ratio 26e": "",
+                        "P/E Ratio 26e": "",
+                        "Chance/Risk": "",
+                        "Insider Activity": "",
+                        "Comment": row.comment,
+                        "issue": row.issue_id,
+                        "page": str(row.page),
+                        "date updated": stock_update_date,
+                    }
                 ),
             )
         )
@@ -869,34 +876,29 @@ def _chart_check_stock_rows(
                 page=row.page,
                 review_status=ReviewStatus.NEEDS_REVIEW,
                 source_block="manual_review_pending",
-                values=(
-                    row.instrument,
-                    row.wkn,
-                    "",
-                    _price_currency_only(row.current_price),
-                    stock_update_date if row.current_price else "",
-                    _price_currency_only(row.recommendation_price),
-                    _percent_only(row.dividend_yield),
-                    "",
-                    "",
-                    "",
-                    "",
-                    _price_currency_only(row.target),
-                    _price_currency_only(row.stop),
-                    row.performance_since_recommendation,
-                    _price_currency_only(row.high_52w),
-                    _price_currency_only(row.low_52w),
-                    row.performance_1y,
-                    row.performance_5y,
-                    report_date,
-                    report_type,
-                    recommendation,
-                    held_since,
-                    "",
-                    row.signal,
-                    row.issue_id,
-                    str(row.page),
-                    stock_update_date,
+                values=_stock_values(
+                    {
+                        "Company": row.instrument,
+                        "WKN": row.wkn,
+                        "Target": _price_currency_only(row.target),
+                        "Stop": _price_currency_only(row.stop),
+                        "Current price": _price_currency_only(row.current_price),
+                        "Market Cap": "",
+                        "Dividend Yield": _percent_only(row.dividend_yield),
+                        "Recommendation": recommendation,
+                        "Held since": held_since,
+                        "Performance since Recommendation": row.performance_since_recommendation,
+                        "Next Report": report_date,
+                        "Report type": report_type,
+                        "P/S Ratio 26e": "",
+                        "P/E Ratio 26e": "",
+                        "Chance/Risk": "",
+                        "Insider Activity": "",
+                        "Comment": row.signal,
+                        "issue": row.issue_id,
+                        "page": str(row.page),
+                        "date updated": stock_update_date,
+                    }
                 ),
             )
         )
@@ -917,10 +919,10 @@ def _consolidate_stock_rows(rows: Sequence[WorkbookDraftRow]) -> list[WorkbookDr
 
 
 def _stock_identity_key(values: Sequence[str]) -> str:
-    wkn = values[1].strip() if len(values) > 1 else ""
+    wkn = _stock_value(values, "WKN")
     if wkn:
         return f"wkn:{wkn.casefold()}"
-    name = values[0].strip() if values else ""
+    name = _stock_value(values, "Company")
     return f"name:{_normalize_stock_name(name)}"
 
 
@@ -933,37 +935,68 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
     incoming_values = list(incoming.values)
     _ensure_width(values, len(incoming_values))
 
-    latest_wins_indexes = {2, 3, 4, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19, 26}
-    fill_only_indexes = {0, 1, 6, 7, 8, 9, 10, 21, 22}
-    for index in latest_wins_indexes:
+    latest_wins_headers = {
+        "Target",
+        "Stop",
+        "Current price",
+        "Performance since Recommendation",
+        "Next Report",
+        "Report type",
+        "P/S Ratio 26e",
+        "P/E Ratio 26e",
+        "date updated",
+    }
+    fill_only_headers = {
+        "Company",
+        "WKN",
+        "Market Cap",
+        "Dividend Yield",
+        "Chance/Risk",
+        "Held since",
+        "Insider Activity",
+    }
+    for header in latest_wins_headers:
+        index = _stock_header_index(header)
         if index < len(incoming_values) and incoming_values[index]:
             values[index] = incoming_values[index]
-    for index in fill_only_indexes:
+    for header in fill_only_headers:
+        index = _stock_header_index(header)
         if index < len(incoming_values) and incoming_values[index] and not values[index]:
             values[index] = incoming_values[index]
 
-    recommendation_index = 20
+    recommendation_index = _stock_header_index("Recommendation")
     if recommendation_index < len(incoming_values) and incoming_values[recommendation_index]:
         current = values[recommendation_index]
         candidate = incoming_values[recommendation_index]
         if not current or _recommendation_priority(candidate) >= _recommendation_priority(current):
             values[recommendation_index] = candidate
 
-    comment_parts = _split_comment(values[23]) if len(values) > 23 else []
-    if len(incoming_values) > 23 and incoming_values[23]:
-        comment_parts.append(incoming_values[23])
-    if len(values) > 23:
-        values[23] = _join_unique(comment_parts)
+    comment_index = _stock_header_index("Comment")
+    comment_parts = _split_comment(values[comment_index]) if len(values) > comment_index else []
+    if len(incoming_values) > comment_index and incoming_values[comment_index]:
+        comment_parts.append(incoming_values[comment_index])
+    if len(values) > comment_index:
+        values[comment_index] = _join_unique(comment_parts)
 
-    if len(values) > 24 and len(incoming_values) > 24:
-        values[24] = _join_unique((values[24], incoming_values[24]))
-    if len(values) > 25 and len(incoming_values) > 25:
-        values[25] = _join_unique((values[25], incoming_values[25]), separator=", ")
+    issue_index = _stock_header_index("issue")
+    if len(values) > issue_index and len(incoming_values) > issue_index:
+        values[issue_index] = _join_unique((values[issue_index], incoming_values[issue_index]))
+    page_index = _stock_header_index("page")
+    if len(values) > page_index and len(incoming_values) > page_index:
+        values[page_index] = _join_unique(
+            (values[page_index], incoming_values[page_index]),
+            separator=", ",
+        )
 
     return WorkbookDraftRow(
         tab="Stocks",
         row_kind="stock_consolidated",
-        source_id=_source_id("stock", existing.issue_id, existing.page, values[1] or values[0]),
+        source_id=_source_id(
+            "stock",
+            existing.issue_id,
+            existing.page,
+            _stock_value(values, "WKN") or _stock_value(values, "Company"),
+        ),
         issue_id=existing.issue_id,
         page=existing.page,
         values=tuple(values),
@@ -1056,7 +1089,9 @@ def _price_currency_only(value: str | None) -> str:
     match = MONEY_WITH_CURRENCY_RE.search(normalized)
     if match is None:
         return ""
-    amount, currency = match.groups()
+    prefix_currency, prefix_amount, suffix_amount, suffix_currency = match.groups()
+    amount = prefix_amount or suffix_amount
+    currency = prefix_currency or suffix_currency
     return f"{amount} {currency}"
 
 
@@ -1065,6 +1100,13 @@ def _percent_only(value: str | None) -> str:
         return ""
     normalized = " ".join(value.split())
     return normalized if PERCENT_VALUE_RE.match(normalized) else ""
+
+
+def _ratio_only(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = " ".join(value.split())
+    return normalized if RATIO_VALUE_RE.match(normalized) else ""
 
 
 def _dividend_yield_over_threshold(value: str, *, threshold: float = 3.0) -> bool:
@@ -1259,7 +1301,17 @@ def _validate_workbook_rows(rows: Sequence[WorkbookDraftRow]) -> None:
 def _chance_risk(chance: int | None, risk: int | None) -> str:
     if chance is None and risk is None:
         return ""
-    return f"{chance or ''}/{risk or ''}"
+    parts: list[str] = []
+    if chance is not None:
+        parts.append(f"Chance {_stars(chance)}")
+    if risk is not None:
+        parts.append(f"Risk {_stars(risk)}")
+    return " / ".join(parts)
+
+
+def _stars(value: int, *, maximum: int = 5) -> str:
+    bounded = max(0, min(maximum, value))
+    return "★" * bounded + "☆" * (maximum - bounded)
 
 
 def _join_non_empty(values: Sequence[str | None]) -> str:

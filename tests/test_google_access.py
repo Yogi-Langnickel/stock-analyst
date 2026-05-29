@@ -18,6 +18,17 @@ from stock_analyst.google_access import (
 )
 
 
+def _headers_for(tab: str) -> tuple[str, ...]:
+    for spec in DEFAULT_SHEET_TABS:
+        if spec.title == tab:
+            return spec.headers
+    raise AssertionError(f"unknown tab: {tab}")
+
+
+def _stock_value(row: list[str], header: str) -> str:
+    return row[_headers_for("Stocks").index(header)]
+
+
 class _FakeExecute:
     def __init__(self, payload):
         self.payload = payload
@@ -111,16 +122,24 @@ class GoogleAccessTest(unittest.TestCase):
         issue: str = "2026-W03",
         page: str = "22",
         date_updated: str = "2026-05-17",
+        target: str = "",
+        stop: str = "",
+        current_price: str = "",
+        dividend_yield: str = "",
     ) -> list[str]:
-        row = ["" for _ in range(27)]
+        row = ["" for _ in _headers_for("Stocks")]
         row[0] = company
         row[1] = wkn
-        row[20] = recommendation
-        row[21] = held_since
-        row[23] = comment
-        row[24] = issue
-        row[25] = page
-        row[26] = date_updated
+        row[2] = target
+        row[3] = stop
+        row[4] = current_price
+        row[6] = dividend_yield
+        row[7] = recommendation
+        row[8] = held_since
+        row[16] = comment
+        row[17] = issue
+        row[18] = page
+        row[19] = date_updated
         return row
 
     def test_load_env_file_parses_quoted_google_values(self) -> None:
@@ -374,7 +393,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn(
             {
                 "range": "'Navigation Dashboard'!E6",
-                "values": [["=COUNTA('Stocks'!A4:A)"]],
+                "values": [["=COUNTA('Stocks'!A2:A)"]],
             },
             values_body["data"],
         )
@@ -387,36 +406,29 @@ class GoogleAccessTest(unittest.TestCase):
         )
         self.assertNotIn({"range": "'Stocks'!A1", "values": [["date updated"]]}, values_body["data"])
         self.assertNotIn({"range": "'Stocks'!B1", "values": [[""]]}, values_body["data"])
-        self.assertIn(
-            "'Stocks'!A1:AA2",
+        self.assertNotIn(
+            "'Stocks'!A1:T1",
             [request["range"] for request in sheets.spreadsheets_resource.values_resource.clear_requests],
         )
         self.assertIn(
             {
-                "range": "'Stocks'!A3:AA3",
+                "range": "'Stocks'!A1:T1",
                 "values": [[
                     "Company",
                     "WKN",
-                    "Current Price*",
-                    "Magazine Price",
-                    "Magazine Price As Of",
-                    "Price at Recommendation",
-                    "Dividend Yield",
-                    "Market Cap",
-                    "Chance/Risk",
-                    "P/S Ratio 26e",
-                    "P/E Ratio 26e",
                     "Target",
                     "Stop",
-                    "Performance since Recommendation",
-                    "52w High",
-                    "52w Low",
-                    "1Y Performance",
-                    "5Y Performance",
-                    "Next Report",
-                    "Report Type",
+                    "Current price",
+                    "Market Cap",
+                    "Dividend Yield",
                     "Recommendation",
                     "Held since",
+                    "Performance since Recommendation",
+                    "Next Report",
+                    "Report type",
+                    "P/S Ratio 26e",
+                    "P/E Ratio 26e",
+                    "Chance/Risk",
                     "Insider Activity",
                     "Comment",
                     "issue",
@@ -427,10 +439,10 @@ class GoogleAccessTest(unittest.TestCase):
             values_body["data"],
         )
         stock_tab = next(tab for tab in result["tabs"] if tab["title"] == "Stocks")
-        self.assertEqual(stock_tab["headerRow"], 3)
-        self.assertEqual(stock_tab["frozenRows"], 3)
+        self.assertEqual(stock_tab["headerRow"], 1)
+        self.assertEqual(stock_tab["frozenRows"], 1)
         self.assertEqual(stock_tab["frozenColumns"], 2)
-        self.assertEqual(stock_tab["tableStartsAt"], "A3")
+        self.assertEqual(stock_tab["tableStartsAt"], "A1")
         self.assertEqual(stock_tab["parserStatus"], "parser_backed")
         self.assertIn(
             "Only explicit stock mentions become rows; do not fan out index constituents.",
@@ -463,13 +475,14 @@ class GoogleAccessTest(unittest.TestCase):
         headers_by_tab = {tab["title"]: tab["headers"] for tab in result["tabs"]}
         self.assertEqual(headers_by_tab["Derivative Tips"][10], "Magazine Entry Price")
         self.assertEqual(headers_by_tab["Derivative Tips"][11], "Magazine Current Price")
-        self.assertEqual(headers_by_tab["AKTIONAER Depot"][4], "Magazine Buy Price")
-        self.assertEqual(headers_by_tab["AKTIONAER Depot"][5], "Magazine Current Price")
+        self.assertEqual(headers_by_tab["AKTIONAER Depot"][3], "Buy date")
+        self.assertEqual(headers_by_tab["AKTIONAER Depot"][4], "Sale date")
+        self.assertEqual(headers_by_tab["AKTIONAER Depot"][5], "Magazine Buy Price")
+        self.assertEqual(headers_by_tab["AKTIONAER Depot"][6], "Magazine Current Price")
         self.assertEqual(headers_by_tab["Depot Transactions"][5], "Magazine Transaction Price")
-        self.assertEqual(headers_by_tab["Stocks"][18], "Next Report")
-        self.assertEqual(headers_by_tab["Stocks"][19], "Report Type")
-        self.assertEqual(headers_by_tab["Stocks"][21], "Held since")
-        self.assertEqual(headers_by_tab["Stocks"][22], "Insider Activity")
+        self.assertEqual(headers_by_tab["Stocks"][10], "Next Report")
+        self.assertEqual(headers_by_tab["Stocks"][11], "Report type")
+        self.assertEqual(headers_by_tab["Stocks"][15], "Insider Activity")
         self.assertEqual(headers_by_tab["Insider Activity"][14], "SEC filing URL")
         self.assertEqual(headers_by_tab["Dividend Focus"][3], "Magazine Price")
         for tab in result["tabs"]:
@@ -643,8 +656,8 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["headersRewritten"])
         self.assertEqual(result["clearedTabCount"], len(result["clearedRanges"]))
-        self.assertIn("'Stocks'!A1:AA2", clear_ranges)
-        self.assertIn("'Stocks'!A4:AA", clear_ranges)
+        self.assertNotIn("'Stocks'!A1:T1", clear_ranges)
+        self.assertIn("'Stocks'!A2:T", clear_ranges)
         self.assertNotIn("'Navigation Dashboard'!A5:E", clear_ranges)
         self.assertGreater(len(values_resource.batch_update_requests), 0)
 
@@ -668,131 +681,53 @@ class GoogleAccessTest(unittest.TestCase):
                     ],
                 }
             )
-            sheets.spreadsheets_resource.values_resource.values_by_range[
-                "'Stocks'!A4:AA"
-            ] = [
-                [
-                    "Old Same Issue",
-                    "OLD",
-                    "",
-                    "1 EUR",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "2026-W03",
-                    "1",
-                    "2026-05-17",
-                ],
-                [
-                    "Keep Different Issue",
-                    "KEEP",
-                    "",
-                    "2 EUR",
-                    "",
-                    "",
-                    "2026-05-27",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "!",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "2026-W02",
-                    "1",
-                    "2026-05-10",
-                ],
-                [
-                    "Banco Sabadell",
-                    "A0MRD4",
-                    "2,90 EUR",
-                    "",
-                    "",
-                    "2,50 EUR",
-                    "16,0 %",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "3,50 EUR",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "hold",
-                    "02/2026",
-                    "",
-                    "Previous comment",
-                    "2026-W02",
-                    "20",
-                    "2026-05-10",
-                ],
+            sheets.spreadsheets_resource.values_resource.values_by_range["'Stocks'!A2:T"] = [
+                self._stock_sheet_row(
+                    company="Old Same Issue",
+                    wkn="OLD",
+                    current_price="1 EUR",
+                    issue="2026-W03",
+                    page="1",
+                    date_updated="2026-05-17",
+                ),
+                self._stock_sheet_row(
+                    company="Keep Different Issue",
+                    wkn="KEEP",
+                    target="€3,33",
+                    current_price="$8.82",
+                    dividend_yield="2026-05-27",
+                    stop="!",
+                    issue="2026-W02",
+                    page="1",
+                    date_updated="2026-05-10",
+                ),
+                self._stock_sheet_row(
+                    target="3,50 EUR",
+                    current_price="$2.90",
+                    dividend_yield="16,0 %",
+                    recommendation="hold",
+                    held_since="02/2026",
+                    comment="Previous comment",
+                    issue="2026-W02",
+                    page="20",
+                    date_updated="2026-05-10",
+                ),
             ]
             workbook_plan = {
                 "issueId": "2026-W03",
                 "rows": [
                     {
                         "tab": "Stocks",
-                        "values": [
-                            "Banco Sabadell",
-                            "A0MRD4",
-                            "",
-                            "3,33 EUR",
-                            "2026-05-17",
-                            "3,33 EUR",
-                            "18,6 %",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "4,30 EUR",
-                            "2,70 EUR",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "new_recommendation",
-                            "",
-                            "",
-                            "",
-                            "2026-W03",
-                            "22",
-                            "2026-05-17",
-                        ],
+                        "values": self._stock_sheet_row(
+                            target="4,30 EUR",
+                            stop="2,70 EUR",
+                            current_price="3,33 EUR",
+                            dividend_yield="18,6 %",
+                            recommendation="new_recommendation",
+                            issue="2026-W03",
+                            page="22",
+                            date_updated="2026-05-17",
+                        ),
                     },
                     {
                         "tab": "Dividend Focus",
@@ -826,7 +761,7 @@ class GoogleAccessTest(unittest.TestCase):
 
         values_resource = sheets.spreadsheets_resource.values_resource
         data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
-        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:AA5")
+        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A2:T3")
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["enrichmentProviderCalls"], 0)
@@ -835,19 +770,20 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn("Dividend Focus", result["clearedTabs"])
         self.assertEqual(stocks_write["values"][0][0], "Keep Different Issue")
         self.assertEqual(stocks_write["values"][1][0], "Banco Sabadell")
-        self.assertEqual(stocks_write["values"][0][6], "")
-        self.assertEqual(stocks_write["values"][0][12], "")
-        self.assertEqual(stocks_write["values"][1][2], "2,90 EUR")
-        self.assertEqual(stocks_write["values"][1][3], "3,33 EUR")
-        self.assertEqual(stocks_write["values"][1][5], "3,33 EUR")
-        self.assertEqual(stocks_write["values"][1][6], "18,6 %")
-        self.assertEqual(stocks_write["values"][1][11], "4,30 EUR")
-        self.assertEqual(stocks_write["values"][1][20], "new_recommendation")
-        self.assertEqual(stocks_write["values"][1][21], "")
-        self.assertIn("Previous comment", stocks_write["values"][1][23])
-        self.assertEqual(stocks_write["values"][1][24], "2026-W02, 2026-W03")
-        self.assertEqual(stocks_write["values"][1][25], "20, 22")
-        self.assertIn("'Stocks'!A4:AA", [request["range"] for request in values_resource.clear_requests])
+        self.assertEqual(_stock_value(stocks_write["values"][0], "Dividend Yield"), "")
+        self.assertEqual(_stock_value(stocks_write["values"][0], "Target"), "3,33 EUR")
+        self.assertEqual(_stock_value(stocks_write["values"][0], "Stop"), "")
+        self.assertEqual(_stock_value(stocks_write["values"][0], "Current price"), "8.82 USD")
+        self.assertEqual(_stock_value(stocks_write["values"][1], "Target"), "4,30 EUR")
+        self.assertEqual(_stock_value(stocks_write["values"][1], "Stop"), "2,70 EUR")
+        self.assertEqual(_stock_value(stocks_write["values"][1], "Current price"), "3,33 EUR")
+        self.assertEqual(_stock_value(stocks_write["values"][1], "Dividend Yield"), "18,6 %")
+        self.assertEqual(_stock_value(stocks_write["values"][1], "Recommendation"), "new_recommendation")
+        self.assertEqual(_stock_value(stocks_write["values"][1], "Held since"), "")
+        self.assertIn("Previous comment", _stock_value(stocks_write["values"][1], "Comment"))
+        self.assertEqual(_stock_value(stocks_write["values"][1], "issue"), "2026-W02, 2026-W03")
+        self.assertEqual(_stock_value(stocks_write["values"][1], "page"), "20, 22")
+        self.assertIn("'Stocks'!A2:T", [request["range"] for request in values_resource.clear_requests])
 
     def test_google_sheet_export_uses_latest_stock_recommendation_and_held_since(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -866,9 +802,7 @@ class GoogleAccessTest(unittest.TestCase):
                     "sheets": [{"properties": {"title": "Stocks"}}],
                 }
             )
-            sheets.spreadsheets_resource.values_resource.values_by_range[
-                "'Stocks'!A4:AA"
-            ] = [
+            sheets.spreadsheets_resource.values_resource.values_by_range["'Stocks'!A2:T"] = [
                 self._stock_sheet_row(
                     recommendation="new_recommendation",
                     issue="2026-W02",
@@ -898,13 +832,13 @@ class GoogleAccessTest(unittest.TestCase):
 
         values_resource = sheets.spreadsheets_resource.values_resource
         data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
-        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A4:AA4")
+        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A2:T2")
 
         self.assertTrue(result["ok"])
-        self.assertEqual(stocks_write["values"][0][20], "hold")
-        self.assertEqual(stocks_write["values"][0][21], "02/2026")
-        self.assertEqual(stocks_write["values"][0][24], "2026-W02, 2026-W03")
-        self.assertEqual(stocks_write["values"][0][25], "20, 22")
+        self.assertEqual(_stock_value(stocks_write["values"][0], "Recommendation"), "hold")
+        self.assertEqual(_stock_value(stocks_write["values"][0], "Held since"), "02/2026")
+        self.assertEqual(_stock_value(stocks_write["values"][0], "issue"), "2026-W02, 2026-W03")
+        self.assertEqual(_stock_value(stocks_write["values"][0], "page"), "20, 22")
 
     def test_google_sheet_export_rejects_short_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -940,7 +874,7 @@ class GoogleAccessTest(unittest.TestCase):
                 ],
             }
 
-            with self.assertRaisesRegex(GoogleAccessError, "Stocks.*27 values.*got 11"):
+            with self.assertRaisesRegex(GoogleAccessError, "Stocks.*20 values.*got 11"):
                 write_workbook_plan_to_google_sheet(
                     config,
                     workbook_plan,
