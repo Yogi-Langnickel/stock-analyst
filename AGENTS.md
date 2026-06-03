@@ -38,6 +38,9 @@ independent financial advice.
   when the path is clear. `master` is release/promotion only; the assistant may
   prepare promotion evidence, but must not merge into `master` without explicit
   user approval.
+- Before substantial or high-risk work is merged into `develop`, run two
+  persona review iterations with relevant reviewers, address required feedback,
+  and classify any remaining feedback with rationale.
 - Use `rg` and `rg --files` for search.
 - Keep plans in `docs/`.
 - Keep reusable implementation code under `src/stock_analyst/`.
