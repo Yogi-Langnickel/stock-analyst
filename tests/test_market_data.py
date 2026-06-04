@@ -23,6 +23,7 @@ from stock_analyst.market_data import (
     market_data_disabled,
     plan_fmp_enrichment_requests,
     plan_market_data_enrichment_requests,
+    plan_sec_edgar_form4_enrichment_requests,
     ready_market_data_symbols_from_workbook_candidates,
     read_market_data_cache_record,
     write_market_data_budget_state,
@@ -851,7 +852,7 @@ class MarketDataTest(unittest.TestCase):
         self.assertFalse(plan.network_access)
 
     def test_sec_edgar_form4_dry_run_planner_uses_official_source_endpoints(self) -> None:
-        plan = plan_market_data_enrichment_requests("sec_edgar_form4", ("AAPL", "MSFT"))
+        plan = plan_sec_edgar_form4_enrichment_requests(("AAPL", "MSFT"))
 
         self.assertEqual(plan.provider, "sec_edgar_form4")
         self.assertEqual(plan.status, "planned")
@@ -865,6 +866,24 @@ class MarketDataTest(unittest.TestCase):
             ("ticker-cik-map", "submissions", "form4-xml"),
         )
         self.assertTrue(all(request.descriptor.provider == "sec_edgar_form4" for request in plan.requests))
+
+    def test_sec_edgar_form4_dry_run_planner_accounts_for_prior_daily_usage(self) -> None:
+        plan = plan_sec_edgar_form4_enrichment_requests(
+            ("AAPL", "MSFT"),
+            endpoints=("submissions",),
+            daily_call_limit=2,
+            prior_charged_call_count=1,
+        )
+
+        self.assertEqual(plan.provider, "sec_edgar_form4")
+        self.assertEqual(plan.status, "over_budget")
+        self.assertFalse(plan.network_access)
+        self.assertEqual(plan.prior_charged_call_count, 1)
+        self.assertEqual(plan.charged_call_count, 1)
+        self.assertEqual(plan.denied_call_count, 1)
+        self.assertEqual(plan.remaining_daily_call_budget, 0)
+        self.assertEqual(plan.requests[0].budget_action, "charge")
+        self.assertEqual(plan.requests[1].budget_action, "denied")
 
     def test_market_data_plan_command_uses_env_file_and_redacts_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

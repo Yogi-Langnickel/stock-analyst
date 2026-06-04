@@ -594,6 +594,28 @@ def plan_fmp_enrichment_requests(
     )
 
 
+def plan_sec_edgar_form4_enrichment_requests(
+    symbols: tuple[str, ...],
+    *,
+    endpoints: tuple[str, ...] = DEFAULT_SEC_EDGAR_FORM4_ENDPOINTS,
+    cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
+    daily_call_limit: int = DEFAULT_SEC_EDGAR_DAILY_CALL_LIMIT,
+    prior_charged_call_count: int = 0,
+    terms_version: str | None = None,
+) -> MarketDataEnrichmentPlan:
+    """Plan official SEC Form 4 enrichment descriptors without live SEC access."""
+
+    return plan_market_data_enrichment_requests(
+        "sec_edgar_form4",
+        symbols,
+        endpoints=endpoints,
+        cache_root=cache_root,
+        daily_call_limit=daily_call_limit,
+        prior_charged_call_count=prior_charged_call_count,
+        terms_version=terms_version,
+    )
+
+
 def build_market_data_cache_metadata(
     descriptor: MarketDataRequestDescriptor,
     *,
