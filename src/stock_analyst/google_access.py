@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
 import os
@@ -30,6 +31,19 @@ class GoogleAccessError(ValueError):
     """Raised when Google Drive/Sheets access is not configured correctly."""
 
 
+def _redacted_identifier(value: object) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return f"redacted:{sha256(text.encode('utf-8')).hexdigest()[:12]}"
+
+
+def redact_google_identifier(value: object) -> str | None:
+    """Return a stable non-reversible identifier for stdout-safe Google results."""
+
+    return _redacted_identifier(value)
+
+
 @dataclass(frozen=True)
 class GoogleAccessConfig:
     drive_folder_id: str
@@ -39,10 +53,10 @@ class GoogleAccessConfig:
 
     def to_public_dict(self) -> dict[str, object]:
         return {
-            "driveFolderId": self.drive_folder_id,
-            "sheetsSpreadsheetId": self.sheets_spreadsheet_id,
-            "credentialsPath": str(self.credentials_path),
-            "serviceAccountEmail": self.service_account_email,
+            "driveFolderId": _redacted_identifier(self.drive_folder_id),
+            "sheetsSpreadsheetId": _redacted_identifier(self.sheets_spreadsheet_id),
+            "credentialsPath": "redacted",
+            "serviceAccountEmail": _redacted_identifier(self.service_account_email),
         }
 
 
@@ -59,12 +73,14 @@ class DrivePdfMetadata:
 
     @property
     def source_pdf_id(self) -> str:
-        return f"drive_{self.drive_file_id[:16]}"
+        return f"drive_{sha256(self.drive_file_id.encode('utf-8')).hexdigest()[:16]}"
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self, *, include_private_identifiers: bool = False) -> dict[str, object]:
         result: dict[str, object] = {
             "sourcePdfId": self.source_pdf_id,
-            "driveFileId": self.drive_file_id,
+            "driveFileId": self.drive_file_id
+            if include_private_identifiers
+            else _redacted_identifier(self.drive_file_id),
             "name": self.name,
             "mimeType": self.mime_type,
             "processingStatus": {
@@ -82,7 +98,11 @@ class DrivePdfMetadata:
         if self.modified_time is not None:
             result["modifiedTime"] = self.modified_time
         if self.web_view_link is not None:
-            result["webViewLink"] = self.web_view_link
+            result["webViewLink"] = (
+                self.web_view_link
+                if include_private_identifiers
+                else _redacted_identifier(self.web_view_link)
+            )
         return result
 
 
@@ -102,6 +122,7 @@ class GoogleSheetTabSpec:
 
 DATA_BACKED_TAB_TITLES = {
     "Navigation Dashboard",
+    "Latest Issue Recommendations",
     "Stocks",
     "Derivative Tips",
     "AKTIONAER Depot",
@@ -117,54 +138,61 @@ NAVIGATION_DASHBOARD_CELLS: tuple[tuple[str, str], ...] = (
     ("A2", "Navigation Dashboard"),
     ("A3", "Draft reviewer workbook. Verify issue/page/source fields before family-facing export."),
     ("A6", "Core review"),
-    ("B6", "__sheet_link__:Stocks"),
-    ("C6", "Canonical equity rows merged from recommendation cards, Quick Check, and Chart Check."),
-    ("D6", "Start here for stock review."),
-    ("E6", "=COUNTA('Stocks'!A2:A)"),
+    ("B6", "__sheet_link__:Latest Issue Recommendations"),
+    ("C6", "Current import recommendations for quick reviewer triage."),
+    ("D6", "Start here after each issue import."),
+    ("E6", "=COUNTA('Latest Issue Recommendations'!A2:A)"),
     ("F6", "parser-backed; review required"),
-    ("G6", "Price, target, stop, yield, and ratio columns are shape-sanitized."),
+    ("G6", "Source-linked magazine rows only; not investment advice."),
     ("A7", "Core review"),
-    ("B7", "__sheet_link__:Dividend Focus"),
-    ("C7", "Dividend table rows and multi-period dividend context."),
-    ("D7", "Validate yield/date/price fields."),
-    ("E7", "=COUNTA('Dividend Focus'!A2:A)"),
+    ("B7", "__sheet_link__:Stocks"),
+    ("C7", "Canonical equity rows merged from recommendation cards, Quick Check, and Chart Check."),
+    ("D7", "Review stock identity and current source fields."),
+    ("E7", "=COUNTA('Stocks'!A2:A)"),
     ("F7", "parser-backed; review required"),
-    ("G7", "Dividend yield is source context, not a guaranteed future payout."),
+    ("G7", "Price, target, stop, yield, and ratio columns are shape-sanitized."),
     ("A8", "Core review"),
-    ("B8", "__sheet_link__:Derivative Tips"),
-    ("C8", "Calls, puts, certificates, and derivative overview rows."),
-    ("D8", "Check derivative WKN/product terms."),
-    ("E8", "=COUNTA('Derivative Tips'!A2:A)"),
+    ("B8", "__sheet_link__:Dividend Focus"),
+    ("C8", "Dividend table rows and multi-period dividend context."),
+    ("D8", "Validate yield/date/price fields."),
+    ("E8", "=COUNTA('Dividend Focus'!A2:A)"),
     ("F8", "parser-backed; review required"),
-    ("G8", "Highest risk surface; do not group rows by underlying alone."),
-    ("A9", "Publisher portfolio"),
-    ("B9", "__sheet_link__:AKTIONAER Depot"),
-    ("C9", "Publisher model-depot position snapshots."),
-    ("D9", "Treat as source context, not advice."),
-    ("E9", "=COUNTA('AKTIONAER Depot'!A2:A)"),
+    ("G8", "Dividend yield is source context, not a guaranteed future payout."),
+    ("A9", "Core review"),
+    ("B9", "__sheet_link__:Derivative Tips"),
+    ("C9", "Calls, puts, certificates, and derivative overview rows."),
+    ("D9", "Check derivative WKN/product terms."),
+    ("E9", "=COUNTA('Derivative Tips'!A2:A)"),
     ("F9", "parser-backed; review required"),
-    ("G9", "This is the publisher's model portfolio, not a household portfolio."),
+    ("G9", "Highest risk surface; do not group rows by underlying alone."),
     ("A10", "Publisher portfolio"),
-    ("B10", "__sheet_link__:Depot Transactions"),
-    ("C10", "Publisher transaction and no-transaction ledger."),
-    ("D10", "Check event history."),
-    ("E10", "=COUNTA('Depot Transactions'!A2:A)"),
+    ("B10", "__sheet_link__:AKTIONAER Depot"),
+    ("C10", "Publisher model-depot position snapshots."),
+    ("D10", "Treat as source context, not advice."),
+    ("E10", "=COUNTA('AKTIONAER Depot'!A2:A)"),
     ("F10", "parser-backed; review required"),
-    ("G10", "Use for source history and transaction evidence."),
-    ("A11", "Source detail"),
-    ("B11", "__sheet_link__:Insider Activity"),
-    ("C11", "SEC Form 4 insider activity rows and stock-level signal context."),
-    ("D11", "Review filing links and transaction classification."),
-    ("E11", "=COUNTA('Insider Activity'!A2:A)"),
-    ("F11", "planned; review required"),
-    ("G11", "Signals are context only and must link to source filings."),
-    ("A12", "QA"),
-    ("B12", "__sheet_link__:Extraction Audit"),
-    ("C12", "Parser warnings, skipped sections, OCR-needed pages, and review notes."),
-    ("D12", "Fix blockers before relying on rows."),
-    ("E12", "=COUNTA('Extraction Audit'!A2:A)"),
-    ("F12", "parser-backed; internal"),
-    ("G12", "Check this tab after each import."),
+    ("G10", "This is the publisher's model portfolio, not a household portfolio."),
+    ("A11", "Publisher portfolio"),
+    ("B11", "__sheet_link__:Depot Transactions"),
+    ("C11", "Publisher transaction and no-transaction ledger."),
+    ("D11", "Check event history."),
+    ("E11", "=COUNTA('Depot Transactions'!A2:A)"),
+    ("F11", "parser-backed; review required"),
+    ("G11", "Use for source history and transaction evidence."),
+    ("A12", "Source detail"),
+    ("B12", "__sheet_link__:Insider Activity"),
+    ("C12", "SEC Form 4 insider activity rows and stock-level signal context."),
+    ("D12", "Review filing links and transaction classification."),
+    ("E12", "=COUNTA('Insider Activity'!A2:A)"),
+    ("F12", "planned; review required"),
+    ("G12", "Signals are context only and must link to source filings."),
+    ("A13", "QA"),
+    ("B13", "__sheet_link__:Extraction Audit"),
+    ("C13", "Parser warnings, skipped sections, OCR-needed pages, and review notes."),
+    ("D13", "Fix blockers before relying on rows."),
+    ("E13", "=COUNTA('Extraction Audit'!A2:A)"),
+    ("F13", "parser-backed; internal"),
+    ("G13", "Check this tab after each import."),
 )
 
 
@@ -213,6 +241,37 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Reviewer-facing page map; use this to decide which pages feed which parsers.",
             "The assistant seeds all rows, then reviewer_notes can be filled manually.",
             "This tab is not an investment-row export and does not trigger enrichment.",
+        ),
+        parser_status="parser_backed",
+    ),
+    GoogleSheetTabSpec(
+        "Latest Issue Recommendations",
+        (
+            "Issue",
+            "Page",
+            "Company",
+            "WKN",
+            "Recommendation",
+            "Magazine Current Price",
+            "Target",
+            "Stop",
+            "Chance/Risk",
+            "Dividend Yield",
+            "Next Report",
+            "Comment",
+            "Source tab",
+            "Review status",
+            "date updated",
+        ),
+        "Current issue recommendation rows for quick reviewer triage.",
+        header_row=1,
+        frozen_rows=1,
+        frozen_columns=3,
+        table_starts_at="A1",
+        layout_notes=(
+            "Generated from the current workbook-export plan only.",
+            "Use for quick triage; canonical merged stock state remains in Stocks.",
+            "Rows are source-linked, reviewer-gated, and not investment advice.",
         ),
         parser_status="parser_backed",
     ),
@@ -701,14 +760,14 @@ def run_google_access_smoke(
     try:
         folder = (
             drive.files()
-            .get(fileId=config.drive_folder_id, fields="id,name,mimeType", supportsAllDrives=True)
+            .get(fileId=config.drive_folder_id, fields="id,mimeType", supportsAllDrives=True)
             .execute()
         )
         spreadsheet = (
             sheets.spreadsheets()
             .get(
                 spreadsheetId=config.sheets_spreadsheet_id,
-                fields="spreadsheetId,properties.title,sheets.properties.title",
+                fields="spreadsheetId,sheets.properties.sheetId",
             )
             .execute()
         )
@@ -724,20 +783,14 @@ def run_google_access_smoke(
     return {
         "ok": True,
         "externalServicesEnabled": True,
-        "serviceAccountEmail": config.service_account_email,
+        "serviceAccountEmail": _redacted_identifier(config.service_account_email),
         "drive": {
-            "folderId": folder.get("id"),
-            "folderName": folder.get("name"),
+            "folderId": _redacted_identifier(folder.get("id")),
             "mimeType": folder.get("mimeType"),
         },
         "sheets": {
-            "spreadsheetId": spreadsheet.get("spreadsheetId"),
-            "title": spreadsheet.get("properties", {}).get("title"),
-            "tabs": [
-                sheet.get("properties", {}).get("title")
-                for sheet in spreadsheet.get("sheets", [])
-                if sheet.get("properties", {}).get("title")
-            ],
+            "spreadsheetId": _redacted_identifier(spreadsheet.get("spreadsheetId")),
+            "tabCount": len(spreadsheet.get("sheets", [])),
         },
     }
 
@@ -849,7 +902,7 @@ def bootstrap_google_sheet(
     return {
         "ok": True,
         "externalServicesEnabled": True,
-        "spreadsheetId": config.sheets_spreadsheet_id,
+        "spreadsheetId": _redacted_identifier(config.sheets_spreadsheet_id),
         "existingTabs": list(existing_titles),
         "createdTabs": list(missing_titles),
         "deletedTabCount": len(delete_sheet_ids),
@@ -920,7 +973,7 @@ def clear_google_sheet_data_rows(
     return {
         "ok": True,
         "externalServicesEnabled": True,
-        "spreadsheetId": config.sheets_spreadsheet_id,
+        "spreadsheetId": _redacted_identifier(config.sheets_spreadsheet_id),
         "clearedRanges": list(clear_ranges),
         "clearedTabCount": len(clear_ranges),
         "headersRewritten": write_headers,
@@ -935,11 +988,13 @@ def write_workbook_plan_to_google_sheet(
     sheets_service_factory=None,
     tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
     replace_issue: bool = True,
+    allow_draft_rows: bool = False,
 ) -> dict[str, object]:
-    """Write reviewer-gated workbook-plan rows to configured Google Sheet.
+    """Write approved workbook-plan rows to configured Google Sheet.
 
     This only writes rows already produced by local magazine extraction. It does
-    not call enrichment providers and does not mark rows as approved.
+    not call enrichment providers and does not mark rows as approved. Draft
+    rows require an explicit reviewer-workbook opt-in.
     """
 
     if sheets_service_factory is None:
@@ -951,12 +1006,17 @@ def write_workbook_plan_to_google_sheet(
         raise GoogleAccessError("workbook plan is missing issueId")
     if not isinstance(raw_rows, list):
         raise GoogleAccessError("workbook plan is missing rows list")
+    if not allow_draft_rows:
+        _require_family_export_approval_audit(workbook_plan, raw_rows)
 
     specs_by_title = {spec.title: spec for spec in tab_specs}
     rows_by_tab: dict[str, list[list[str]]] = {}
     skipped_count = 0
     for raw_row in raw_rows:
         if not isinstance(raw_row, Mapping):
+            skipped_count += 1
+            continue
+        if not allow_draft_rows and not _is_approved_export_row(raw_row):
             skipped_count += 1
             continue
         tab = str(raw_row.get("tab") or "").strip()
@@ -984,6 +1044,7 @@ def write_workbook_plan_to_google_sheet(
     )
     try:
         write_ranges: list[dict[str, object]] = []
+        post_write_clear_ranges: list[str] = []
         cleared_tabs: list[str] = []
         restored_existing_count = 0
         for tab, new_rows in rows_by_tab.items():
@@ -998,18 +1059,19 @@ def write_workbook_plan_to_google_sheet(
                 spreadsheet_id=config.sheets_spreadsheet_id,
                 range_name=body_range,
             )
-            kept_rows = (
-                [
+            if tab == "Latest Issue Recommendations" and replace_issue:
+                kept_rows = []
+            elif replace_issue:
+                kept_rows = [
                     _normalize_sheet_row_values(row, width=len(spec.headers))
                     for row in existing_rows
                     if _row_issue_id(row, spec) != issue_id
                 ]
-                if replace_issue
-                else [
+            else:
+                kept_rows = [
                     _normalize_sheet_row_values(row, width=len(spec.headers))
                     for row in existing_rows
                 ]
-            )
             if tab == "Stocks":
                 kept_rows = [
                     _sanitize_stock_sheet_row(row, spec=spec)
@@ -1032,12 +1094,16 @@ def write_workbook_plan_to_google_sheet(
                     for row in combined_rows
                 ]
             if replace_issue:
-                sheets.spreadsheets().values().clear(
-                    spreadsheetId=config.sheets_spreadsheet_id,
-                    range=body_range,
-                    body={},
-                ).execute()
                 cleared_tabs.append(tab)
+                post_write_clear_ranges.extend(
+                    _stale_sheet_tail_clear_ranges(
+                        tab,
+                        spec=spec,
+                        body_start=body_start,
+                        existing_row_count=len(existing_rows),
+                        replacement_row_count=len(combined_rows),
+                    )
+                )
             if combined_rows:
                 write_ranges.append(
                     {
@@ -1058,6 +1124,12 @@ def write_workbook_plan_to_google_sheet(
                     "data": write_ranges,
                 },
             ).execute()
+        for range_name in post_write_clear_ranges:
+            sheets.spreadsheets().values().clear(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                range=range_name,
+                body={},
+            ).execute()
     except Exception as error:
         raise GoogleAccessError(
             "Google Sheets workbook row export failed. Verify network access, "
@@ -1069,13 +1141,22 @@ def write_workbook_plan_to_google_sheet(
         "ok": True,
         "externalServicesEnabled": True,
         "enrichmentProviderCalls": 0,
-        "spreadsheetId": config.sheets_spreadsheet_id,
+        "spreadsheetId": _redacted_identifier(config.sheets_spreadsheet_id),
         "issueId": issue_id,
         "replaceIssue": replace_issue,
+        "exportMode": (
+            "private_draft_review_export"
+            if allow_draft_rows
+            else "approved_family_export"
+        ),
+        "familyVisibleSafe": not allow_draft_rows,
+        "privateDraftReviewOnly": allow_draft_rows,
+        "draftRowsAllowed": allow_draft_rows,
         "tabsWritten": sorted(rows_by_tab),
         "rowsWritten": written_count,
         "rowsSkipped": skipped_count,
         "clearedTabs": sorted(cleared_tabs),
+        "staleRangesCleared": post_write_clear_ranges,
         "restoredExistingRows": restored_existing_count,
         "bootstrap": bootstrap_result,
     }
@@ -1163,7 +1244,7 @@ def write_refinement_plan_to_google_sheet(
     return {
         "ok": True,
         "externalServicesEnabled": True,
-        "spreadsheetId": config.sheets_spreadsheet_id,
+        "spreadsheetId": _redacted_identifier(config.sheets_spreadsheet_id),
         "issueId": issue_id,
         "tabWritten": spec.title,
         "rowsWritten": len(rows),
@@ -1231,6 +1312,7 @@ def build_drive_pdf_metadata_result(
     *,
     drive_service_factory=None,
     page_size: int = 100,
+    include_private_identifiers: bool = False,
 ) -> dict[str, object]:
     files = list_drive_pdf_metadata(
         config,
@@ -1240,10 +1322,15 @@ def build_drive_pdf_metadata_result(
     return {
         "ok": True,
         "externalServicesEnabled": True,
-        "driveFolderId": config.drive_folder_id,
+        "driveFolderId": config.drive_folder_id
+        if include_private_identifiers
+        else _redacted_identifier(config.drive_folder_id),
         "listedAt": datetime.now(timezone.utc).isoformat(),
         "fileCount": len(files),
-        "files": [file.to_dict() for file in files],
+        "files": [
+            file.to_dict(include_private_identifiers=include_private_identifiers)
+            for file in files
+        ],
     }
 
 
@@ -1299,6 +1386,91 @@ def _build_sheet_header_ranges(
         for spec in tab_specs
     )
     return metadata_ranges + header_ranges
+
+
+def _is_approved_export_row(row: Mapping[str, object]) -> bool:
+    return (
+        row.get("reviewStatus") == "approved"
+        and row.get("exportable") is True
+        and row.get("requiresManualReview") is False
+        and bool(str(row.get("reviewedBy") or "").strip())
+        and _has_valid_reviewed_at(row.get("reviewedAt"))
+        and bool(str(row.get("sourceBlock") or "").strip())
+    )
+
+
+def _require_family_export_approval_audit(
+    workbook_plan: Mapping[str, object],
+    raw_rows: list[object],
+) -> None:
+    approval_audit = workbook_plan.get("approvalAudit")
+    if not isinstance(approval_audit, Mapping):
+        raise GoogleAccessError(
+            "family-visible workbook export requires workbook-approval-audit provenance"
+        )
+
+    if approval_audit.get("approvalSource") != "private_reviewer_csv":
+        raise GoogleAccessError(
+            "family-visible workbook export requires private reviewer CSV approval provenance"
+        )
+    if approval_audit.get("staleApprovalDetected") is not False:
+        raise GoogleAccessError(
+            "family-visible workbook export cannot use stale or unchecked approval hashes"
+        )
+    if approval_audit.get("hashMismatchRows") not in (0, None):
+        raise GoogleAccessError(
+            "family-visible workbook export cannot include approval hash mismatches"
+        )
+    if approval_audit.get("rowCount") != len(raw_rows):
+        raise GoogleAccessError(
+            "family-visible workbook export approval audit row count does not match rows"
+        )
+
+    approved_row_count = sum(
+        1 for row in raw_rows if isinstance(row, Mapping) and _is_approved_export_row(row)
+    )
+    if approval_audit.get("approvedRows") != approved_row_count:
+        raise GoogleAccessError(
+            "family-visible workbook export approved row count does not match approval audit"
+        )
+
+
+def _has_valid_reviewed_at(value: object) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
+def _stale_sheet_tail_clear_ranges(
+    tab: str,
+    *,
+    spec: GoogleSheetTabSpec,
+    body_start: int,
+    existing_row_count: int,
+    replacement_row_count: int,
+) -> list[str]:
+    if existing_row_count <= replacement_row_count:
+        return []
+    if replacement_row_count <= 0:
+        return [
+            (
+                f"{_quote_sheet_title(tab)}!A{body_start}:"
+                f"{_column_letter(len(spec.headers))}{body_start + existing_row_count - 1}"
+            )
+        ]
+    stale_start = body_start + replacement_row_count
+    stale_end = body_start + existing_row_count - 1
+    return [
+        (
+            f"{_quote_sheet_title(tab)}!A{stale_start}:"
+            f"{_column_letter(len(spec.headers))}{stale_end}"
+        )
+    ]
 
 
 def _resolve_metadata_cell_value(value: str, sheet_ids_by_title: Mapping[str, int]) -> str:

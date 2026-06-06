@@ -158,10 +158,10 @@ class WorkbookExportPlanTest(unittest.TestCase):
         result = plan.to_dict()
         self.assertEqual(extractor.calls, 1)
         self.assertEqual(result["issueId"], "2026-W03")
-        self.assertEqual(result["rowCount"], 2)
+        self.assertEqual(result["rowCount"], 3)
         self.assertEqual(
             result["rowsByTab"],
-            {"Extraction Audit": 1, "Stocks": 1},
+            {"Extraction Audit": 1, "Latest Issue Recommendations": 1, "Stocks": 1},
         )
 
     def test_pdf_plan_skips_front_matter_but_keeps_later_explicit_sections(self) -> None:
@@ -295,7 +295,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         )
 
         result = plan.to_dict()
-        row = result["rows"][0]
+        row = next(candidate for candidate in result["rows"] if candidate["tab"] == "Stocks")
         stock_tab = next(tab for tab in result["tabs"] if tab["title"] == "Stocks")
 
         self.assertFalse(result["googleWritesEnabled"])
@@ -336,6 +336,48 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(row, "page"), "22")
         self.assertEqual(value_for(row, "date updated"), "2026-05-17")
         self.assertIn("manual_review_required", row["warnings"][0])
+
+    def test_plan_emits_latest_issue_recommendation_tab_from_stock_rows(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            stock_update_date="2026-05-17",
+            recommendation_cards=(
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=22,
+                    instrument_name="Banco Sabadell",
+                    instrument_type=InstrumentType.STOCK,
+                    wkn="A0MRD4",
+                    current_price="3,33 EUR",
+                    target="4,30 EUR",
+                    stop="2,70 EUR",
+                    chance=5,
+                    risk=5,
+                    recommendation_status="new_recommendation",
+                    dividend_yield="18,6 %",
+                ),
+            ),
+        )
+
+        latest_row = next(
+            row
+            for row in plan.to_dict()["rows"]
+            if row["tab"] == "Latest Issue Recommendations"
+        )
+
+        self.assertEqual(value_for(latest_row, "Issue", tab="Latest Issue Recommendations"), "2026-W03")
+        self.assertEqual(value_for(latest_row, "Company", tab="Latest Issue Recommendations"), "Banco Sabadell")
+        self.assertEqual(value_for(latest_row, "WKN", tab="Latest Issue Recommendations"), "A0MRD4")
+        self.assertEqual(
+            value_for(latest_row, "Magazine Current Price", tab="Latest Issue Recommendations"),
+            "3,33 EUR",
+        )
+        self.assertEqual(value_for(latest_row, "Source tab", tab="Latest Issue Recommendations"), "Stocks")
+        self.assertEqual(
+            value_for(latest_row, "Review status", tab="Latest Issue Recommendations"),
+            ReviewStatus.NEEDS_REVIEW.value,
+        )
 
     def test_stock_update_date_prefers_explicit_import_date(self) -> None:
         with TemporaryDirectory() as directory:

@@ -1,7 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from stock_analyst.cli import run_google_drive_pdfs_command
 from stock_analyst.google_access import (
     DEFAULT_SHEET_TABS,
     GoogleAccessError,
@@ -88,9 +90,13 @@ class _FakeValues:
         self.clear_requests = []
         self.get_requests = []
         self.values_by_range = {}
+        self.fail_batch_update = False
+        self.fail_batch_update_after = 0
 
     def batchUpdate(self, **kwargs):
         self.batch_update_requests.append(kwargs)
+        if self.fail_batch_update and len(self.batch_update_requests) > self.fail_batch_update_after:
+            raise RuntimeError("simulated batch update failure")
         return _FakeExecute({"updated": True})
 
     def clear(self, **kwargs):
@@ -179,6 +185,10 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertEqual(config.drive_folder_id, "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb")
         self.assertEqual(config.service_account_email, "stock-analyst@example.iam.gserviceaccount.com")
+        self.assertNotEqual(
+            config.to_public_dict()["serviceAccountEmail"],
+            "stock-analyst@example.iam.gserviceaccount.com",
+        )
 
     def test_config_rejects_missing_credentials_file(self) -> None:
         with self.assertRaisesRegex(GoogleAccessError, "GOOGLE_APPLICATION_CREDENTIALS does not exist"):
@@ -225,9 +235,18 @@ class GoogleAccessTest(unittest.TestCase):
             )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["drive"]["folderName"], "Der Aktionär Issues")
-        self.assertEqual(result["sheets"]["title"], "Der Aktionär Summaries")
+        self.assertNotEqual(result["drive"]["folderId"], config.drive_folder_id)
+        self.assertNotEqual(result["sheets"]["spreadsheetId"], config.sheets_spreadsheet_id)
+        self.assertNotEqual(result["serviceAccountEmail"], config.service_account_email)
+        self.assertEqual(result["sheets"]["tabCount"], 2)
         self.assertNotIn("secret", str(result))
+        self.assertNotIn("stock-analyst@example.iam.gserviceaccount.com", str(result))
+        self.assertNotIn("Der Aktionär Issues", str(result))
+        self.assertNotIn("Der Aktionär Summaries", str(result))
+        self.assertNotIn("Navigation Dashboard", str(result))
+        self.assertNotIn("Stocks", str(result))
+        self.assertNotIn(config.drive_folder_id, str(result))
+        self.assertNotIn(config.sheets_spreadsheet_id, str(result))
 
     def test_drive_pdf_metadata_listing_is_metadata_only_and_paginated(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -276,7 +295,7 @@ class GoogleAccessTest(unittest.TestCase):
             )
 
         self.assertEqual(len(files), 2)
-        self.assertEqual(files[0].source_pdf_id, "drive_1DrivePdfFileAlp")
+        self.assertEqual(len(files[0].source_pdf_id), len("drive_") + 16)
         self.assertEqual(files[0].size_bytes, 4096)
         self.assertEqual(files[1].name, "DA_2026_06.pdf")
         self.assertEqual(len(drive.files_resource.list_requests), 2)
@@ -317,9 +336,141 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertEqual(written, manifest_path)
         self.assertEqual(len(lines), 1)
+        self.assertNotIn("1DrivePdfFileAlpha", lines[0])
         self.assertIn('"stage": "drive_metadata_imported"', lines[0])
         self.assertIn('"status": "pending_local_download"', lines[0])
         self.assertNotIn("private_key", lines[0])
+
+    def test_drive_pdf_metadata_can_include_private_ids_for_private_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            result = build_drive_pdf_metadata_result(
+                config,
+                drive_service_factory=lambda: _FakeDrive(
+                    {
+                        "files": [
+                            {
+                                "id": "1DrivePdfFileAlpha",
+                                "name": "DA_2026_05.pdf",
+                                "mimeType": "application/pdf",
+                                "webViewLink": "https://drive.google.com/file/d/private",
+                            }
+                        ]
+                    }
+                ),
+                include_private_identifiers=True,
+            )
+
+        self.assertEqual(result["driveFolderId"], config.drive_folder_id)
+        self.assertEqual(result["files"][0]["driveFileId"], "1DrivePdfFileAlpha")
+        self.assertEqual(result["files"][0]["webViewLink"], "https://drive.google.com/file/d/private")
+
+    def test_drive_pdf_cli_manifest_stays_redacted_without_private_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest = Path(temp_dir) / "drive" / "pdf-metadata.jsonl"
+            fake_config = object()
+            redacted_result = {
+                "ok": True,
+                "files": [{"sourcePdfId": "drive_redacted"}],
+            }
+
+            with (
+                patch("stock_analyst.cli.load_google_access_config", return_value=fake_config),
+                patch(
+                    "stock_analyst.cli.build_drive_pdf_metadata_result",
+                    return_value=redacted_result,
+                ) as build_result,
+                patch("stock_analyst.cli.write_drive_pdf_metadata_manifest") as write_manifest,
+            ):
+                result = run_google_drive_pdfs_command(manifest=manifest)
+
+        self.assertEqual(result["manifestPath"], str(manifest))
+        build_result.assert_called_once_with(
+            fake_config,
+            page_size=100,
+            include_private_identifiers=False,
+        )
+        write_manifest.assert_called_once_with(redacted_result, manifest)
+
+    def test_drive_pdf_cli_requires_private_path_for_raw_identifier_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest = Path(temp_dir) / "drive" / "pdf-metadata.jsonl"
+
+            with (
+                patch("stock_analyst.cli.load_google_access_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.build_drive_pdf_metadata_result",
+                    return_value={
+                        "ok": True,
+                        "files": [{"driveFileId": "1DrivePdfFileAlpha"}],
+                    },
+                ) as build_result,
+                patch("stock_analyst.cli.write_drive_pdf_metadata_manifest") as write_manifest,
+            ):
+                with self.assertRaisesRegex(ValueError, "private path"):
+                    run_google_drive_pdfs_command(
+                        manifest=manifest,
+                        include_private_identifiers=True,
+                    )
+
+        build_result.assert_not_called()
+        write_manifest.assert_not_called()
+
+    def test_drive_pdf_cli_requires_manifest_for_raw_identifier_stdout_safety(self) -> None:
+        with (
+            patch("stock_analyst.cli.load_google_access_config", return_value=object()) as load_config,
+            patch("stock_analyst.cli.build_drive_pdf_metadata_result") as build_result,
+            patch("stock_analyst.cli.write_drive_pdf_metadata_manifest") as write_manifest,
+        ):
+            with self.assertRaisesRegex(ValueError, "private manifest path"):
+                run_google_drive_pdfs_command(include_private_identifiers=True)
+
+        load_config.assert_not_called()
+        build_result.assert_not_called()
+        write_manifest.assert_not_called()
+
+    def test_drive_pdf_cli_allows_raw_identifier_manifest_under_private_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest = Path(temp_dir) / "data" / "private" / "drive" / "pdf-metadata.jsonl"
+            private_result = {
+                "ok": True,
+                "driveFolderId": "1PrivateDriveFolder",
+                "files": [
+                    {
+                        "driveFileId": "1DrivePdfFileAlpha",
+                        "webViewLink": "https://drive.google.com/file/d/private",
+                    }
+                ],
+            }
+
+            with (
+                patch("stock_analyst.cli.load_google_access_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.build_drive_pdf_metadata_result",
+                    return_value=private_result,
+                ),
+                patch("stock_analyst.cli.write_drive_pdf_metadata_manifest") as write_manifest,
+            ):
+                result = run_google_drive_pdfs_command(
+                    manifest=manifest,
+                    include_private_identifiers=True,
+                )
+
+        self.assertEqual(result["manifestPath"], str(manifest))
+        self.assertTrue(result["privateIdentifiersWritten"])
+        self.assertNotIn("1PrivateDriveFolder", str(result))
+        self.assertNotIn("1DrivePdfFileAlpha", str(result))
+        self.assertNotIn("https://drive.google.com/file/d/private", str(result))
+        self.assertIn("redacted:", str(result))
+        write_manifest.assert_called_once_with(private_result, manifest)
 
     def test_google_sheet_bootstrap_creates_missing_tabs_and_headers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -346,8 +497,11 @@ class GoogleAccessTest(unittest.TestCase):
             result = bootstrap_google_sheet(config, sheets_service_factory=lambda: sheets)
 
         self.assertTrue(result["ok"])
+        self.assertNotEqual(result["spreadsheetId"], config.sheets_spreadsheet_id)
+        self.assertNotIn(config.sheets_spreadsheet_id, str(result))
         self.assertIn("Derivative Tips", result["createdTabs"])
         self.assertIn("Dividend Focus", result["createdTabs"])
+        self.assertIn("Latest Issue Recommendations", result["createdTabs"])
         self.assertIn("Insider Activity", result["createdTabs"])
         self.assertEqual(result["headerRowsWritten"], len(result["tabs"]))
         batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
@@ -386,20 +540,20 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn(
             {
                 "range": "'Navigation Dashboard'!B6",
-                "values": [['=HYPERLINK("#gid=20","Stocks")']],
+                "values": [["Latest Issue Recommendations"]],
             },
             values_body["data"],
         )
         self.assertIn(
             {
                 "range": "'Navigation Dashboard'!E6",
-                "values": [["=COUNTA('Stocks'!A2:A)"]],
+                "values": [["=COUNTA('Latest Issue Recommendations'!A2:A)"]],
             },
             values_body["data"],
         )
         self.assertIn(
             {
-                "range": "'Navigation Dashboard'!F11",
+                "range": "'Navigation Dashboard'!F12",
                 "values": [["planned; review required"]],
             },
             values_body["data"],
@@ -458,6 +612,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertNotIn("Options", tab_status)
         self.assertNotIn("Crypto", tab_status)
         self.assertEqual(tab_status["Derivative Tips"], "parser_backed")
+        self.assertEqual(tab_status["Latest Issue Recommendations"], "parser_backed")
         self.assertEqual(tab_status["Dividend Focus"], "parser_backed")
         self.assertEqual(tab_status["Extraction Audit"], "parser_backed")
         self.assertEqual(tab_status["AKTIONAER Depot"], "parser_backed")
@@ -473,6 +628,8 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(navigation_tab["frozenColumns"], 2)
         self.assertEqual(navigation_tab["tableStartsAt"], "A5")
         headers_by_tab = {tab["title"]: tab["headers"] for tab in result["tabs"]}
+        self.assertEqual(headers_by_tab["Latest Issue Recommendations"][0], "Issue")
+        self.assertEqual(headers_by_tab["Latest Issue Recommendations"][5], "Magazine Current Price")
         self.assertEqual(headers_by_tab["Derivative Tips"][10], "Magazine Entry Price")
         self.assertEqual(headers_by_tab["Derivative Tips"][11], "Magazine Current Price")
         self.assertEqual(headers_by_tab["AKTIONAER Depot"][3], "Buy date")
@@ -655,6 +812,8 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["headersRewritten"])
+        self.assertNotEqual(result["spreadsheetId"], config.sheets_spreadsheet_id)
+        self.assertNotIn(config.sheets_spreadsheet_id, str(result))
         self.assertEqual(result["clearedTabCount"], len(result["clearedRanges"]))
         self.assertNotIn("'Stocks'!A1:T1", clear_ranges)
         self.assertIn("'Stocks'!A2:T", clear_ranges)
@@ -757,6 +916,7 @@ class GoogleAccessTest(unittest.TestCase):
                 config,
                 workbook_plan,
                 sheets_service_factory=lambda: sheets,
+                allow_draft_rows=True,
             )
 
         values_resource = sheets.spreadsheets_resource.values_resource
@@ -765,6 +925,9 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["enrichmentProviderCalls"], 0)
+        self.assertEqual(result["exportMode"], "private_draft_review_export")
+        self.assertFalse(result["familyVisibleSafe"])
+        self.assertTrue(result["privateDraftReviewOnly"])
         self.assertEqual(result["rowsWritten"], 2)
         self.assertIn("Stocks", result["clearedTabs"])
         self.assertIn("Dividend Focus", result["clearedTabs"])
@@ -783,7 +946,52 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn("Previous comment", _stock_value(stocks_write["values"][1], "Comment"))
         self.assertEqual(_stock_value(stocks_write["values"][1], "issue"), "2026-W02, 2026-W03")
         self.assertEqual(_stock_value(stocks_write["values"][1], "page"), "20, 22")
-        self.assertIn("'Stocks'!A2:T", [request["range"] for request in values_resource.clear_requests])
+        self.assertIn("'Stocks'!A4:T4", [request["range"] for request in values_resource.clear_requests])
+        self.assertIn("'Stocks'!A4:T4", result["staleRangesCleared"])
+
+    def test_google_sheet_export_writes_before_clearing_stale_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [{"properties": {"title": "Stocks"}}],
+                }
+            )
+            values_resource = sheets.spreadsheets_resource.values_resource
+            values_resource.values_by_range["'Stocks'!A2:T"] = [
+                self._stock_sheet_row(company="Old Same Issue", issue="2026-W03"),
+                self._stock_sheet_row(company="Keep Different Issue", issue="2026-W02"),
+            ]
+            values_resource.fail_batch_update = True
+            values_resource.fail_batch_update_after = 1
+            workbook_plan = {
+                "issueId": "2026-W03",
+                "rows": [
+                    {
+                        "tab": "Stocks",
+                        "values": self._stock_sheet_row(issue="2026-W03"),
+                    }
+                ],
+            }
+
+            with self.assertRaisesRegex(GoogleAccessError, "workbook row export failed"):
+                write_workbook_plan_to_google_sheet(
+                    config,
+                    workbook_plan,
+                    sheets_service_factory=lambda: sheets,
+                    allow_draft_rows=True,
+                )
+
+        self.assertEqual(values_resource.clear_requests, [])
 
     def test_google_sheet_export_uses_latest_stock_recommendation_and_held_since(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -828,6 +1036,7 @@ class GoogleAccessTest(unittest.TestCase):
                 config,
                 workbook_plan,
                 sheets_service_factory=lambda: sheets,
+                allow_draft_rows=True,
             )
 
         values_resource = sheets.spreadsheets_resource.values_resource
@@ -879,7 +1088,128 @@ class GoogleAccessTest(unittest.TestCase):
                     config,
                     workbook_plan,
                     sheets_service_factory=lambda: sheets,
+                    allow_draft_rows=True,
                 )
+
+    def test_google_sheet_export_skips_draft_rows_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets({"spreadsheetId": config.sheets_spreadsheet_id, "sheets": []})
+            workbook_plan = {
+                "issueId": "2026-W03",
+                "rows": [
+                    {
+                        "tab": "Stocks",
+                        "reviewStatus": "needs_review",
+                        "exportable": False,
+                        "requiresManualReview": True,
+                        "values": self._stock_sheet_row(),
+                    }
+                ],
+            }
+
+            with self.assertRaisesRegex(GoogleAccessError, "workbook-approval-audit provenance"):
+                write_workbook_plan_to_google_sheet(
+                    config,
+                    workbook_plan,
+                    sheets_service_factory=lambda: sheets,
+                )
+
+        self.assertEqual(sheets.spreadsheets_resource.values_resource.clear_requests, [])
+
+    def test_google_sheet_export_rejects_forged_approved_rows_without_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets({"spreadsheetId": config.sheets_spreadsheet_id, "sheets": []})
+            workbook_plan = {
+                "issueId": "2026-W03",
+                "rows": [
+                    {
+                        "tab": "Stocks",
+                        "reviewStatus": "approved",
+                        "exportable": True,
+                        "requiresManualReview": False,
+                        "reviewedBy": "reviewer@example.test",
+                        "reviewedAt": "2026-06-06T10:00:00+00:00",
+                        "sourceBlock": "reviewed_card_page_22",
+                        "values": self._stock_sheet_row(),
+                    }
+                ],
+            }
+
+            with self.assertRaisesRegex(GoogleAccessError, "workbook-approval-audit provenance"):
+                write_workbook_plan_to_google_sheet(
+                    config,
+                    workbook_plan,
+                    sheets_service_factory=lambda: sheets,
+                )
+
+        self.assertEqual(sheets.spreadsheets_resource.values_resource.batch_update_requests, [])
+
+    def test_google_sheet_export_writes_audit_approved_rows_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets({"spreadsheetId": config.sheets_spreadsheet_id, "sheets": []})
+            workbook_plan = {
+                "issueId": "2026-W03",
+                "approvalAudit": {
+                    "approvalSource": "private_reviewer_csv",
+                    "rowCount": 1,
+                    "approvedRows": 1,
+                    "hashMismatchRows": 0,
+                    "staleApprovalDetected": False,
+                },
+                "rows": [
+                    {
+                        "tab": "Stocks",
+                        "reviewStatus": "approved",
+                        "exportable": True,
+                        "requiresManualReview": False,
+                        "reviewedBy": "reviewer@example.test",
+                        "reviewedAt": "2026-06-06T10:00:00+00:00",
+                        "sourceBlock": "reviewed_card_page_22",
+                        "values": self._stock_sheet_row(),
+                    }
+                ],
+            }
+
+            result = write_workbook_plan_to_google_sheet(
+                config,
+                workbook_plan,
+                sheets_service_factory=lambda: sheets,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["exportMode"], "approved_family_export")
+        self.assertTrue(result["familyVisibleSafe"])
+        self.assertFalse(result["privateDraftReviewOnly"])
+        self.assertEqual(result["rowsWritten"], 1)
+        self.assertNotEqual(result["spreadsheetId"], config.sheets_spreadsheet_id)
+        self.assertNotIn(config.sheets_spreadsheet_id, str(result))
 
     def test_google_sheet_export_skips_layout_only_dashboard_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -907,6 +1237,7 @@ class GoogleAccessTest(unittest.TestCase):
                 config,
                 workbook_plan,
                 sheets_service_factory=lambda: sheets,
+                allow_draft_rows=True,
             )
 
         self.assertTrue(result["ok"])
@@ -985,6 +1316,8 @@ class GoogleAccessTest(unittest.TestCase):
         data = values_resource.batch_update_requests[-1]["body"]["data"][0]
 
         self.assertTrue(result["ok"])
+        self.assertNotEqual(result["spreadsheetId"], config.sheets_spreadsheet_id)
+        self.assertNotIn(config.sheets_spreadsheet_id, str(result))
         self.assertEqual(result["tabWritten"], "Refinement")
         self.assertEqual(result["rowsWritten"], 2)
         self.assertEqual(result["reviewerNotesPreserved"], 1)

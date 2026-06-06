@@ -28,7 +28,11 @@ DEFAULT_ALPHA_VANTAGE_DAILY_CALL_LIMIT = 25
 DEFAULT_FMP_DAILY_CALL_LIMIT = 235
 DEFAULT_TWELVE_DATA_DAILY_CALL_LIMIT = 800
 DEFAULT_FINNHUB_DAILY_CALL_LIMIT = 500
+DEFAULT_OPENFIGI_DAILY_CALL_LIMIT = 100
+DEFAULT_ECB_FX_DAILY_CALL_LIMIT = 100
 DEFAULT_SEC_EDGAR_DAILY_CALL_LIMIT = 100
+DEFAULT_GLEIF_LEI_DAILY_CALL_LIMIT = 100
+DEFAULT_BUNDESBANK_SDMX_DAILY_CALL_LIMIT = 100
 DEFAULT_ALPHA_VANTAGE_ENDPOINTS = ("global-quote", "overview")
 DEFAULT_FMP_ENDPOINTS = ("batch-quote-short", "profile", "dividends")
 DEFAULT_TWELVE_DATA_ENDPOINTS = ("price", "quote", "statistics")
@@ -39,13 +43,23 @@ DEFAULT_FINNHUB_ENDPOINTS = (
     "earnings-surprises",
     "company-news",
 )
+DEFAULT_OPENFIGI_ENDPOINTS = ("mapping", "search")
+DEFAULT_ECB_FX_ENDPOINTS = ("euro-reference-rates",)
+DEFAULT_SEC_COMPANYFACTS_ENDPOINTS = ("ticker-cik-map", "companyfacts")
 DEFAULT_SEC_EDGAR_FORM4_ENDPOINTS = ("ticker-cik-map", "submissions", "form4-xml")
+DEFAULT_GLEIF_LEI_ENDPOINTS = ("lei-record-search", "isin-lei-mapping")
+DEFAULT_BUNDESBANK_SDMX_ENDPOINTS = ("bbex3-eur-fx-reference",)
 DEFAULT_PROVIDER_ENDPOINTS = {
     "alpha_vantage": DEFAULT_ALPHA_VANTAGE_ENDPOINTS,
     "fmp": DEFAULT_FMP_ENDPOINTS,
     "twelve_data": DEFAULT_TWELVE_DATA_ENDPOINTS,
     "finnhub": DEFAULT_FINNHUB_ENDPOINTS,
+    "openfigi": DEFAULT_OPENFIGI_ENDPOINTS,
+    "ecb_fx": DEFAULT_ECB_FX_ENDPOINTS,
+    "sec_companyfacts": DEFAULT_SEC_COMPANYFACTS_ENDPOINTS,
     "sec_edgar_form4": DEFAULT_SEC_EDGAR_FORM4_ENDPOINTS,
+    "gleif_lei": DEFAULT_GLEIF_LEI_ENDPOINTS,
+    "bundesbank_sdmx": DEFAULT_BUNDESBANK_SDMX_ENDPOINTS,
 }
 SECRET_PARAM_MARKERS = ("authorization", "credential", "key", "password", "secret", "token")
 
@@ -201,6 +215,48 @@ PROVIDER_METADATA: dict[str, ProviderMetadata] = {
         daily_call_budget=DEFAULT_FMP_DAILY_CALL_LIMIT,
         bandwidth_notes=("Plan against a 512MB/month bandwidth ceiling before live access.",),
     ),
+    "openfigi": ProviderMetadata(
+        provider_id="openfigi",
+        display_name="OpenFIGI",
+        status="metadata_only",
+        credentials_required=False,
+        network_access=False,
+        purpose=(
+            "Optional future identifier mapping from ticker, ISIN, WKN-derived mappings, "
+            "or exchange codes into FIGI, ticker, exchange, and security type context."
+        ),
+        safety_notes=(
+            "Adapter is not implemented.",
+            "Unauthenticated access is possible but lower-rate; OPENFIGI_API_KEY is optional for higher limits.",
+            "Use for identifier validation and symbol disambiguation only, not recommendation inference.",
+        ),
+        rate_limit_notes=(
+            "Official unauthenticated mapping limit is 25 requests per minute with 10 jobs per request.",
+            "Project dry-run planning uses a conservative 100 request/day cap until caching and throttling exist.",
+        ),
+        daily_call_budget=DEFAULT_OPENFIGI_DAILY_CALL_LIMIT,
+    ),
+    "ecb_fx": ProviderMetadata(
+        provider_id="ecb_fx",
+        display_name="ECB FX",
+        status="metadata_only",
+        credentials_required=False,
+        network_access=False,
+        purpose=(
+            "Optional future EUR foreign-exchange reference context for display conversion "
+            "metadata without replacing magazine-printed prices."
+        ),
+        safety_notes=(
+            "Adapter is not implemented.",
+            "Use only for derived display fields with FX date/source metadata.",
+            "Never overwrite magazine current price, target, stop, or currency fields.",
+        ),
+        rate_limit_notes=(
+            "The ECB Data Portal API is public; local cache and polite request limits are still required.",
+            "Project dry-run planning uses a conservative 100 request/day cap until caching and throttling exist.",
+        ),
+        daily_call_budget=DEFAULT_ECB_FX_DAILY_CALL_LIMIT,
+    ),
     "sec_companyfacts": ProviderMetadata(
         provider_id="sec_companyfacts",
         display_name="SEC companyfacts",
@@ -235,6 +291,50 @@ PROVIDER_METADATA: dict[str, ProviderMetadata] = {
             "Dry-run planning uses a conservative 100 request/day local cap.",
         ),
         daily_call_budget=DEFAULT_SEC_EDGAR_DAILY_CALL_LIMIT,
+    ),
+    "gleif_lei": ProviderMetadata(
+        provider_id="gleif_lei",
+        display_name="GLEIF LEI",
+        status="metadata_only",
+        credentials_required=False,
+        network_access=False,
+        purpose=(
+            "Optional future legal-entity identifier and ownership/reference-data "
+            "context for issuer disambiguation, including LEI records and mapped "
+            "identifier checks where an ISIN or issuer name is reviewer-supplied."
+        ),
+        safety_notes=(
+            "Adapter is not implemented.",
+            "Use only for issuer identity/disambiguation context.",
+            "Do not infer ticker, WKN, recommendation, target, stop, price, or ownership from fuzzy matches.",
+            "Ambiguous or missing matches must remain needs_review.",
+        ),
+        rate_limit_notes=(
+            "The GLEIF API is public; local cache and polite request limits are still required.",
+            "Project dry-run planning uses a conservative 100 request/day cap until caching and throttling exist.",
+        ),
+        daily_call_budget=DEFAULT_GLEIF_LEI_DAILY_CALL_LIMIT,
+    ),
+    "bundesbank_sdmx": ProviderMetadata(
+        provider_id="bundesbank_sdmx",
+        display_name="Bundesbank SDMX",
+        status="metadata_only",
+        credentials_required=False,
+        network_access=False,
+        purpose=(
+            "Optional future official German macro, rates, and EUR FX display "
+            "context through Bundesbank SDMX data and metadata endpoints."
+        ),
+        safety_notes=(
+            "Adapter is not implemented.",
+            "Use only for context fields such as FX/date/source or macro backdrop.",
+            "Never overwrite magazine current price, target, stop, recommendation, WKN, or printed currency fields.",
+        ),
+        rate_limit_notes=(
+            "Bundesbank SDMX endpoints are public; local cache and polite request limits are still required.",
+            "Project dry-run planning uses a conservative 100 request/day cap until caching and throttling exist.",
+        ),
+        daily_call_budget=DEFAULT_BUNDESBANK_SDMX_DAILY_CALL_LIMIT,
     ),
 }
 
@@ -433,6 +533,32 @@ def plan_market_data_enrichment_requests(
     if provider is None:
         raise ValueError(f"unknown market data provider: {normalized_provider_id}")
 
+    if provider.provider_id == "disabled":
+        resolved_limit = daily_call_limit or 0
+        ledger = MarketDataBudgetLedger(
+            daily_call_limit=resolved_limit,
+            charged_call_count=0,
+            cache_hit_count=0,
+            denied_call_count=0,
+            prior_charged_call_count=prior_charged_call_count,
+        )
+        return MarketDataEnrichmentPlan(
+            provider=provider.provider_id,
+            status="disabled",
+            dry_run=True,
+            network_access=False,
+            daily_call_limit=resolved_limit,
+            planned_call_count=0,
+            charged_call_count=0,
+            prior_charged_call_count=prior_charged_call_count,
+            cache_hit_count=0,
+            denied_call_count=0,
+            remaining_daily_call_budget=ledger.remaining_daily_call_budget,
+            bandwidth_note=provider.bandwidth_notes[0] if provider.bandwidth_notes else "",
+            ledger=ledger,
+            reason="market data enrichment is disabled by default",
+        )
+
     resolved_limit = daily_call_limit or provider.daily_call_budget
     if resolved_limit is None:
         raise ValueError(f"{provider.provider_id} daily call limit must be configured")
@@ -487,7 +613,11 @@ def plan_market_data_enrichment_requests(
                 provider=provider.provider_id,
                 symbol=symbol,
                 endpoint=endpoint,
-                params={"symbol": symbol},
+                params=_provider_request_params(
+                    provider=provider.provider_id,
+                    endpoint=endpoint,
+                    symbol=symbol,
+                ),
             )
             cache = build_market_data_cache_metadata(
                 descriptor,
@@ -616,6 +746,116 @@ def plan_sec_edgar_form4_enrichment_requests(
     )
 
 
+def plan_openfigi_enrichment_requests(
+    symbols: tuple[str, ...],
+    *,
+    endpoints: tuple[str, ...] = DEFAULT_OPENFIGI_ENDPOINTS,
+    cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
+    daily_call_limit: int = DEFAULT_OPENFIGI_DAILY_CALL_LIMIT,
+    prior_charged_call_count: int = 0,
+    terms_version: str | None = None,
+) -> MarketDataEnrichmentPlan:
+    """Plan OpenFIGI identifier-mapping descriptors without live OpenFIGI access."""
+
+    return plan_market_data_enrichment_requests(
+        "openfigi",
+        symbols,
+        endpoints=endpoints,
+        cache_root=cache_root,
+        daily_call_limit=daily_call_limit,
+        prior_charged_call_count=prior_charged_call_count,
+        terms_version=terms_version,
+    )
+
+
+def plan_ecb_fx_enrichment_requests(
+    quote_currencies: tuple[str, ...],
+    *,
+    endpoints: tuple[str, ...] = DEFAULT_ECB_FX_ENDPOINTS,
+    cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
+    daily_call_limit: int = DEFAULT_ECB_FX_DAILY_CALL_LIMIT,
+    prior_charged_call_count: int = 0,
+    terms_version: str | None = None,
+) -> MarketDataEnrichmentPlan:
+    """Plan ECB EUR FX display-context descriptors without live ECB access."""
+
+    return plan_market_data_enrichment_requests(
+        "ecb_fx",
+        quote_currencies,
+        endpoints=endpoints,
+        cache_root=cache_root,
+        daily_call_limit=daily_call_limit,
+        prior_charged_call_count=prior_charged_call_count,
+        terms_version=terms_version,
+    )
+
+
+def plan_sec_companyfacts_enrichment_requests(
+    symbols: tuple[str, ...],
+    *,
+    endpoints: tuple[str, ...] = DEFAULT_SEC_COMPANYFACTS_ENDPOINTS,
+    cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
+    daily_call_limit: int = DEFAULT_SEC_EDGAR_DAILY_CALL_LIMIT,
+    prior_charged_call_count: int = 0,
+    terms_version: str | None = None,
+) -> MarketDataEnrichmentPlan:
+    """Plan official SEC companyfacts descriptors without live SEC access."""
+
+    return plan_market_data_enrichment_requests(
+        "sec_companyfacts",
+        symbols,
+        endpoints=endpoints,
+        cache_root=cache_root,
+        daily_call_limit=daily_call_limit,
+        prior_charged_call_count=prior_charged_call_count,
+        terms_version=terms_version,
+    )
+
+
+def plan_gleif_lei_enrichment_requests(
+    issuer_queries: tuple[str, ...],
+    *,
+    endpoints: tuple[str, ...] = DEFAULT_GLEIF_LEI_ENDPOINTS,
+    cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
+    daily_call_limit: int = DEFAULT_GLEIF_LEI_DAILY_CALL_LIMIT,
+    prior_charged_call_count: int = 0,
+    terms_version: str | None = None,
+) -> MarketDataEnrichmentPlan:
+    """Plan GLEIF LEI issuer-identity descriptors without live GLEIF access."""
+
+    return plan_market_data_enrichment_requests(
+        "gleif_lei",
+        issuer_queries,
+        endpoints=endpoints,
+        cache_root=cache_root,
+        daily_call_limit=daily_call_limit,
+        prior_charged_call_count=prior_charged_call_count,
+        terms_version=terms_version,
+    )
+
+
+def plan_bundesbank_sdmx_enrichment_requests(
+    quote_currencies: tuple[str, ...],
+    *,
+    endpoints: tuple[str, ...] = DEFAULT_BUNDESBANK_SDMX_ENDPOINTS,
+    cache_root: Path = DEFAULT_MARKET_CACHE_DIR,
+    daily_call_limit: int = DEFAULT_BUNDESBANK_SDMX_DAILY_CALL_LIMIT,
+    prior_charged_call_count: int = 0,
+    terms_version: str | None = None,
+) -> MarketDataEnrichmentPlan:
+    """Plan Bundesbank SDMX context descriptors without live Bundesbank access."""
+
+    return plan_market_data_enrichment_requests(
+        "bundesbank_sdmx",
+        quote_currencies,
+        endpoints=endpoints,
+        cache_root=cache_root,
+        daily_call_limit=daily_call_limit,
+        prior_charged_call_count=prior_charged_call_count,
+        terms_version=terms_version,
+    )
+
+
 def build_market_data_cache_metadata(
     descriptor: MarketDataRequestDescriptor,
     *,
@@ -681,6 +921,7 @@ def write_market_data_cache_record(
     """Persist a credential-free market data response cache record."""
 
     normalized_stored_at = _normalize_cache_datetime(stored_at) or datetime.now(timezone.utc)
+    _assert_cache_response_payload_safe(response_payload)
     metadata.cache_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "metadata": _cache_metadata_to_payload(metadata),
@@ -1223,6 +1464,77 @@ def parse_stooq_daily_csv(csv_text: str, *, symbol: str) -> MarketDataResult:
     )
 
 
+def _provider_request_params(
+    *,
+    provider: str,
+    endpoint: str,
+    symbol: str,
+) -> Mapping[str, object]:
+    normalized_provider = provider.strip().lower()
+    normalized_endpoint = endpoint.strip().lower()
+    normalized_symbol = symbol.strip().upper()
+
+    if normalized_provider == "openfigi":
+        if normalized_endpoint == "mapping":
+            return {
+                "idType": "TICKER",
+                "idValue": normalized_symbol,
+            }
+        if normalized_endpoint == "search":
+            return {
+                "query": normalized_symbol,
+            }
+    if normalized_provider == "ecb_fx":
+        return {
+            "baseCurrency": "EUR",
+            "quoteCurrency": normalized_symbol,
+        }
+    if normalized_provider == "sec_companyfacts":
+        if normalized_endpoint == "ticker-cik-map":
+            return {
+                "ticker": normalized_symbol,
+            }
+        return {
+            "ticker": normalized_symbol,
+            "requiresCik": "true",
+            "form": "companyfacts",
+        }
+    if normalized_provider == "sec_edgar_form4":
+        if normalized_endpoint == "ticker-cik-map":
+            return {
+                "ticker": normalized_symbol,
+            }
+        return {
+            "ticker": normalized_symbol,
+            "requiresCik": "true",
+            "formType": "4",
+        }
+    if normalized_provider == "gleif_lei":
+        if normalized_endpoint == "isin-lei-mapping":
+            return {
+                "isin": normalized_symbol,
+                "mapping": "isin-lei",
+            }
+        return {
+            "query": normalized_symbol,
+            "recordType": "lei-record",
+        }
+    if normalized_provider == "bundesbank_sdmx":
+        if normalized_endpoint == "bbex3-eur-fx-reference":
+            return {
+                "flowRef": "BBEX3",
+                "frequency": "D",
+                "baseCurrency": "EUR",
+                "quoteCurrency": normalized_symbol,
+            }
+        return {
+            "flowRef": normalized_symbol,
+            "detail": "serieskeyonly",
+        }
+
+    return {"symbol": normalized_symbol}
+
+
 def _normalize_safe_cache_params(params: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
     normalized: list[tuple[str, str]] = []
 
@@ -1235,6 +1547,20 @@ def _normalize_safe_cache_params(params: Mapping[str, object]) -> tuple[tuple[st
         normalized.append((key, str(raw_value)))
 
     return tuple(sorted(normalized))
+
+
+def _assert_cache_response_payload_safe(value: object, path: str = "responsePayload") -> None:
+    if isinstance(value, Mapping):
+        for raw_key, raw_child in value.items():
+            key = str(raw_key).strip().lower()
+            if any(marker in key for marker in SECRET_PARAM_MARKERS):
+                raise ValueError(f"market data cache response payload must not contain secrets: {path}.{key}")
+            _assert_cache_response_payload_safe(raw_child, f"{path}.{key}")
+        return
+
+    if isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            _assert_cache_response_payload_safe(child, f"{path}[{index}]")
 
 
 def _parse_positive_int_env(source: Mapping[str, str], name: str, default: int) -> int:

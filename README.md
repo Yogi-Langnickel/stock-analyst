@@ -150,9 +150,10 @@ ignored private path and a local env file points at the configured folder/sheet:
 PYTHONPATH=src python3 -m stock_analyst.cli google-access-smoke --env-file .env
 ```
 
-This reads only Drive folder metadata and spreadsheet/tab names. It does not
-copy PDFs, write rows, run extraction, or expose the service-account private
-key.
+This reads only redacted Drive/Sheets access metadata and a tab count. It does
+not fetch or print folder names, spreadsheet titles, tab names, copy PDFs, write
+rows, run extraction, expose the service-account email, or expose the
+service-account private key.
 
 List PDF metadata in the configured Drive folder without downloading source
 PDFs:
@@ -180,14 +181,20 @@ PYTHONPATH=src python3 -m stock_analyst.cli google-sheets-bootstrap --env-file .
 Use `--skip-headers` if you only want to create missing tabs and preserve
 existing first-row labels.
 
-Write reviewer-gated workbook-plan rows into the configured Google Sheet:
+Prepare reviewer approval state and write approved rows into the configured
+Google Sheet:
 
 ```sh
-scripts/stock-analyst google-sheets-export-plan ./data/private/workbook-plan.json --env-file .env
+scripts/stock-analyst workbook-approval-template ./data/private/workbook-plan.json --output ./data/private/review/approvals.csv
+scripts/stock-analyst workbook-approval-audit ./data/private/workbook-plan.json --approval-csv ./data/private/review/approvals.csv --output ./data/private/reviewed-workbook-plan.json
+scripts/stock-analyst google-sheets-export-plan ./data/private/reviewed-workbook-plan.json --env-file .env
 ```
 
 By default this replaces existing rows for the same issue in the affected tabs,
 preserves rows from other issues, and makes no enrichment provider calls.
+Unapproved draft rows are skipped unless `--allow-draft-rows` is supplied for
+the private reviewer workbook. The approval CSV and reviewed workbook plan are
+private artifacts; command output returns counts and paths, not row content.
 
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text

@@ -2,7 +2,7 @@
 
 Status: active plan
 Created: 2026-05-15
-Last checked: 2026-05-17
+Last checked: 2026-06-06
 
 Market data is enrichment only. It can help reviewers validate context, stale
 prices, symbols, and broad market moves, but it must not overwrite magazine
@@ -24,13 +24,20 @@ the provider's ticker format.
 | `twelve_data` | Metadata and dry-run planner only | `TWELVEDATA_API_KEY`; legacy alias `TWELVE_DATA_API_KEY` | No | Bulk quote, technical, reference, and limited analysis planning under 800/day |
 | `finnhub` | Metadata and dry-run planner only | `FINNHUB_API_KEY`; `FINNHUB_SECRET` kept private but unused by REST planner | No | Analyst, insider, earnings, quote, news, and sentiment context planning |
 | `fmp` | Metadata and dry-run planner only | `FMP_API_KEY` | No | Optional future Financial Modeling Prep quote/profile/fundamentals context |
-| `sec_companyfacts` | Metadata only | No key; `SEC_USER_AGENT` before live access | No | Optional future US issuer fundamentals and filing metadata |
+| `openfigi` | Metadata and dry-run planner only | None required for low-rate access; optional OpenFIGI key for higher limits | No | Identifier mapping and ticker/exchange disambiguation |
+| `ecb_fx` | Metadata and dry-run planner only | None | No | EUR FX reference-rate context for derived display conversions |
+| `sec_companyfacts` | Metadata and dry-run planner only | No key; `SEC_USER_AGENT` before live access | No | Optional future US issuer fundamentals and filing metadata |
 | `sec_edgar_form4` | Metadata and dry-run planner only | No key; `SEC_USER_AGENT` before live access | No | Preferred official source for US insider activity from Form 4 filings |
+| `gleif_lei` | Metadata and dry-run planner only | None | No | Legal-entity identity, LEI, mapped identifier, and ownership/reference context |
+| `bundesbank_sdmx` | Metadata and dry-run planner only | None | No | Official German macro, rates, and EUR FX context through SDMX |
 
 `STOCK_ANALYST_MARKET_DATA_PROVIDER` defaults to `disabled`. Selecting
 `stooq_csv` only enables parsing caller-supplied CSV text; it does not fetch
 from Stooq. Selecting key-based or SEC providers does not enable live calls
 because adapters, cache policy, throttling, and terms checks are not complete.
+`market-data-plan` now preserves that default even when manual `--symbol`
+values or endpoint names are supplied; provider dry-run planning requires an
+explicit provider selection such as `STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp`.
 
 ## Recommended Order
 
@@ -94,6 +101,35 @@ because adapters, cache policy, throttling, and terms checks are not complete.
      stocks already present in the workbook. Non-US companies will usually not
      have SEC insider filings and must be marked as not covered.
 
+9. OpenFIGI
+   - Best no-extra-key candidate for mapping reviewer-approved identifiers to
+     FIGI, ticker, exchange, and security-type metadata.
+   - Useful when Der Aktionaer prints WKN/ISIN/name but the provider symbol is
+     ambiguous.
+   - Unauthenticated access is lower-rate; an optional OpenFIGI key can raise
+     request and batch limits later.
+
+10. ECB FX
+   - Best no-extra-key official source for EUR reference exchange-rate context.
+   - Use only for derived display fields with FX date/source metadata.
+   - Never overwrite magazine-printed price, target, stop, or currency fields.
+
+11. GLEIF LEI
+   - Best no-extra-key issuer-identity source for legal-entity disambiguation,
+     LEI reference data, mapped identifiers such as ISIN/BIC where available,
+     and corporate relationship context.
+   - Use for reviewer confidence when magazine company names or provider
+     symbols are ambiguous.
+   - Never infer a WKN, ticker, recommendation, target, stop, or price from
+     fuzzy matches; ambiguous results stay `needs_review`.
+
+12. Bundesbank SDMX
+   - Best no-extra-key official German source for Bundesbank macro/statistical
+     time series, metadata, and EUR FX context where ECB coverage is not enough.
+   - Use for macro/rate backdrop and derived display metadata only.
+   - Prefer narrow time-series keys and cached results; large dataflows can be
+     slow and must not be fetched broadly.
+
 ## Current Provider Notes
 
 - Alpha Vantage: official support says free API service covers most datasets up
@@ -122,6 +158,17 @@ because adapters, cache policy, throttling, and terms checks are not complete.
   dry-run planning only. Treat the configured limit as a hard 235 calls/day
   budget with a 512MB/month bandwidth planning note until live terms, endpoint
   weights, caching, and accounting are reviewed.
+- OpenFIGI: the official API is free and publicly accessible without an API
+  key at lower limits: 25 mapping requests per minute with up to 10 jobs per
+  request, and 5 search/filter requests per minute. An API key raises mapping
+  to 25 requests per 6 seconds and 100 jobs per request. Use OpenFIGI for
+  identifier mapping and disambiguation only. Source:
+  <https://www.openfigi.com/api/documentation>.
+- ECB Data Portal: the public SDMX API can return daily or monthly exchange
+  rates against the euro and does not require a project-specific API key. Use
+  it for derived FX display context only. Sources:
+  <https://data.ecb.europa.eu/help/api/data> and
+  <https://www.ecb.europa.eu/stats/accessing-our-data/html/index.en.html>.
 - SEC companyfacts and submissions: the official SEC API exposes
   `data.sec.gov/api/xbrl/companyfacts/CIK##########.json`, bulk companyfacts ZIP
   data, `data.sec.gov/submissions/CIK##########.json`, and real-time API
@@ -135,6 +182,19 @@ because adapters, cache policy, throttling, and terms checks are not complete.
 - Stooq CSV: keep as the first no-key parser for reviewer-supplied CSV text.
   Before adding a live downloader, confirm Stooq terms, acceptable request
   rates, caching expectations, and symbol coverage for US/EU instruments.
+- GLEIF LEI: the GLEIF API gives access to LEI search functionality including
+  filters, full-text search, single-field search, fuzzy matching, ownership
+  data, LEI reference data, code lists, and mapped identifiers such as BIC or
+  ISIN. Use it for issuer identity only. Source:
+  <https://www.gleif.org/en/lei-data/gleif-api>.
+- Bundesbank SDMX: the Bundesbank SDMX API exposes `/data/{flowRef}` and
+  `/data/tsIdList` data endpoints plus metadata endpoints for dataflows,
+  codelists, concept schemes, and data structures. It supports formats such as
+  BBK CSV, SDMX CSV, XML, and JSON, with parameters such as `startPeriod`,
+  `endPeriod`, `lastNObservations`, and `detail`. Use narrow requests and cache
+  before enabling live access. Sources:
+  <https://www.bundesbank.de/en/statistics/time-series-databases/help-for-sdmx-web-service/web-service-interface-data>
+  and <https://statistiken.bundesbank.de/content/991208>.
 
 ## Implementation Plan
 
@@ -145,7 +205,8 @@ because adapters, cache policy, throttling, and terms checks are not complete.
    provider.
 4. Derive provider symbols from workbook rows via `--workbook-plan-file` and a
    private `--symbol-map-file`. Manual `--symbol` and `--symbol-file` planning
-   are development-only and must not be used for live enrichment.
+   are development-only, require an explicit provider selection, and must not
+   be used for live enrichment.
 5. Generate and refresh the private symbol map with
    `market-symbol-map-template` so the machine copies source IDs, WKNs, and
    names from magazine rows. Blank `symbol` values mean automated provider
@@ -179,6 +240,9 @@ recommendations, target prices, stop prices, or WKN/source fields.
 | Momentum score | Twelve Data RSI/MACD/rate-of-change/time series | Alpha Vantage RSI/MACD/ROC | Prefer local calculation once OHLCV cache exists. |
 | Valuation score | FMP/profile/fundamentals; Twelve Data statistics | Alpha Vantage company overview | Use transparent component fields such as PE, PS, market cap, growth. |
 | Quality score | FMP/fundamentals; SEC companyfacts for US issuers | Twelve Data fundamentals | Keep as slow-moving weekly/monthly enrichment. |
+| Identifier confidence | OpenFIGI mapping; GLEIF LEI identity checks | Private symbol map/manual review | Helps resolve ticker/exchange/security type and issuer identity before price enrichment. |
+| FX display context | ECB FX reference rates; Bundesbank SDMX BBEX3 | Twelve Data/Alpha Vantage FX if key budget allows | Derived display only; never replace printed magazine values. |
+| Macro/rates context | Bundesbank SDMX | ECB Data Portal; Alpha Vantage economic indicators if key budget allows | Slow-moving context only, not a stock signal or recommendation input. |
 
 ## First Slice Implemented
 
@@ -230,6 +294,24 @@ recommendations, target prices, stop prices, or WKN/source fields.
 - The planner enforces a hard 235 calls/day default budget, denies call 236,
   treats local cache hits as budget-free, and carries the 512MB/month bandwidth
   planning note.
+
+## Sixth Slice Implemented
+
+- No-extra-key providers now have provider-specific dry-run descriptors:
+  OpenFIGI mapping/search, ECB EUR reference-rate display context, SEC
+  companyfacts, SEC EDGAR Form 4, GLEIF LEI identity/mapping, and Bundesbank
+  SDMX context.
+- OpenFIGI descriptors use public identifier mapping/search params such as
+  ticker `idType`/`idValue` or search `query`.
+- ECB descriptors use `baseCurrency=EUR` and `quoteCurrency` so future display
+  conversion cannot overwrite printed magazine prices.
+- SEC descriptors carry ticker/CIK prerequisite metadata for companyfacts,
+  submissions, and Form 4 XML planning. They still make no network calls and
+  require fair-access user-agent review before live adapters.
+- GLEIF descriptors carry issuer search and ISIN-to-LEI mapping parameters for
+  identity confidence only.
+- Bundesbank descriptors carry BBEX3 EUR FX context parameters for derived
+  display metadata only.
 - `scripts/stock-analyst market-data-plan --env-file .env --symbol AAPL`
   supports dry-run planning from local env files. It recognizes
   `FMP_API_KEY`, `STOCK_ANALYST_MARKET_DATA_CACHE_DIR`,
@@ -255,7 +337,7 @@ recommendations, target prices, stop prices, or WKN/source fields.
   machine without enabling live market-data network access. It no longer uses a
   free-form symbol file by default.
 
-## Sixth Slice Implemented
+## Seventh Slice Implemented
 
 - Alpha Vantage provider metadata now matches the local env name
   `ALPHAVANTAGE_API_KEY`, while still accepting the legacy

@@ -31,7 +31,13 @@ long/short products, certificates, and derivative overview rows all use
    detail, and review control so the workbook has a stable entrypoint without
    duplicating detailed financial rows.
 
-2. `Stocks`
+2. `Latest Issue Recommendations`
+   Quick-review tab generated from the current workbook-export plan. It shows
+   selected source-linked stock recommendation fields for the latest imported
+   issue only. It is a triage view; canonical merged equity state remains in
+   `Stocks`.
+
+3. `Stocks`
    Canonical equity row per WKN/normalized company. Stock recommendation cards,
    `Aktien im Quick-Check`, and `Chart-Check` rows all surface here, with
    duplicate mentions consolidated and non-empty fields merged. The stock table
@@ -45,33 +51,33 @@ long/short products, certificates, and derivative overview rows all use
    `Akt. Kurs` value as amount and currency until reviewed enrichment refreshes
    it.
 
-3. `Derivative Tips`
+4. `Derivative Tips`
    Unified detailed options/derivatives table. Issue and page are trailing
    provenance columns. New derivative recommendations use printed magazine
    values in `Magazine Entry Price` and `Magazine Current Price`; enrichment
    must not overwrite those source fields.
 
-4. `Dividend Focus`
+5. `Dividend Focus`
    Dedicated dividend section for table-based dividend data, including dividend
    yield, ex/cum date, next pay date, and payouts per year. Issue/page are
    trailing provenance columns.
 
-5. `AKTIONAER Depot`
+6. `AKTIONAER Depot`
    Dedicated magazine model-depot snapshot. One row per issue/position. This
    is publisher portfolio context, not direct app advice. Performance cells are
    conditionally formatted green for positive values and red for negative
    values.
 
-6. `Depot Transactions`
+7. `Depot Transactions`
    Dedicated ledger for `Durchgefuehrte Transaktionen`. One row per issue and
    transaction, including explicit no-transaction weeks. Performance cells use
    the same positive/negative conditional formatting as the depot tab.
 
-7. `Insider Activity`
+8. `Insider Activity`
    Dedicated review destination for future SEC EDGAR Form 4 insider activity
    rows. Stock rows can link to a reviewed buy/sell indicator from this tab.
 
-8. `Extraction Audit`
+9. `Extraction Audit`
    Internal audit tab for skipped pages, low-priority back matter, OCR-needed
    pages, parser warnings, and row-level review notes.
 
@@ -85,6 +91,7 @@ the live Sheet; those should be added only after this layout is accepted.
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `Navigation Dashboard` | `layout_only` | 5 rows, 2 cols | `A5` | Workbook title, static navigation rows, and row-count formulas | Entry dashboard based on the active tabs. Keep rows concise, source-neutral, and review-oriented; data clears preserve this layout. Row counts are spreadsheet formulas over active tab data ranges and do not trigger enrichment. |
+| `Latest Issue Recommendations` | `parser_backed` | 1 row, 3 cols | `A1` | Header row only | Current import triage rows copied from generated `Stocks` rows. This tab is replaced for each workbook export and must not become the canonical stock record. |
 | `Stocks` | `parser_backed` | 1 row, 2 cols | `A1` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current price`, `Target`, and `Stop` contain only amount and currency; `Dividend Yield` accepts only unsigned yield percentages; `P/S Ratio 26e` and `P/E Ratio 26e` accept only plain ratio values; `Next Report` is date-only; `Report type` stores the event label; `Recommendation` stores action/status such as `hold`, `new_recommendation`, `no_buy`, or `verkauft`; `Held since` stores the issue only for holds; `Insider Activity` links to the dedicated insider transaction tab. |
 | `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Printed source prices use `Magazine Entry Price` and `Magazine Current Price`; source ID stays in row metadata; visible provenance is trailing issue/page columns. |
 | `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; printed source prices use `Magazine Buy Price` and `Magazine Current Price`; performance cells are green for positive values and red for negative values. |
@@ -244,10 +251,24 @@ tab schemas before JSON serialization. Rows that target inactive tabs or have a
 stale width fail locally instead of being padded, truncated, or handed to a
 Google write path.
 
-The `google-sheets-export-plan` command writes those draft reviewer rows into
-the configured Google Sheet. It bootstraps headers first, replaces existing rows
-for the same issue in affected tabs by default, preserves rows from other
-issues, and makes no enrichment provider calls.
+The `google-sheets-export-plan` command writes approved rows into the configured
+Google Sheet only when the workbook plan carries `workbook-approval-audit`
+provenance from a private reviewer CSV with exact row-hash matches. It fails
+closed instead of trusting caller-controlled `approved` flags. It writes draft
+rows only when `--allow-draft-rows` is supplied for the private reviewer workbook. It
+bootstraps headers first, replaces existing rows for the same issue in affected
+tabs by default, preserves rows from other issues, and makes no enrichment
+provider calls. The write result labels this boundary explicitly: default
+writes return `exportMode=approved_family_export`, `familyVisibleSafe=true`,
+and `privateDraftReviewOnly=false`; draft reviewer writes return
+`exportMode=private_draft_review_export`, `familyVisibleSafe=false`, and
+`privateDraftReviewOnly=true`.
+
+Approved-family export must consume a reviewed workbook plan created by
+`workbook-approval-audit`, not the raw parser draft. The approval workflow is
+local/private: `workbook-approval-template` writes a CSV with `source_id` and
+`row_values_sha256`; the reviewer fills approval fields; `workbook-approval-audit`
+applies only exact row-hash matches and returns counts without row content.
 
 Broad index, statistics, or constituent-table context must not fan out into
 individual `Stocks` rows. Parsed Quick Check and Chart Check rows are explicit

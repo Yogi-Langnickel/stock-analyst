@@ -285,7 +285,8 @@ def build_workbook_export_plan(
         instrument_update_date=resolved_stock_update_date,
     )
     rows = tuple(
-        stock_rows
+        _latest_issue_stock_rows(stock_rows, issue_id=issue_id)
+        + stock_rows
         + non_stock_card_rows
         + dividend_focus_rows
         + _dividend_rows_from_stock_rows(
@@ -314,6 +315,54 @@ def build_workbook_export_plan(
         google_writes_enabled=False,
         rows=rows,
     )
+
+
+def _latest_issue_stock_rows(
+    stock_rows: Sequence[WorkbookDraftRow],
+    *,
+    issue_id: str,
+) -> list[WorkbookDraftRow]:
+    rows: list[WorkbookDraftRow] = []
+    for stock_row in stock_rows:
+        values_by_header = {
+            "Issue": issue_id,
+            "Page": _stock_value(stock_row.values, "page"),
+            "Company": _stock_value(stock_row.values, "Company"),
+            "WKN": _stock_value(stock_row.values, "WKN"),
+            "Recommendation": _stock_value(stock_row.values, "Recommendation"),
+            "Magazine Current Price": _stock_value(stock_row.values, "Current price"),
+            "Target": _stock_value(stock_row.values, "Target"),
+            "Stop": _stock_value(stock_row.values, "Stop"),
+            "Chance/Risk": _stock_value(stock_row.values, "Chance/Risk"),
+            "Dividend Yield": _stock_value(stock_row.values, "Dividend Yield"),
+            "Next Report": _stock_value(stock_row.values, "Next Report"),
+            "Comment": _stock_value(stock_row.values, "Comment"),
+            "Source tab": stock_row.tab,
+            "Review status": ReviewStatus.NEEDS_REVIEW.value,
+            "date updated": _stock_value(stock_row.values, "date updated"),
+        }
+        rows.append(
+            WorkbookDraftRow(
+                tab="Latest Issue Recommendations",
+                row_kind="latest_issue_stock_recommendation",
+                source_id=_source_id(
+                    "latest-stock",
+                    issue_id,
+                    stock_row.page,
+                    _stock_value(stock_row.values, "WKN")
+                    or _stock_value(stock_row.values, "Company"),
+                ),
+                issue_id=issue_id,
+                page=stock_row.page,
+                values=tuple(
+                    values_by_header.get(header, "")
+                    for header in _headers_for_tab("Latest Issue Recommendations")
+                ),
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="manual_review_pending",
+            )
+        )
+    return rows
 
 
 def _card_rows(

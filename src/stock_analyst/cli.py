@@ -17,6 +17,7 @@ from stock_analyst.google_access import (
     build_drive_pdf_metadata_result,
     clear_google_sheet_data_rows,
     load_google_access_config,
+    redact_google_identifier,
     run_google_access_smoke,
     write_refinement_plan_to_google_sheet,
     write_workbook_plan_to_google_sheet,
@@ -53,6 +54,12 @@ from stock_analyst.quality_report import build_extraction_quality_report
 from stock_analyst.quickcheck import extract_quickcheck_rows_from_page_lines
 from stock_analyst.refinement import build_refinement_plan_from_pdf
 from stock_analyst.recommendation_cards import extract_recommendation_cards_from_pdf
+from stock_analyst.review_approvals import (
+    apply_workbook_approvals,
+    load_workbook_approvals_csv,
+    write_approval_template_csv,
+    write_reviewed_workbook_plan,
+)
 from stock_analyst.review_queue import build_review_queue_from_manifest
 from stock_analyst.section_inventory import build_section_inventory_from_pdf
 from stock_analyst.visual_ocr import build_visual_ocr_bundle, parse_page_selection
@@ -480,6 +487,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional private local JSONL path for metadata-only Drive import rows.",
     )
+    google_drive_pdfs.add_argument(
+        "--include-private-identifiers",
+        action="store_true",
+        help="Include raw Drive identifiers in stdout. Use only for local debugging.",
+    )
 
     google_sheets_bootstrap = subcommands.add_parser(
         "google-sheets-bootstrap",
@@ -515,7 +527,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     google_sheets_export_plan = subcommands.add_parser(
         "google-sheets-export-plan",
-        help="Write reviewer-gated workbook-plan rows into the configured Sheet.",
+        help="Write approved workbook-plan rows into the configured Sheet.",
     )
     google_sheets_export_plan.add_argument(
         "workbook_plan_file",
@@ -532,6 +544,49 @@ def build_parser() -> argparse.ArgumentParser:
         "--append",
         action="store_true",
         help="Append rows instead of replacing existing rows for the same issue.",
+    )
+    google_sheets_export_plan.add_argument(
+        "--allow-draft-rows",
+        action="store_true",
+        help="Opt in to writing unapproved reviewer-draft rows to the private workbook.",
+    )
+
+    workbook_approval_template = subcommands.add_parser(
+        "workbook-approval-template",
+        help="Write a private CSV template for reviewer approval decisions.",
+    )
+    workbook_approval_template.add_argument(
+        "workbook_plan_file",
+        type=Path,
+        help="JSON workbook-export-plan produced from local magazine extraction.",
+    )
+    workbook_approval_template.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Private CSV output path such as data/private/review/approvals.csv.",
+    )
+
+    workbook_approval_audit = subcommands.add_parser(
+        "workbook-approval-audit",
+        help="Apply private reviewer approvals to an exact workbook-export-plan.",
+    )
+    workbook_approval_audit.add_argument(
+        "workbook_plan_file",
+        type=Path,
+        help="JSON workbook-export-plan produced from local magazine extraction.",
+    )
+    workbook_approval_audit.add_argument(
+        "--approval-csv",
+        type=Path,
+        required=True,
+        help="Private reviewer approval CSV generated from workbook-approval-template.",
+    )
+    workbook_approval_audit.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Private reviewed workbook-plan JSON output path.",
     )
 
     google_sheets_refinement = subcommands.add_parser(
@@ -873,7 +928,7 @@ def run_market_data_plan_command(
 ) -> dict[str, object]:
     config = load_market_data_planning_config(
         env_file=env_file,
-        default_provider="fmp",
+        default_provider="disabled",
     )
     provider_id = config.provider_config.provider.provider_id
 
@@ -960,17 +1015,80 @@ def run_google_access_smoke_command(
     return run_google_access_smoke(config)
 
 
+def _is_private_manifest_path(path: Path) -> bool:
+    return "private" in {part.lower() for part in path.expanduser().parts}
+
+
+def _validate_private_output_path(path: Path, *, artifact_name: str) -> None:
+    if not _is_private_manifest_path(path):
+        raise ValueError(
+            f"{artifact_name} must be written under a private path such as "
+            "data/private/review/artifact"
+        )
+
+
+def _validate_private_drive_manifest_path(path: Path) -> None:
+    if not _is_private_manifest_path(path):
+        raise ValueError(
+            "Drive manifests with private identifiers must be written under a private path "
+            "such as data/private/drive/pdf-metadata.jsonl"
+        )
+
+
+def _redact_drive_pdf_metadata_command_result(result: dict[str, object]) -> dict[str, object]:
+    redacted = dict(result)
+
+    if "driveFolderId" in redacted:
+        redacted["driveFolderId"] = redact_google_identifier(redacted["driveFolderId"])
+
+    redacted_files: list[object] = []
+    for item in result.get("files", []):
+        if not isinstance(item, dict):
+            redacted_files.append(item)
+            continue
+
+        redacted_file = dict(item)
+        if "driveFileId" in redacted_file:
+            redacted_file["driveFileId"] = redact_google_identifier(redacted_file["driveFileId"])
+        if "webViewLink" in redacted_file:
+            redacted_file["webViewLink"] = redact_google_identifier(redacted_file["webViewLink"])
+        redacted_files.append(redacted_file)
+
+    if "files" in redacted:
+        redacted["files"] = redacted_files
+
+    return redacted
+
+
 def run_google_drive_pdfs_command(
     *,
     env_file: Path | None = None,
     page_size: int = 100,
     manifest: Path | None = None,
+    include_private_identifiers: bool = False,
 ) -> dict[str, object]:
+    if include_private_identifiers and manifest is None:
+        raise ValueError(
+            "Drive metadata with private identifiers must be written to a private manifest path"
+        )
+    if include_private_identifiers and manifest is not None:
+        _validate_private_drive_manifest_path(manifest)
+
     config = load_google_access_config(env_file=env_file)
-    result = build_drive_pdf_metadata_result(config, page_size=page_size)
+    result = build_drive_pdf_metadata_result(
+        config,
+        page_size=page_size,
+        include_private_identifiers=include_private_identifiers,
+    )
     if manifest is not None:
         write_drive_pdf_metadata_manifest(result, manifest)
-        result["manifestPath"] = str(manifest)
+        command_result = dict(result)
+        command_result["manifestPath"] = str(manifest)
+        if include_private_identifiers:
+            command_result = _redact_drive_pdf_metadata_command_result(command_result)
+            command_result["manifestPath"] = str(manifest)
+            command_result["privateIdentifiersWritten"] = True
+        return command_result
     return result
 
 
@@ -997,6 +1115,7 @@ def run_google_sheets_export_plan_command(
     *,
     env_file: Path | None = None,
     replace_issue: bool = True,
+    allow_draft_rows: bool = False,
 ) -> dict[str, object]:
     config = load_google_access_config(env_file=env_file)
     payload = json.loads(workbook_plan_file.read_text(encoding="utf-8"))
@@ -1006,7 +1125,67 @@ def run_google_sheets_export_plan_command(
         config,
         payload,
         replace_issue=replace_issue,
+        allow_draft_rows=allow_draft_rows,
     )
+
+
+def run_workbook_approval_template_command(
+    *,
+    workbook_plan_file: Path,
+    output: Path,
+) -> dict[str, object]:
+    _validate_private_output_path(output, artifact_name="approval CSV template")
+    payload = json.loads(workbook_plan_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"workbook plan file is not a JSON object: {workbook_plan_file}")
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        raise ValueError(f"workbook plan file is missing rows list: {workbook_plan_file}")
+
+    write_approval_template_csv(payload, output)
+    return {
+        "ok": True,
+        "externalServicesEnabled": False,
+        "networkAccess": False,
+        "output": str(output),
+        "rowCount": len(rows),
+        "rowContentReturned": False,
+        "approvalTemplateOnly": True,
+    }
+
+
+def run_workbook_approval_audit_command(
+    *,
+    workbook_plan_file: Path,
+    approval_csv: Path,
+    output: Path,
+) -> dict[str, object]:
+    _validate_private_output_path(approval_csv, artifact_name="approval CSV")
+    _validate_private_output_path(output, artifact_name="reviewed workbook plan")
+    payload = json.loads(workbook_plan_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"workbook plan file is not a JSON object: {workbook_plan_file}")
+    approvals = load_workbook_approvals_csv(approval_csv)
+    reviewed = apply_workbook_approvals(payload, approvals)
+    write_reviewed_workbook_plan(reviewed, output)
+    audit = reviewed["approvalAudit"]
+    return {
+        "ok": True,
+        "externalServicesEnabled": False,
+        "networkAccess": False,
+        "output": str(output),
+        "rowContentReturned": False,
+        "approvalSource": audit["approvalSource"],
+        "rowCount": audit["rowCount"],
+        "approvalRowsImported": audit["approvalRowsImported"],
+        "matchedApprovalRows": audit["matchedApprovalRows"],
+        "unmatchedApprovalRows": audit["unmatchedApprovalRows"],
+        "approvedRows": audit["approvedRows"],
+        "rejectedRows": audit["rejectedRows"],
+        "needsReviewRows": audit["needsReviewRows"],
+        "hashMismatchRows": audit["hashMismatchRows"],
+        "staleApprovalDetected": audit["staleApprovalDetected"],
+    }
 
 
 def run_google_sheets_refinement_command(
@@ -1209,6 +1388,7 @@ def main(argv: list[str] | None = None) -> int:
                 env_file=args.env_file,
                 page_size=args.page_size,
                 manifest=args.manifest,
+                include_private_identifiers=args.include_private_identifiers,
             )
         elif args.command == "google-sheets-bootstrap":
             result = run_google_sheets_bootstrap_command(
@@ -1225,6 +1405,18 @@ def main(argv: list[str] | None = None) -> int:
                 args.workbook_plan_file,
                 env_file=args.env_file,
                 replace_issue=not args.append,
+                allow_draft_rows=args.allow_draft_rows,
+            )
+        elif args.command == "workbook-approval-template":
+            result = run_workbook_approval_template_command(
+                workbook_plan_file=args.workbook_plan_file,
+                output=args.output,
+            )
+        elif args.command == "workbook-approval-audit":
+            result = run_workbook_approval_audit_command(
+                workbook_plan_file=args.workbook_plan_file,
+                approval_csv=args.approval_csv,
+                output=args.output,
             )
         elif args.command == "google-sheets-refinement":
             result = run_google_sheets_refinement_command(

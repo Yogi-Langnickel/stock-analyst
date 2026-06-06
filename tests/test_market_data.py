@@ -13,6 +13,8 @@ from stock_analyst.market_data import (
     build_market_data_cache_metadata,
     build_market_data_symbol_map_template_csv,
     describe_market_data_request,
+    plan_bundesbank_sdmx_enrichment_requests,
+    plan_gleif_lei_enrichment_requests,
     load_market_data_budget_state,
     load_market_data_planning_config,
     load_market_data_config,
@@ -21,8 +23,11 @@ from stock_analyst.market_data import (
     load_market_data_symbol_file,
     market_data_candidates_from_workbook_plan,
     market_data_disabled,
+    plan_ecb_fx_enrichment_requests,
     plan_fmp_enrichment_requests,
+    plan_openfigi_enrichment_requests,
     plan_market_data_enrichment_requests,
+    plan_sec_companyfacts_enrichment_requests,
     plan_sec_edgar_form4_enrichment_requests,
     ready_market_data_symbols_from_workbook_candidates,
     read_market_data_cache_record,
@@ -80,8 +85,12 @@ class MarketDataTest(unittest.TestCase):
         self.assertIn("twelve_data", providers)
         self.assertIn("finnhub", providers)
         self.assertIn("fmp", providers)
+        self.assertIn("openfigi", providers)
+        self.assertIn("ecb_fx", providers)
         self.assertIn("sec_companyfacts", providers)
         self.assertIn("sec_edgar_form4", providers)
+        self.assertIn("gleif_lei", providers)
+        self.assertIn("bundesbank_sdmx", providers)
         self.assertFalse(any(provider.network_access for provider in providers.values()))
         self.assertTrue(providers["alpha_vantage"].cache_required_before_live)
         self.assertTrue(providers["alpha_vantage"].rate_limit_notes)
@@ -94,9 +103,72 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(providers["fmp"].credential_env_var, "FMP_API_KEY")
         self.assertEqual(providers["fmp"].daily_call_budget, 235)
         self.assertIn("512MB/month", providers["fmp"].bandwidth_notes[0])
+        self.assertFalse(providers["openfigi"].credentials_required)
+        self.assertEqual(providers["openfigi"].daily_call_budget, 100)
+        self.assertFalse(providers["ecb_fx"].credentials_required)
+        self.assertEqual(providers["ecb_fx"].daily_call_budget, 100)
         self.assertEqual(providers["sec_edgar_form4"].user_agent_env_var, "SEC_USER_AGENT")
         self.assertEqual(providers["sec_edgar_form4"].daily_call_budget, 100)
         self.assertIn("magazine-backed Stocks rows", providers["sec_edgar_form4"].safety_notes[1])
+        self.assertFalse(providers["gleif_lei"].credentials_required)
+        self.assertEqual(providers["gleif_lei"].daily_call_budget, 100)
+        self.assertIn("issuer identity", providers["gleif_lei"].safety_notes[1])
+        self.assertFalse(providers["bundesbank_sdmx"].credentials_required)
+        self.assertEqual(providers["bundesbank_sdmx"].daily_call_budget, 100)
+        self.assertIn("macro", providers["bundesbank_sdmx"].purpose)
+
+    def test_no_key_provider_plans_have_provider_specific_safe_params(self) -> None:
+        openfigi = plan_openfigi_enrichment_requests(("aapl",), endpoints=("mapping", "search"))
+        ecb_fx = plan_ecb_fx_enrichment_requests(("usd",), endpoints=("euro-reference-rates",))
+        companyfacts = plan_sec_companyfacts_enrichment_requests(("msft",), endpoints=("companyfacts",))
+        form4 = plan_sec_edgar_form4_enrichment_requests(("tsla",), endpoints=("form4-xml",))
+        gleif = plan_gleif_lei_enrichment_requests(
+            ("US0378331005", "Banco Sabadell"),
+            endpoints=("isin-lei-mapping", "lei-record-search"),
+        )
+        bundesbank = plan_bundesbank_sdmx_enrichment_requests(
+            ("usd",),
+            endpoints=("bbex3-eur-fx-reference",),
+        )
+
+        self.assertFalse(openfigi.network_access)
+        self.assertEqual(openfigi.provider, "openfigi")
+        self.assertEqual(openfigi.requests[0].descriptor.params, (("idtype", "TICKER"), ("idvalue", "AAPL")))
+        self.assertEqual(openfigi.requests[1].descriptor.params, (("query", "AAPL"),))
+        self.assertEqual(ecb_fx.provider, "ecb_fx")
+        self.assertEqual(
+            ecb_fx.requests[0].descriptor.params,
+            (("basecurrency", "EUR"), ("quotecurrency", "USD")),
+        )
+        self.assertEqual(companyfacts.provider, "sec_companyfacts")
+        self.assertEqual(
+            companyfacts.requests[0].descriptor.params,
+            (("form", "companyfacts"), ("requirescik", "true"), ("ticker", "MSFT")),
+        )
+        self.assertEqual(form4.provider, "sec_edgar_form4")
+        self.assertEqual(
+            form4.requests[0].descriptor.params,
+            (("formtype", "4"), ("requirescik", "true"), ("ticker", "TSLA")),
+        )
+        self.assertEqual(gleif.provider, "gleif_lei")
+        self.assertEqual(
+            gleif.requests[0].descriptor.params,
+            (("isin", "US0378331005"), ("mapping", "isin-lei")),
+        )
+        self.assertEqual(
+            gleif.requests[3].descriptor.params,
+            (("query", "BANCO SABADELL"), ("recordtype", "lei-record")),
+        )
+        self.assertEqual(bundesbank.provider, "bundesbank_sdmx")
+        self.assertEqual(
+            bundesbank.requests[0].descriptor.params,
+            (
+                ("basecurrency", "EUR"),
+                ("flowref", "BBEX3"),
+                ("frequency", "D"),
+                ("quotecurrency", "USD"),
+            ),
+        )
 
     def test_market_data_config_defaults_to_disabled(self) -> None:
         config = load_market_data_config({})
@@ -193,6 +265,41 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(config.provider.provider_id, "fmp")
         self.assertFalse(config.enabled)
         self.assertEqual(config.reason, "missing credential environment variable: FMP_API_KEY")
+
+    def test_openfigi_provider_remains_metadata_only_without_key(self) -> None:
+        config = load_market_data_config({"STOCK_ANALYST_MARKET_DATA_PROVIDER": "openfigi"})
+
+        self.assertEqual(config.provider.provider_id, "openfigi")
+        self.assertFalse(config.enabled)
+        self.assertFalse(config.provider.credentials_required)
+        self.assertFalse(config.provider.network_access)
+        self.assertEqual(config.reason, "live provider adapter is not implemented")
+
+    def test_ecb_fx_provider_remains_metadata_only_without_credentials(self) -> None:
+        config = load_market_data_config({"STOCK_ANALYST_MARKET_DATA_PROVIDER": "ecb_fx"})
+
+        self.assertEqual(config.provider.provider_id, "ecb_fx")
+        self.assertFalse(config.enabled)
+        self.assertFalse(config.provider.credentials_required)
+        self.assertFalse(config.provider.network_access)
+        self.assertEqual(config.reason, "live provider adapter is not implemented")
+
+    def test_new_no_key_public_providers_remain_metadata_only_without_credentials(self) -> None:
+        gleif = load_market_data_config({"STOCK_ANALYST_MARKET_DATA_PROVIDER": "gleif_lei"})
+        bundesbank = load_market_data_config(
+            {"STOCK_ANALYST_MARKET_DATA_PROVIDER": "bundesbank_sdmx"}
+        )
+
+        self.assertEqual(gleif.provider.provider_id, "gleif_lei")
+        self.assertFalse(gleif.enabled)
+        self.assertFalse(gleif.provider.credentials_required)
+        self.assertFalse(gleif.provider.network_access)
+        self.assertEqual(gleif.reason, "live provider adapter is not implemented")
+        self.assertEqual(bundesbank.provider.provider_id, "bundesbank_sdmx")
+        self.assertFalse(bundesbank.enabled)
+        self.assertFalse(bundesbank.provider.credentials_required)
+        self.assertFalse(bundesbank.provider.network_access)
+        self.assertEqual(bundesbank.reason, "live provider adapter is not implemented")
 
     def test_sec_edgar_form4_requires_user_agent_and_remains_metadata_only(self) -> None:
         missing_user_agent = load_market_data_config({"STOCK_ANALYST_MARKET_DATA_PROVIDER": "sec_edgar_form4"})
@@ -653,6 +760,31 @@ class MarketDataTest(unittest.TestCase):
         self.assertNotIn("secret", record_text.lower())
         self.assertNotIn("api.twelvedata.com", record_text)
 
+    def test_market_data_cache_record_rejects_secret_response_payload_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            descriptor = describe_market_data_request(
+                provider="twelve_data",
+                symbol="AAPL",
+                endpoint="price",
+                params={"symbol": "AAPL"},
+            )
+            metadata = build_market_data_cache_metadata(
+                descriptor,
+                cache_root=Path(temp_dir) / "cache",
+                retrieved_at=datetime(2026, 5, 17, 1, 2, tzinfo=timezone.utc),
+                observed_on=date(2026, 5, 16),
+                ttl_seconds=3600,
+            )
+
+            with self.assertRaisesRegex(ValueError, "must not contain secrets"):
+                write_market_data_cache_record(
+                    metadata,
+                    {"quote": {"apiKey": "secret", "price": "190.00"}},
+                    stored_at=datetime(2026, 5, 17, 1, 3, tzinfo=timezone.utc),
+                )
+
+            self.assertFalse(metadata.cache_path.exists())
+
     def test_market_data_cache_metadata_rejects_negative_ttl(self) -> None:
         descriptor = describe_market_data_request(
             provider="stooq_csv",
@@ -893,6 +1025,7 @@ class MarketDataTest(unittest.TestCase):
                 "\n".join(
                     (
                         "FMP_API_KEY=test-secret-key",
+                        "STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp",
                         f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
                         f"STOCK_ANALYST_MARKET_DATA_BUDGET_DIR={root / 'budget'}",
                         "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=1",
@@ -920,6 +1053,36 @@ class MarketDataTest(unittest.TestCase):
         self.assertIn("budgetDate", result)
         self.assertNotIn("test-secret-key", repr(result))
 
+    def test_market_data_plan_command_defaults_to_disabled_even_with_manual_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env_file = root / ".env"
+            env_file.write_text(
+                "\n".join(
+                    (
+                        "FMP_API_KEY=test-secret-key",
+                        f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_market_data_plan_command(
+                env_file=env_file,
+                symbols=("AAPL",),
+                endpoints=("profile",),
+            )
+
+        self.assertEqual(result["provider"], "disabled")
+        self.assertFalse(result["providerEnabled"])
+        self.assertFalse(result["credentialConfigured"])
+        self.assertFalse(result["networkAccess"])
+        self.assertEqual(result["status"], "disabled")
+        self.assertEqual(result["plannedCallCount"], 0)
+        self.assertEqual(result["chargedCallCount"], 0)
+        self.assertEqual(result["requests"], [])
+        self.assertNotIn("test-secret-key", repr(result))
+
     def test_market_data_plan_command_uses_persisted_daily_budget_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -938,6 +1101,7 @@ class MarketDataTest(unittest.TestCase):
                 "\n".join(
                     (
                         "FMP_API_KEY=test-secret-key",
+                        "STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp",
                         f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
                         f"STOCK_ANALYST_MARKET_DATA_BUDGET_DIR={budget_root}",
                         "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=2",
@@ -966,6 +1130,7 @@ class MarketDataTest(unittest.TestCase):
                 "\n".join(
                     (
                         "FMP_API_KEY=test-secret-key",
+                        "STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp",
                         f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
                         "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=5",
                     )
@@ -995,6 +1160,7 @@ class MarketDataTest(unittest.TestCase):
                 "\n".join(
                     (
                         "FMP_API_KEY=test-secret-key",
+                        "STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp",
                         f"STOCK_ANALYST_MARKET_DATA_CACHE_DIR={root / 'cache'}",
                         "STOCK_ANALYST_MARKET_DATA_DAILY_CALL_LIMIT=5",
                     )
