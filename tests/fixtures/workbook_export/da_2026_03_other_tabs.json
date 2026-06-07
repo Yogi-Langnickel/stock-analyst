@@ -96,8 +96,7 @@
       "page": 62,
       "values": [
         "local-dry-run",
-        "2026-W03",
-        "62",
+        "2026-W03:62",
         "derivative_tips_overview",
         "warning",
         "Derivative overview table with WKN, type, strike/cap, runtime, performance, target, and stop.",
@@ -115,8 +114,7 @@
       "page": 66,
       "values": [
         "local-dry-run",
-        "2026-W03",
-        "66",
+        "2026-W03:66",
         "aktionaer_depot_transactions",
         "warning",
         "Publisher model-depot transaction table, including no-transaction weeks.",
@@ -134,8 +132,7 @@
       "page": 80,
       "values": [
         "local-dry-run",
-        "2026-W03",
-        "80",
+        "2026-W03:80",
         "chart_check",
         "info",
         "Chart-check section with multiple stocks, technical context, and recommendation metadata.",

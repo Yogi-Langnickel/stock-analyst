@@ -142,10 +142,11 @@ class GoogleAccessTest(unittest.TestCase):
         row[6] = dividend_yield
         row[7] = recommendation
         row[8] = held_since
-        row[16] = comment
-        row[17] = issue
-        row[18] = page
-        row[19] = date_updated
+        headers = _headers_for("Stocks")
+        if comment:
+            row[headers.index("Enrichment status")] = comment
+        row[headers.index("Issue:Page")] = f"{issue}:{page}" if issue and page else issue or page
+        row[headers.index("date updated")] = date_updated
         return row
 
     def test_load_env_file_parses_quoted_google_values(self) -> None:
@@ -501,7 +502,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertNotIn(config.sheets_spreadsheet_id, str(result))
         self.assertIn("Derivative Tips", result["createdTabs"])
         self.assertIn("Dividend Focus", result["createdTabs"])
-        self.assertIn("Latest Issue Recommendations", result["createdTabs"])
+        self.assertIn("Latest Issue", result["createdTabs"])
         self.assertIn("Insider Activity", result["createdTabs"])
         self.assertEqual(result["headerRowsWritten"], len(result["tabs"]))
         batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
@@ -540,14 +541,14 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn(
             {
                 "range": "'Navigation Dashboard'!B6",
-                "values": [["Latest Issue Recommendations"]],
+                "values": [["Latest Issue"]],
             },
             values_body["data"],
         )
         self.assertIn(
             {
                 "range": "'Navigation Dashboard'!E6",
-                "values": [["=COUNTA('Latest Issue Recommendations'!A2:A)"]],
+                "values": [["=COUNTA('Latest Issue'!A2:A)"]],
             },
             values_body["data"],
         )
@@ -582,11 +583,11 @@ class GoogleAccessTest(unittest.TestCase):
                     "Report type",
                     "P/S Ratio 26e",
                     "P/E Ratio 26e",
-                    "Chance/Risk",
+                    "Chance",
+                    "Risk",
                     "Insider Activity",
-                    "Comment",
-                    "issue",
-                    "page",
+                    "Issue:Page",
+                    "Enrichment status",
                     "date updated",
                 ]],
             },
@@ -603,7 +604,7 @@ class GoogleAccessTest(unittest.TestCase):
             stock_tab["layoutNotes"],
         )
         self.assertIn(
-            "Quick-check and chart-check stock rows also surface here with split source fields.",
+            "Quick-check and chart-check stock rows also surface here with atomic source refs.",
             stock_tab["layoutNotes"],
         )
         self.assertEqual(stock_tab["metadataCells"], [])
@@ -612,7 +613,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertNotIn("Options", tab_status)
         self.assertNotIn("Crypto", tab_status)
         self.assertEqual(tab_status["Derivative Tips"], "parser_backed")
-        self.assertEqual(tab_status["Latest Issue Recommendations"], "parser_backed")
+        self.assertEqual(tab_status["Latest Issue"], "parser_backed")
         self.assertEqual(tab_status["Dividend Focus"], "parser_backed")
         self.assertEqual(tab_status["Extraction Audit"], "parser_backed")
         self.assertEqual(tab_status["AKTIONAER Depot"], "parser_backed")
@@ -628,8 +629,8 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(navigation_tab["frozenColumns"], 2)
         self.assertEqual(navigation_tab["tableStartsAt"], "A5")
         headers_by_tab = {tab["title"]: tab["headers"] for tab in result["tabs"]}
-        self.assertEqual(headers_by_tab["Latest Issue Recommendations"][0], "Issue")
-        self.assertEqual(headers_by_tab["Latest Issue Recommendations"][5], "Magazine Current Price")
+        self.assertEqual(headers_by_tab["Latest Issue"][0], "Issue:Page")
+        self.assertEqual(headers_by_tab["Latest Issue"][4], "Magazine Current Price")
         self.assertEqual(headers_by_tab["Derivative Tips"][10], "Magazine Entry Price")
         self.assertEqual(headers_by_tab["Derivative Tips"][11], "Magazine Current Price")
         self.assertEqual(headers_by_tab["AKTIONAER Depot"][3], "Buy date")
@@ -639,7 +640,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(headers_by_tab["Depot Transactions"][5], "Magazine Transaction Price")
         self.assertEqual(headers_by_tab["Stocks"][10], "Next Report")
         self.assertEqual(headers_by_tab["Stocks"][11], "Report type")
-        self.assertEqual(headers_by_tab["Stocks"][15], "Insider Activity")
+        self.assertEqual(headers_by_tab["Stocks"][16], "Insider Activity")
         self.assertEqual(headers_by_tab["Insider Activity"][14], "SEC filing URL")
         self.assertEqual(headers_by_tab["Dividend Focus"][3], "Magazine Price")
         for tab in result["tabs"]:
@@ -904,8 +905,7 @@ class GoogleAccessTest(unittest.TestCase):
                             "",
                             "",
                             "needs_review",
-                            "2026-W03",
-                            "18",
+                            "2026-W03:18",
                             "2026-05-17",
                         ],
                     },
@@ -943,9 +943,10 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(_stock_value(stocks_write["values"][1], "Dividend Yield"), "18,6 %")
         self.assertEqual(_stock_value(stocks_write["values"][1], "Recommendation"), "new_recommendation")
         self.assertEqual(_stock_value(stocks_write["values"][1], "Held since"), "")
-        self.assertIn("Previous comment", _stock_value(stocks_write["values"][1], "Comment"))
-        self.assertEqual(_stock_value(stocks_write["values"][1], "issue"), "2026-W02, 2026-W03")
-        self.assertEqual(_stock_value(stocks_write["values"][1], "page"), "20, 22")
+        self.assertEqual(
+            _stock_value(stocks_write["values"][1], "Issue:Page"),
+            "2026-W02:20 | 2026-W03:22",
+        )
         self.assertIn("'Stocks'!A4:T4", [request["range"] for request in values_resource.clear_requests])
         self.assertIn("'Stocks'!A4:T4", result["staleRangesCleared"])
 
@@ -1046,8 +1047,10 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(_stock_value(stocks_write["values"][0], "Recommendation"), "hold")
         self.assertEqual(_stock_value(stocks_write["values"][0], "Held since"), "02/2026")
-        self.assertEqual(_stock_value(stocks_write["values"][0], "issue"), "2026-W02, 2026-W03")
-        self.assertEqual(_stock_value(stocks_write["values"][0], "page"), "20, 22")
+        self.assertEqual(
+            _stock_value(stocks_write["values"][0], "Issue:Page"),
+            "2026-W02:20 | 2026-W03:22",
+        )
 
     def test_google_sheet_export_rejects_short_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

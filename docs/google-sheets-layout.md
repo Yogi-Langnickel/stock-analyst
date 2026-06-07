@@ -31,11 +31,12 @@ long/short products, certificates, and derivative overview rows all use
    detail, and review control so the workbook has a stable entrypoint without
    duplicating detailed financial rows.
 
-2. `Latest Issue Recommendations`
+2. `Latest Issue`
    Quick-review tab generated from the current workbook-export plan. It shows
    selected source-linked stock recommendation fields for the latest imported
    issue only. It is a triage view; canonical merged equity state remains in
-   `Stocks`.
+   `Stocks`. Comments and source-review wording belong here, not on the
+   canonical stock row.
 
 3. `Stocks`
    Canonical equity row per WKN/normalized company. Stock recommendation cards,
@@ -44,23 +45,24 @@ long/short products, certificates, and derivative overview rows all use
    header starts on row 1 with `Company`, `WKN`, `Target`, `Stop`,
    `Current price`, `Market Cap`, `Dividend Yield`, `Recommendation`,
    `Held since`, `Performance since Recommendation`, `Next Report`,
-   `Report type`, `P/S Ratio 26e`, `P/E Ratio 26e`, `Chance/Risk`,
-   `Insider Activity`, `Comment`, `issue`, `page`, and `date updated`.
+   `Report type`, `P/S Ratio 26e`, `P/E Ratio 26e`, `Chance`, `Risk`,
+   `Insider Activity`, `Issue:Page`, `Enrichment status`, and `date updated`.
    `Next Report` is date-only; report labels such as quarterly or year-end
    results live in `Report type`. `Current price` preserves the printed
    `Akt. Kurs` value as amount and currency until reviewed enrichment refreshes
-   it.
+   it. `Issue:Page` uses values such as `2025-W21:49`; merged source refs use
+   ` | ` so issue/page pairings remain intact.
 
 4. `Derivative Tips`
-   Unified detailed options/derivatives table. Issue and page are trailing
-   provenance columns. New derivative recommendations use printed magazine
+   Unified detailed options/derivatives table. `Issue:Page` is the trailing
+   provenance column. New derivative recommendations use printed magazine
    values in `Magazine Entry Price` and `Magazine Current Price`; enrichment
    must not overwrite those source fields.
 
 5. `Dividend Focus`
    Dedicated dividend section for table-based dividend data, including dividend
-   yield, ex/cum date, next pay date, and payouts per year. Issue/page are
-   trailing provenance columns.
+   yield, ex/cum date, next pay date, and payouts per year. `Issue:Page` is the
+   trailing provenance column.
 
 6. `AKTIONAER Depot`
    Dedicated magazine model-depot snapshot. One row per issue/position. This
@@ -91,9 +93,9 @@ the live Sheet; those should be added only after this layout is accepted.
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `Navigation Dashboard` | `layout_only` | 5 rows, 2 cols | `A5` | Workbook title, static navigation rows, and row-count formulas | Entry dashboard based on the active tabs. Keep rows concise, source-neutral, and review-oriented; data clears preserve this layout. Row counts are spreadsheet formulas over active tab data ranges and do not trigger enrichment. |
-| `Latest Issue Recommendations` | `parser_backed` | 1 row, 3 cols | `A1` | Header row only | Current import triage rows copied from generated `Stocks` rows. This tab is replaced for each workbook export and must not become the canonical stock record. |
-| `Stocks` | `parser_backed` | 1 row, 2 cols | `A1` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current price`, `Target`, and `Stop` contain only amount and currency; `Dividend Yield` accepts only unsigned yield percentages; `P/S Ratio 26e` and `P/E Ratio 26e` accept only plain ratio values; `Next Report` is date-only; `Report type` stores the event label; `Recommendation` stores action/status such as `hold`, `new_recommendation`, `no_buy`, or `verkauft`; `Held since` stores the issue only for holds; `Insider Activity` links to the dedicated insider transaction tab. |
-| `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Printed source prices use `Magazine Entry Price` and `Magazine Current Price`; source ID stays in row metadata; visible provenance is trailing issue/page columns. |
+| `Latest Issue` | `parser_backed` | 1 row, 3 cols | `A1` | Header row only | Current import triage rows copied from current issue stock-source rows. This tab is replaced for each workbook export, keeps comments/review wording, and must not become the canonical stock record. |
+| `Stocks` | `parser_backed` | 1 row, 2 cols | `A1` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current price`, `Target`, and `Stop` contain only amount and currency; `Dividend Yield` accepts only unsigned yield percentages; `P/S Ratio 26e` and `P/E Ratio 26e` accept only plain ratio values; `Chance` and `Risk` are split rating fields; `Next Report` is date-only; `Report type` stores the event label; `Recommendation` stores action/status such as `hold`, `new_recommendation`, `no_buy`, or `verkauft`; `Held since` stores the issue only for holds; `Issue:Page` preserves paired provenance; `Insider Activity` links to the dedicated insider transaction tab. |
+| `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Printed source prices use `Magazine Entry Price` and `Magazine Current Price`; source ID stays in row metadata; visible provenance is trailing `Issue:Page`. |
 | `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; printed source prices use `Magazine Buy Price` and `Magazine Current Price`; performance cells are green for positive values and red for negative values. |
 | `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks; printed source transaction prices use `Magazine Transaction Price`; performance cells use positive/negative conditional formatting. |
 | `Dividend Focus` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Multi-period dividend context including `Magazine Price`, ex/cum date, pay date, and payout frequency; concise decision fields may surface in `Stocks`. |
@@ -147,10 +149,11 @@ blank rather than estimating rates manually.
 ## Embed With Stock Rows
 
 Embed concise reviewed fields that help one stock/instrument row stand alone:
-latest magazine recommendation, source issue/page, price, target, stop,
-risk/chance dots, dividend yield/trend, quick-check signal, chart-check fields,
+latest magazine recommendation, `Issue:Page`, price, target, stop, split
+`Chance` and `Risk` ratings, dividend yield/trend, quick-check signal, chart-check fields,
 performance since recommendation, 52-week range, one-year/five-year
-performance, next report date, comment, and review status.
+performance, next report date, enrichment status, and review status. Keep
+current-issue comments on `Latest Issue`.
 
 ## Keep In Dedicated Tabs
 
@@ -186,7 +189,7 @@ represents a genuinely distinct instrument or event.
 Default identity rules:
 
 - Stocks: update by WKN when present; otherwise by reviewed normalized company
-  identity. Keep latest recommendation/source issue/page fields current, while
+  identity. Keep latest recommendation and `Issue:Page` fields current, while
   preserving source history separately once a history tab exists.
 - ETF, Commodities, Crypto, and Forex: update by primary identifier or reviewed
   normalized instrument key. Do not append duplicates for repeated mentions.
@@ -279,5 +282,5 @@ surface on `Stocks`.
 ## Reviewer Rule
 
 Approved exports should use neutral wording such as "magazine says" or
-"printed in issue/page". No row from section inventory, statistics, or
+"printed in `Issue:Page`". No row from section inventory, statistics, or
 quick-check extraction should become family-visible without manual review.

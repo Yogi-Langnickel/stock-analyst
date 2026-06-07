@@ -161,7 +161,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(result["rowCount"], 3)
         self.assertEqual(
             result["rowsByTab"],
-            {"Extraction Audit": 1, "Latest Issue Recommendations": 1, "Stocks": 1},
+            {"Extraction Audit": 1, "Latest Issue": 1, "Stocks": 1},
         )
 
     def test_pdf_plan_skips_front_matter_but_keeps_later_explicit_sections(self) -> None:
@@ -329,11 +329,11 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(row, "Held since"), "")
         self.assertEqual(value_for(row, "P/S Ratio 26e"), "")
         self.assertEqual(value_for(row, "P/E Ratio 26e"), "10")
-        self.assertEqual(value_for(row, "Chance/Risk"), "Chance ★★★★★ / Risk ★★★★★")
+        self.assertEqual(value_for(row, "Chance"), "★★★★★")
+        self.assertEqual(value_for(row, "Risk"), "★★★★★")
         self.assertEqual(value_for(row, "Insider Activity"), "")
-        self.assertEqual(value_for(row, "Comment"), "")
-        self.assertEqual(value_for(row, "issue"), "2026-W03")
-        self.assertEqual(value_for(row, "page"), "22")
+        self.assertEqual(value_for(row, "Issue:Page"), "2026-W03:22")
+        self.assertEqual(value_for(row, "Enrichment status"), "not_started")
         self.assertEqual(value_for(row, "date updated"), "2026-05-17")
         self.assertIn("manual_review_required", row["warnings"][0])
 
@@ -363,19 +363,21 @@ class WorkbookExportPlanTest(unittest.TestCase):
         latest_row = next(
             row
             for row in plan.to_dict()["rows"]
-            if row["tab"] == "Latest Issue Recommendations"
+            if row["tab"] == "Latest Issue"
         )
 
-        self.assertEqual(value_for(latest_row, "Issue", tab="Latest Issue Recommendations"), "2026-W03")
-        self.assertEqual(value_for(latest_row, "Company", tab="Latest Issue Recommendations"), "Banco Sabadell")
-        self.assertEqual(value_for(latest_row, "WKN", tab="Latest Issue Recommendations"), "A0MRD4")
+        self.assertEqual(value_for(latest_row, "Issue:Page", tab="Latest Issue"), "2026-W03:22")
+        self.assertEqual(value_for(latest_row, "Company", tab="Latest Issue"), "Banco Sabadell")
+        self.assertEqual(value_for(latest_row, "WKN", tab="Latest Issue"), "A0MRD4")
         self.assertEqual(
-            value_for(latest_row, "Magazine Current Price", tab="Latest Issue Recommendations"),
+            value_for(latest_row, "Magazine Current Price", tab="Latest Issue"),
             "3,33 EUR",
         )
-        self.assertEqual(value_for(latest_row, "Source tab", tab="Latest Issue Recommendations"), "Stocks")
+        self.assertEqual(value_for(latest_row, "Chance", tab="Latest Issue"), "★★★★★")
+        self.assertEqual(value_for(latest_row, "Risk", tab="Latest Issue"), "★★★★★")
+        self.assertEqual(value_for(latest_row, "Source tab", tab="Latest Issue"), "Stocks")
         self.assertEqual(
-            value_for(latest_row, "Review status", tab="Latest Issue Recommendations"),
+            value_for(latest_row, "Review status", tab="Latest Issue"),
             ReviewStatus.NEEDS_REVIEW.value,
         )
 
@@ -624,7 +626,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(actual_rows[1]["values"][2], "Discount-Call")
         for row in actual_rows:
             self.assertEqual(len(row["values"]), len(headers_for("Derivative Tips")))
-            self.assertEqual(row["values"][-4], ReviewStatus.NEEDS_REVIEW.value)
+            self.assertEqual(row["values"][-3], ReviewStatus.NEEDS_REVIEW.value)
             self.assertTrue(row["values"][-1])
 
     def test_routes_derivative_overview_and_depot_tables_to_dedicated_tabs(self) -> None:
@@ -880,8 +882,8 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["tab"], "Extraction Audit")
         self.assertEqual(row["rowKind"], "section_inventory")
         self.assertEqual(len(row["values"]), len(headers_for("Extraction Audit")))
-        self.assertEqual(row["values"][3], "derivative_tips_overview")
-        self.assertEqual(row["values"][4], "warning")
+        self.assertEqual(row["values"][2], "derivative_tips_overview")
+        self.assertEqual(row["values"][3], "warning")
         self.assertIn("suggested_sheet=Derivative Tips", row["warnings"])
 
     def test_extraction_audit_fixtures_cover_high_value_table_surfaces(self) -> None:
@@ -940,7 +942,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
 
         self.assertEqual(actual_rows, expected_rows)
         self.assertEqual(
-            {row["values"][6] for row in actual_rows},
+            {row["values"][5] for row in actual_rows},
             {
                 "review_for_Derivative Tips",
                 "review_for_Depot Transactions",
@@ -1006,7 +1008,8 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(stock_row, "Performance since Recommendation"), "+5,5 %")
         self.assertEqual(value_for(stock_row, "Recommendation"), "hold")
         self.assertEqual(value_for(stock_row, "Held since"), "52/25")
-        self.assertIn("Aufwärtstrend", value_for(stock_row, "Comment"))
+        latest_row = next(row for row in rows if row["tab"] == "Latest Issue")
+        self.assertIn("Aufwärtstrend", value_for(latest_row, "Comment", tab="Latest Issue"))
         self.assertEqual(value_for(stock_row, "date updated"), "2026-05-17")
         self.assertEqual(len(stock_row["values"]), len(headers_for("Stocks")))
         self.assertFalse(any(row["tab"] == "Stock Quickcheck" for row in rows))
@@ -1063,8 +1066,11 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(row, "Performance since Recommendation"), "-6,6 %")
         self.assertEqual(value_for(row, "Recommendation"), "hold")
         self.assertEqual(value_for(row, "Held since"), "02/2026")
-        self.assertIn("Rekordhoch", value_for(row, "Comment"))
-        self.assertEqual(value_for(row, "page"), "42, 90")
+        latest_rows = [row for row in plan.to_dict()["rows"] if row["tab"] == "Latest Issue"]
+        self.assertTrue(
+            any("Rekordhoch" in value_for(row, "Comment", tab="Latest Issue") for row in latest_rows)
+        )
+        self.assertEqual(value_for(row, "Issue:Page"), "2026-W03:42 | 2026-W03:90")
 
     def test_consolidates_wkn_less_stock_mentions_by_normalized_name(self) -> None:
         plan = build_workbook_export_plan(
@@ -1108,9 +1114,14 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(row, "Company"), "ACME Energy")
         self.assertEqual(value_for(row, "Current price"), "10,50 EUR")
         self.assertEqual(value_for(row, "Target"), "12,50 EUR")
-        self.assertIn("Quick-check comment.", value_for(row, "Comment"))
-        self.assertIn("Follow-up wording.", value_for(row, "Comment"))
-        self.assertEqual(value_for(row, "page"), "90, 91")
+        latest_rows = [row for row in plan.to_dict()["rows"] if row["tab"] == "Latest Issue"]
+        latest_comments = [
+            value_for(row, "Comment", tab="Latest Issue")
+            for row in latest_rows
+        ]
+        self.assertIn("Quick-check comment.", latest_comments)
+        self.assertIn("Follow-up wording.", latest_comments)
+        self.assertEqual(value_for(row, "Issue:Page"), "2026-W03:90 | 2026-W03:91")
 
     def test_routes_chart_check_rows_to_stock_tab_only(self) -> None:
         plan = build_workbook_export_plan(

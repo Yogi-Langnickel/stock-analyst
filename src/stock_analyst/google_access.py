@@ -122,7 +122,7 @@ class GoogleSheetTabSpec:
 
 DATA_BACKED_TAB_TITLES = {
     "Navigation Dashboard",
-    "Latest Issue Recommendations",
+    "Latest Issue",
     "Stocks",
     "Derivative Tips",
     "AKTIONAER Depot",
@@ -138,10 +138,10 @@ NAVIGATION_DASHBOARD_CELLS: tuple[tuple[str, str], ...] = (
     ("A2", "Navigation Dashboard"),
     ("A3", "Draft reviewer workbook. Verify issue/page/source fields before family-facing export."),
     ("A6", "Core review"),
-    ("B6", "__sheet_link__:Latest Issue Recommendations"),
+    ("B6", "__sheet_link__:Latest Issue"),
     ("C6", "Current import recommendations for quick reviewer triage."),
     ("D6", "Start here after each issue import."),
-    ("E6", "=COUNTA('Latest Issue Recommendations'!A2:A)"),
+    ("E6", "=COUNTA('Latest Issue'!A2:A)"),
     ("F6", "parser-backed; review required"),
     ("G6", "Source-linked magazine rows only; not investment advice."),
     ("A7", "Core review"),
@@ -245,17 +245,17 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         parser_status="parser_backed",
     ),
     GoogleSheetTabSpec(
-        "Latest Issue Recommendations",
+        "Latest Issue",
         (
-            "Issue",
-            "Page",
+            "Issue:Page",
             "Company",
             "WKN",
             "Recommendation",
             "Magazine Current Price",
             "Target",
             "Stop",
-            "Chance/Risk",
+            "Chance",
+            "Risk",
             "Dividend Yield",
             "Next Report",
             "Comment",
@@ -292,11 +292,11 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Report type",
             "P/S Ratio 26e",
             "P/E Ratio 26e",
-            "Chance/Risk",
+            "Chance",
+            "Risk",
             "Insider Activity",
-            "Comment",
-            "issue",
-            "page",
+            "Issue:Page",
+            "Enrichment status",
             "date updated",
         ),
         "Equity dashboard and reviewed stock mentions.",
@@ -306,12 +306,13 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         table_starts_at="A1",
         layout_notes=(
             "Only explicit stock mentions become rows; do not fan out index constituents.",
-            "Quick-check and chart-check stock rows also surface here with split source fields.",
+            "Quick-check and chart-check stock rows also surface here with atomic source refs.",
             "Current price preserves printed Akt. Kurs as amount and currency until reviewed enrichment refreshes it.",
             "Target, Stop, and Current price must contain only amount and currency.",
             "Next Report stores only the date; Report type stores the event label.",
             "Recommendation stores the current action/status; Held since stores the source issue for holds.",
             "Insider Activity is reserved for SEC Form 4 signal links from the dedicated tab.",
+            "Comments stay on Latest Issue; Stocks keeps canonical identity and enrichment status fields.",
             "Row-level date updated is the last field and advances on enrichment or newer mention.",
         ),
         parser_status="parser_backed",
@@ -527,15 +528,14 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Stop",
             "Recommendation",
             "Review status",
-            "Issue",
-            "Page",
+            "Issue:Page",
             "date updated",
         ),
         "Derivative overview tables and option cards.",
         frozen_columns=2,
         layout_notes=(
             "Parser-backed for derivative recommendation cards and the Derivate-Tipps im Rueckblick table.",
-            "Derivative Source IDs stay in row metadata; issue/page are visible provenance.",
+            "Derivative Source IDs stay in row metadata; Issue:Page is visible provenance.",
             "Row-level date updated is the last field.",
         ),
         parser_status="parser_backed",
@@ -554,8 +554,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Performance since buy",
             "Stop",
             "Review status",
-            "Issue",
-            "Page",
+            "Issue:Page",
             "date updated",
         ),
         "Publisher model-depot position snapshots.",
@@ -578,8 +577,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Magazine Transaction Price",
             "Performance since buy",
             "Review status",
-            "Issue",
-            "Page",
+            "Issue:Page",
             "date updated",
         ),
         "Publisher model-depot transaction ledger.",
@@ -611,8 +609,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "SEC filing URL",
             "Signal",
             "Review status",
-            "Issue",
-            "Page",
+            "Issue:Page",
             "date updated",
         ),
         "SEC Form 4 insider activity context for reviewed stock rows.",
@@ -626,7 +623,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     ),
     GoogleSheetTabSpec(
         "Statistics Context",
-        ("Issue", "Page", "Context type", "Name", "Value", "Period", "Source note", "Review status"),
+        ("Issue:Page", "Context type", "Name", "Value", "Period", "Source note", "Review status"),
         "Context-only market, index, sector, and stock statistics.",
         frozen_columns=3,
         layout_notes=(
@@ -651,8 +648,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Target",
             "Stop",
             "Review status",
-            "Issue",
-            "Page",
+            "Issue:Page",
             "date updated",
         ),
         "Dividend section and multi-period dividend data.",
@@ -666,7 +662,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
     ),
     GoogleSheetTabSpec(
         "Extraction Audit",
-        ("Run ID", "Issue", "Page", "Section", "Severity", "Message", "Action", "Created at"),
+        ("Run ID", "Issue:Page", "Section", "Severity", "Message", "Action", "Created at"),
         "Extraction warnings, skipped pages, and parser audit rows.",
         frozen_columns=3,
         layout_notes=(
@@ -680,6 +676,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
 ALL_SHEET_TABS = DEFAULT_SHEET_TABS
 RETIRED_GENERATED_SHEET_TAB_TITLES = {
     "Chart Check",
+    "Latest Issue Recommendations",
     "Stock Quickcheck",
 }
 GENERATED_SHEET_TAB_TITLES = {
@@ -887,11 +884,16 @@ def bootstrap_google_sheet(
                     "data": list(header_ranges),
                 },
             ).execute()
+        grid_property_requests = _build_sheet_grid_property_requests(
+            tab_specs,
+            sheet_properties,
+        )
         format_requests = _build_conditional_format_requests(tab_specs, sheet_properties)
-        if format_requests:
+        layout_requests = grid_property_requests + format_requests
+        if layout_requests:
             sheets.spreadsheets().batchUpdate(
                 spreadsheetId=config.sheets_spreadsheet_id,
-                body={"requests": list(format_requests)},
+                body={"requests": list(layout_requests)},
             ).execute()
     except Exception as error:
         raise GoogleAccessError(
@@ -910,6 +912,9 @@ def bootstrap_google_sheet(
         "preHeaderRangesCleared": list(pre_header_clear_ranges)
         if "pre_header_clear_ranges" in locals()
         else [],
+        "gridPropertiesWritten": len(grid_property_requests)
+        if "grid_property_requests" in locals()
+        else 0,
         "formatRulesWritten": len(format_requests) if "format_requests" in locals() else 0,
         "tabs": [
             {
@@ -1059,13 +1064,13 @@ def write_workbook_plan_to_google_sheet(
                 spreadsheet_id=config.sheets_spreadsheet_id,
                 range_name=body_range,
             )
-            if tab == "Latest Issue Recommendations" and replace_issue:
+            if tab == "Latest Issue" and replace_issue:
                 kept_rows = []
             elif replace_issue:
                 kept_rows = [
                     _normalize_sheet_row_values(row, width=len(spec.headers))
                     for row in existing_rows
-                    if _row_issue_id(row, spec) != issue_id
+                    if not _row_has_issue_id(row, spec, issue_id=issue_id)
                 ]
             else:
                 kept_rows = [
@@ -1511,6 +1516,40 @@ def _build_sheet_body_clear_ranges(
     )
 
 
+def _build_sheet_grid_property_requests(
+    tab_specs: tuple[GoogleSheetTabSpec, ...],
+    sheet_properties: tuple[Mapping[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    sheet_ids_by_title = {
+        str(properties.get("title")): int(properties["sheetId"])
+        for properties in sheet_properties
+        if properties.get("title") and "sheetId" in properties
+    }
+    requests: list[dict[str, object]] = []
+    for spec in tab_specs:
+        sheet_id = sheet_ids_by_title.get(spec.title)
+        if sheet_id is None:
+            continue
+        requests.append(
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": sheet_id,
+                        "gridProperties": {
+                            "frozenRowCount": spec.frozen_rows,
+                            "frozenColumnCount": spec.frozen_columns,
+                        },
+                    },
+                    "fields": (
+                        "gridProperties.frozenRowCount,"
+                        "gridProperties.frozenColumnCount"
+                    ),
+                }
+            }
+        )
+    return tuple(requests)
+
+
 def _build_conditional_format_requests(
     tab_specs: tuple[GoogleSheetTabSpec, ...],
     sheet_properties: tuple[Mapping[str, object], ...],
@@ -1808,8 +1847,10 @@ def _merge_stock_sheet_row(
         "Report type",
         "P/S Ratio 26e",
         "P/E Ratio 26e",
-        "Chance/Risk",
+        "Chance",
+        "Risk",
         "Insider Activity",
+        "Enrichment status",
         "date updated",
     }
     fill_only_headers = {
@@ -1828,25 +1869,11 @@ def _merge_stock_sheet_row(
         if held_since_index is not None:
             values[held_since_index] = incoming[held_since_index]
 
-    comment_index = _header_index(spec, "Comment")
-    if comment_index is not None:
-        values[comment_index] = _join_unique_sheet_values(
-            (values[comment_index], incoming[comment_index]),
+    source_index = _header_index(spec, "Issue:Page")
+    if source_index is not None:
+        values[source_index] = _join_unique_sheet_values(
+            (values[source_index], incoming[source_index]),
             separator=" | ",
-        )
-
-    issue_index = _header_index(spec, "issue")
-    if issue_index is not None:
-        values[issue_index] = _join_unique_sheet_values(
-            (values[issue_index], incoming[issue_index]),
-            separator=", ",
-        )
-
-    page_index = _header_index(spec, "page")
-    if page_index is not None:
-        values[page_index] = _join_unique_sheet_values(
-            (values[page_index], incoming[page_index]),
-            separator=", ",
         )
 
     return values
@@ -1909,16 +1936,26 @@ def _validate_sheet_row_width(tab: str, values: list[object], *, width: int) -> 
         )
 
 
-def _row_issue_id(row: list[object], spec: GoogleSheetTabSpec) -> str:
-    issue_index = _issue_column_index(spec)
-    if issue_index is None or issue_index >= len(row):
-        return ""
-    return str(row[issue_index] or "").strip()
+def _row_has_issue_id(
+    row: list[object],
+    spec: GoogleSheetTabSpec,
+    *,
+    issue_id: str,
+) -> bool:
+    source_index = _issue_source_column_index(spec)
+    if source_index is None or source_index >= len(row):
+        return False
+    source_value = str(row[source_index] or "").strip()
+    return any(
+        part.strip() == issue_id or part.strip().startswith(f"{issue_id}:")
+        for part in source_value.split("|")
+    )
 
 
-def _issue_column_index(spec: GoogleSheetTabSpec) -> int | None:
+def _issue_source_column_index(spec: GoogleSheetTabSpec) -> int | None:
     for index, header in enumerate(spec.headers):
-        if header.strip().lower() == "issue":
+        normalized = header.strip().lower()
+        if normalized in {"issue", "issue:page"}:
             return index
     return None
 

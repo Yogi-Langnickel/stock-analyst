@@ -268,7 +268,7 @@ def build_workbook_export_plan(
         stock_update_date=resolved_stock_update_date,
         dividend_yield_by_wkn=dividend_yield_by_wkn,
     )
-    stock_rows = _consolidate_stock_rows(
+    current_issue_stock_source_rows = (
         [row for row in card_rows if row.tab == "Stocks"]
         + _quickcheck_stock_rows(
             quickcheck_rows,
@@ -279,13 +279,14 @@ def build_workbook_export_plan(
             stock_update_date=resolved_stock_update_date,
         )
     )
+    stock_rows = _consolidate_stock_rows(current_issue_stock_source_rows)
     non_stock_card_rows = [row for row in card_rows if row.tab != "Stocks"]
     dividend_focus_rows = _dividend_rows(
         _dividend_rows_from(dividend_strategy),
         instrument_update_date=resolved_stock_update_date,
     )
     rows = tuple(
-        _latest_issue_stock_rows(stock_rows, issue_id=issue_id)
+        _latest_issue_stock_rows(current_issue_stock_source_rows, issue_id=issue_id)
         + stock_rows
         + non_stock_card_rows
         + dividend_focus_rows
@@ -325,25 +326,26 @@ def _latest_issue_stock_rows(
     rows: list[WorkbookDraftRow] = []
     for stock_row in stock_rows:
         values_by_header = {
-            "Issue": issue_id,
-            "Page": _stock_value(stock_row.values, "page"),
+            "Issue:Page": _stock_value(stock_row.values, "Issue:Page")
+            or _source_ref(issue_id, stock_row.page),
             "Company": _stock_value(stock_row.values, "Company"),
             "WKN": _stock_value(stock_row.values, "WKN"),
             "Recommendation": _stock_value(stock_row.values, "Recommendation"),
             "Magazine Current Price": _stock_value(stock_row.values, "Current price"),
             "Target": _stock_value(stock_row.values, "Target"),
             "Stop": _stock_value(stock_row.values, "Stop"),
-            "Chance/Risk": _stock_value(stock_row.values, "Chance/Risk"),
+            "Chance": _stock_value(stock_row.values, "Chance"),
+            "Risk": _stock_value(stock_row.values, "Risk"),
             "Dividend Yield": _stock_value(stock_row.values, "Dividend Yield"),
             "Next Report": _stock_value(stock_row.values, "Next Report"),
-            "Comment": _stock_value(stock_row.values, "Comment"),
+            "Comment": _latest_issue_comment(stock_row),
             "Source tab": stock_row.tab,
             "Review status": ReviewStatus.NEEDS_REVIEW.value,
             "date updated": _stock_value(stock_row.values, "date updated"),
         }
         rows.append(
             WorkbookDraftRow(
-                tab="Latest Issue Recommendations",
+                tab="Latest Issue",
                 row_kind="latest_issue_stock_recommendation",
                 source_id=_source_id(
                     "latest-stock",
@@ -356,10 +358,10 @@ def _latest_issue_stock_rows(
                 page=stock_row.page,
                 values=tuple(
                     values_by_header.get(header, "")
-                    for header in _headers_for_tab("Latest Issue Recommendations")
+                    for header in _headers_for_tab("Latest Issue")
                 ),
                 review_status=ReviewStatus.NEEDS_REVIEW,
-                source_block="manual_review_pending",
+                source_block=stock_row.source_block,
             )
         )
     return rows
@@ -433,11 +435,11 @@ def _recommendation_card_row(
                 "Report type": report_type,
                 "P/S Ratio 26e": _ratio_only(card.kuv_26e),
                 "P/E Ratio 26e": _ratio_only(card.kgv_26e),
-                "Chance/Risk": _chance_risk(card.chance, card.risk),
+                "Chance": _rating_cell(card.chance),
+                "Risk": _rating_cell(card.risk),
                 "Insider Activity": "",
-                "Comment": "",
-                "issue": card.issue_id,
-                "page": str(card.page),
+                "Issue:Page": _source_ref(card.issue_id, card.page),
+                "Enrichment status": "not_started",
                 "date updated": stock_update_date,
             }
         ),
@@ -455,6 +457,10 @@ def _stock_header_index(header: str) -> int:
 def _stock_value(values: Sequence[str], header: str) -> str:
     index = _stock_header_index(header)
     return values[index].strip() if index < len(values) else ""
+
+
+def _latest_issue_comment(row: WorkbookDraftRow) -> str:
+    return "" if row.source_block == "manual_review_pending" else (row.source_block or "")
 
 
 def _derivative_card_row(
@@ -490,8 +496,7 @@ def _derivative_card_row(
             card.stop or "",
             card.recommendation_status or "",
             ReviewStatus.NEEDS_REVIEW.value,
-            card.issue_id,
-            str(card.page),
+            _source_ref(card.issue_id, card.page),
             instrument_update_date,
         ),
     )
@@ -668,8 +673,7 @@ def _dividend_rows(
                     row.target or "",
                     row.stop or "",
                     ReviewStatus.NEEDS_REVIEW.value,
-                    row.issue_id,
-                    str(row.page),
+                    _source_ref(row.issue_id, row.page),
                     instrument_update_date,
                 ),
             )
@@ -724,8 +728,7 @@ def _dividend_rows_from_stock_rows(
                     _stock_value(values, "Target"),
                     _stock_value(values, "Stop"),
                     ReviewStatus.NEEDS_REVIEW.value,
-                    _stock_value(values, "issue"),
-                    _stock_value(values, "page"),
+                    _stock_value(values, "Issue:Page"),
                     instrument_update_date,
                 ),
             )
@@ -769,8 +772,7 @@ def _derivative_overview_rows(
                     row.stop,
                     row.recommendation,
                     ReviewStatus.NEEDS_REVIEW.value,
-                    row.issue_id,
-                    str(row.page),
+                    _source_ref(row.issue_id, row.page),
                     instrument_update_date,
                 ),
             )
@@ -807,8 +809,7 @@ def _depot_position_rows(
                     row.performance_since_buy,
                     row.stop,
                     ReviewStatus.NEEDS_REVIEW.value,
-                    row.issue_id,
-                    str(row.page),
+                    _source_ref(row.issue_id, row.page),
                     instrument_update_date,
                 ),
             )
@@ -847,8 +848,7 @@ def _depot_transaction_rows(
                     row.price,
                     row.performance_since_buy,
                     ReviewStatus.NEEDS_REVIEW.value,
-                    row.issue_id,
-                    str(row.page),
+                    _source_ref(row.issue_id, row.page),
                     instrument_update_date,
                 ),
             )
@@ -876,7 +876,7 @@ def _quickcheck_stock_rows(
                 issue_id=row.issue_id,
                 page=row.page,
                 review_status=ReviewStatus.NEEDS_REVIEW,
-                source_block="manual_review_pending",
+                source_block=row.comment or "manual_review_pending",
                 values=_stock_values(
                     {
                         "Company": row.instrument,
@@ -893,11 +893,11 @@ def _quickcheck_stock_rows(
                         "Report type": "",
                         "P/S Ratio 26e": "",
                         "P/E Ratio 26e": "",
-                        "Chance/Risk": "",
+                        "Chance": "",
+                        "Risk": "",
                         "Insider Activity": "",
-                        "Comment": row.comment,
-                        "issue": row.issue_id,
-                        "page": str(row.page),
+                        "Issue:Page": _source_ref(row.issue_id, row.page),
+                        "Enrichment status": "not_started",
                         "date updated": stock_update_date,
                     }
                 ),
@@ -924,7 +924,7 @@ def _chart_check_stock_rows(
                 issue_id=row.issue_id,
                 page=row.page,
                 review_status=ReviewStatus.NEEDS_REVIEW,
-                source_block="manual_review_pending",
+                source_block=row.signal or "manual_review_pending",
                 values=_stock_values(
                     {
                         "Company": row.instrument,
@@ -941,11 +941,11 @@ def _chart_check_stock_rows(
                         "Report type": report_type,
                         "P/S Ratio 26e": "",
                         "P/E Ratio 26e": "",
-                        "Chance/Risk": "",
+                        "Chance": "",
+                        "Risk": "",
                         "Insider Activity": "",
-                        "Comment": row.signal,
-                        "issue": row.issue_id,
-                        "page": str(row.page),
+                        "Issue:Page": _source_ref(row.issue_id, row.page),
+                        "Enrichment status": "not_started",
                         "date updated": stock_update_date,
                     }
                 ),
@@ -1000,9 +1000,11 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
         "WKN",
         "Market Cap",
         "Dividend Yield",
-        "Chance/Risk",
+        "Chance",
+        "Risk",
         "Held since",
         "Insider Activity",
+        "Enrichment status",
     }
     for header in latest_wins_headers:
         index = _stock_header_index(header)
@@ -1020,21 +1022,11 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
         if not current or _recommendation_priority(candidate) >= _recommendation_priority(current):
             values[recommendation_index] = candidate
 
-    comment_index = _stock_header_index("Comment")
-    comment_parts = _split_comment(values[comment_index]) if len(values) > comment_index else []
-    if len(incoming_values) > comment_index and incoming_values[comment_index]:
-        comment_parts.append(incoming_values[comment_index])
-    if len(values) > comment_index:
-        values[comment_index] = _join_unique(comment_parts)
-
-    issue_index = _stock_header_index("issue")
-    if len(values) > issue_index and len(incoming_values) > issue_index:
-        values[issue_index] = _join_unique((values[issue_index], incoming_values[issue_index]))
-    page_index = _stock_header_index("page")
-    if len(values) > page_index and len(incoming_values) > page_index:
-        values[page_index] = _join_unique(
-            (values[page_index], incoming_values[page_index]),
-            separator=", ",
+    source_index = _stock_header_index("Issue:Page")
+    if len(values) > source_index and len(incoming_values) > source_index:
+        values[source_index] = _join_unique(
+            (values[source_index], incoming_values[source_index]),
+            separator=" | ",
         )
 
     return WorkbookDraftRow(
@@ -1189,8 +1181,7 @@ def _section_audit_rows(sections: Sequence[MagazineSectionCandidate]) -> list[Wo
                 ),
                 values=(
                     "local-dry-run",
-                    section.issue_id,
-                    str(section.page),
+                    _source_ref(section.issue_id, section.page),
                     section.section_kind.value,
                     _severity_for_priority(section.priority),
                     section.reason,
@@ -1358,9 +1349,21 @@ def _chance_risk(chance: int | None, risk: int | None) -> str:
     return " / ".join(parts)
 
 
+def _rating_cell(value: int | None) -> str:
+    return _stars(value) if value is not None else ""
+
+
 def _stars(value: int, *, maximum: int = 5) -> str:
     bounded = max(0, min(maximum, value))
     return "★" * bounded + "☆" * (maximum - bounded)
+
+
+def _source_ref(issue_id: str, page: int | str) -> str:
+    issue = str(issue_id or "").strip()
+    page_text = str(page or "").strip()
+    if issue and page_text:
+        return f"{issue}:{page_text}"
+    return issue or page_text
 
 
 def _join_non_empty(values: Sequence[str | None]) -> str:

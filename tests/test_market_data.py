@@ -66,12 +66,13 @@ def stock_values(
         "Stop": stop,
         "Current price": magazine_price,
         "Recommendation": recommendation,
-        "issue": issue,
-        "page": page,
+        "Issue:Page": f"{issue}:{page}" if issue and page else issue or page,
         "date updated": updated,
     }
     if price_at_recommendation:
-        values_by_header["Comment"] = f"Price at recommendation: {price_at_recommendation}"
+        values_by_header["Enrichment status"] = (
+            f"price_at_recommendation={price_at_recommendation}"
+        )
     return [values_by_header.get(header, "") for header in headers_for("Stocks")]
 
 
