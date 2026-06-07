@@ -1184,6 +1184,7 @@ def run_workbook_approval_audit_command(
         "rejectedRows": audit["rejectedRows"],
         "needsReviewRows": audit["needsReviewRows"],
         "hashMismatchRows": audit["hashMismatchRows"],
+        "invalidEvidenceRows": audit["invalidEvidenceRows"],
         "staleApprovalDetected": audit["staleApprovalDetected"],
     }
 

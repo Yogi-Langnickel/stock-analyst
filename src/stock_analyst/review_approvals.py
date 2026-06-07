@@ -22,6 +22,7 @@ APPROVAL_CSV_HEADERS = (
     "review_notes",
 )
 APPROVABLE_REVIEW_STATUSES = {"approved", "rejected", "needs_review"}
+FINAL_REVIEW_STATUSES = {"approved", "rejected"}
 
 
 class ReviewApprovalError(ValueError):
@@ -120,7 +121,7 @@ def load_workbook_approvals_csv(path: Path) -> tuple[WorkbookRowApproval, ...]:
             raise ReviewApprovalError(
                 f"approval CSV line {line_number} has unsupported review_status"
             )
-        if review_status == "approved":
+        if review_status in FINAL_REVIEW_STATUSES:
             _validate_approval_fields(
                 line_number=line_number,
                 reviewer=reviewer,
@@ -163,6 +164,7 @@ def apply_workbook_approvals(
     rejected_count = 0
     needs_review_count = 0
     hash_mismatch_count = 0
+    invalid_evidence_count = 0
 
     for raw_row in rows:
         if not isinstance(raw_row, Mapping):
@@ -182,6 +184,18 @@ def apply_workbook_approvals(
 
         matched_approval_ids.add(source_id)
         values_hash = workbook_row_values_sha256(_row_values(row))
+        if approval.review_status in FINAL_REVIEW_STATUSES and not _has_final_review_evidence(
+            approval
+        ):
+            row["reviewStatus"] = "needs_review"
+            row["exportable"] = False
+            row["requiresManualReview"] = True
+            row["approvalEvidenceInvalid"] = True
+            invalid_evidence_count += 1
+            needs_review_count += 1
+            updated_rows.append(row)
+            continue
+
         if approval.row_values_sha256 and approval.row_values_sha256 != values_hash:
             row["reviewStatus"] = "needs_review"
             row["exportable"] = False
@@ -236,7 +250,8 @@ def apply_workbook_approvals(
         "rejectedRows": rejected_count,
         "needsReviewRows": needs_review_count,
         "hashMismatchRows": hash_mismatch_count,
-        "staleApprovalDetected": hash_mismatch_count > 0,
+        "invalidEvidenceRows": invalid_evidence_count,
+        "staleApprovalDetected": hash_mismatch_count > 0 or invalid_evidence_count > 0,
     }
     return result
 
@@ -305,6 +320,20 @@ def _validate_approval_fields(
             f"approval CSV line {line_number} has invalid row_values_sha256"
         )
     _parse_reviewed_at(reviewed_at, line_number=line_number)
+
+
+def _has_final_review_evidence(approval: WorkbookRowApproval) -> bool:
+    try:
+        _validate_approval_fields(
+            line_number=0,
+            reviewer=approval.reviewer,
+            reviewed_at=approval.reviewed_at,
+            source_block=approval.source_block,
+            row_hash=approval.row_values_sha256,
+        )
+    except ReviewApprovalError:
+        return False
+    return True
 
 
 def _parse_reviewed_at(value: str, *, line_number: int) -> None:

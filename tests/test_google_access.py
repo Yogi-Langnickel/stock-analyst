@@ -1211,6 +1211,51 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertNotEqual(result["spreadsheetId"], config.sheets_spreadsheet_id)
         self.assertNotIn(config.sheets_spreadsheet_id, str(result))
 
+    def test_google_sheet_export_rejects_invalid_approval_evidence_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text("{}", encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets({"spreadsheetId": config.sheets_spreadsheet_id, "sheets": []})
+            workbook_plan = {
+                "issueId": "2026-W03",
+                "approvalAudit": {
+                    "approvalSource": "private_reviewer_csv",
+                    "rowCount": 1,
+                    "approvedRows": 1,
+                    "hashMismatchRows": 0,
+                    "invalidEvidenceRows": 1,
+                    "staleApprovalDetected": False,
+                },
+                "rows": [
+                    {
+                        "tab": "Stocks",
+                        "reviewStatus": "approved",
+                        "exportable": True,
+                        "requiresManualReview": False,
+                        "reviewedBy": "reviewer@example.test",
+                        "reviewedAt": "2026-06-06T10:00:00+00:00",
+                        "sourceBlock": "reviewed_card_page_22",
+                        "values": self._stock_sheet_row(),
+                    }
+                ],
+            }
+
+            with self.assertRaisesRegex(GoogleAccessError, "invalid approval evidence"):
+                write_workbook_plan_to_google_sheet(
+                    config,
+                    workbook_plan,
+                    sheets_service_factory=lambda: sheets,
+                )
+
+        self.assertEqual(sheets.spreadsheets_resource.values_resource.batch_update_requests, [])
+
     def test_google_sheet_export_skips_layout_only_dashboard_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"

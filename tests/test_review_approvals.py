@@ -122,6 +122,7 @@ class ReviewApprovalTest(unittest.TestCase):
                 "rejectedRows": 0,
                 "needsReviewRows": 1,
                 "hashMismatchRows": 0,
+                "invalidEvidenceRows": 0,
                 "staleApprovalDetected": False,
             },
         )
@@ -144,6 +145,26 @@ class ReviewApprovalTest(unittest.TestCase):
         self.assertFalse(reviewed["rows"][0]["exportable"])
         self.assertTrue(reviewed["rows"][0]["approvalHashMismatch"])
         self.assertEqual(reviewed["approvalAudit"]["hashMismatchRows"], 1)
+        self.assertTrue(reviewed["approvalAudit"]["staleApprovalDetected"])
+
+    def test_missing_final_review_evidence_keeps_direct_approval_non_exportable(self) -> None:
+        plan = workbook_plan()
+        row = plan["rows"][0]
+        approval = WorkbookRowApproval(
+            source_id=row["sourceId"],
+            review_status="approved",
+            reviewer="reviewer@example.test",
+            reviewed_at="2026-06-06T10:00:00+00:00",
+            source_block="reviewed_card_page_22",
+            row_values_sha256="",
+        )
+
+        reviewed = apply_workbook_approvals(plan, (approval,))
+
+        self.assertEqual(reviewed["rows"][0]["reviewStatus"], "needs_review")
+        self.assertFalse(reviewed["rows"][0]["exportable"])
+        self.assertTrue(reviewed["rows"][0]["approvalEvidenceInvalid"])
+        self.assertEqual(reviewed["approvalAudit"]["invalidEvidenceRows"], 1)
         self.assertTrue(reviewed["approvalAudit"]["staleApprovalDetected"])
 
     def test_rejected_approval_keeps_row_non_exportable_with_warning(self) -> None:
@@ -174,6 +195,22 @@ class ReviewApprovalTest(unittest.TestCase):
                     (
                         "source_id,review_status,reviewer,reviewed_at,source_block,row_values_sha256,review_notes",
                         "stock:1,approved,,2026-06-06T10:00:00+00:00,block," + "a" * 64 + ",",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ReviewApprovalError, "missing reviewer"):
+                load_workbook_approvals_csv(path)
+
+    def test_load_approval_csv_requires_rejection_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "approval.csv"
+            path.write_text(
+                "\n".join(
+                    (
+                        "source_id,review_status,reviewer,reviewed_at,source_block,row_values_sha256,review_notes",
+                        "stock:1,rejected,,2026-06-06T10:00:00+00:00,block," + "a" * 64 + ",",
                     )
                 ),
                 encoding="utf-8",

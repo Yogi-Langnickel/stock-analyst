@@ -62,6 +62,9 @@ Created: 2026-06-06
   then apply it with `workbook-approval-audit` to produce a private reviewed
   workbook plan. Approvals require reviewer, reviewed timestamp, source block,
   and exact `row_values_sha256`; stale hash mismatches keep rows non-exportable.
+  The approval application boundary enforces the same evidence rule for final
+  `approved` and `rejected` decisions even when called directly in code, not
+  only when loading CSV rows.
 - `Navigation Dashboard` is a static reviewer cockpit. Do not emit workbook
   rows to it, do not trigger enrichment from it, and preserve its body rows
   during generated data clears.

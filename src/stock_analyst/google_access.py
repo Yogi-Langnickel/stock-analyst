@@ -1421,6 +1421,10 @@ def _require_family_export_approval_audit(
         raise GoogleAccessError(
             "family-visible workbook export cannot include approval hash mismatches"
         )
+    if approval_audit.get("invalidEvidenceRows") not in (0, None):
+        raise GoogleAccessError(
+            "family-visible workbook export cannot include invalid approval evidence"
+        )
     if approval_audit.get("rowCount") != len(raw_rows):
         raise GoogleAccessError(
             "family-visible workbook export approval audit row count does not match rows"
