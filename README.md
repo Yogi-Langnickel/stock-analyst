@@ -14,7 +14,11 @@ validate and store PDFs, record checksum/issue-date manifest metadata, detect
 duplicates, scaffold local text extraction status, report embedded-text quality
 for imported PDFs, extract draft recommendation-card rows from embedded text,
 inventory high-value magazine table/section surfaces, and keep all rows
-draft-only until manual review.
+draft-only until manual review. The private local issue corpus is present under
+ignored `data/private/issues/` through `DA_2026_25.pdf`; availability is tracked
+as filename metadata only and does not imply extraction success, workbook
+readiness, recommendation coverage, market-data readiness, exportability, or
+family-visible readiness.
 
 ## Intended Users
 
@@ -66,6 +70,24 @@ Validate a local folder of PDFs without copying anything:
 ```sh
 PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --dry-run ./data/private/issues
 ```
+
+Check local corpus file availability without reading PDF contents, extracting
+text, planning workbook rows, calling providers, or writing anything:
+
+```sh
+PYTHONPATH=src python3 -m stock_analyst.cli corpus-status ./data/private/issues
+scripts/stock-analyst corpus-status ./data/private/issues
+```
+
+`corpus-status` only inspects direct folder entries and filename patterns
+anchored to `DA_YYYY_NN.pdf`. Its JSON reports local metadata such as folder
+existence, matched issue count, latest issue ID/path, filename gaps, malformed
+PDF filenames, `externalServicesEnabled=false`, `networkAccess=false`,
+`textExtractionEnabled=false`, and `pdfContentsRead=false`. A
+`local_corpus_files_available` status means only that matching local files are
+present; manual review remains mandatory before any digest or export workflow.
+The command exits `0` for available, missing-folder, and no-valid-issue-file
+states; automation should inspect `readinessStatus` and `blocking`.
 
 Import a local folder of PDFs into ignored private upload storage:
 
@@ -229,10 +251,12 @@ Local PDF intake does not require Google Drive or Google Sheets credentials.
 Those will only be needed later to sync source PDFs into a private Drive folder
 or export approved, reviewed rows into a configured Sheet.
 
-For the next real-corpus validation slice, put private PDFs in ignored local
-`data/private/issues/` or a private Google Drive folder following
-[unblockme.md](unblockme.md). A local folder is fastest because the current
-pipeline can import and report extraction quality without any network provider.
+The real-corpus handoff blocker is cleared for current local development:
+private PDFs are already available in ignored local `data/private/issues/`
+through `DA_2026_25.pdf`. Use `corpus-status` before parser/review work to
+confirm local filename coverage and identify specific missing issue numbers or
+malformed filenames. Ask for a PDF handoff only when that metadata check shows a
+specific issue is absent.
 
 Future dependency setup should use a virtual environment:
 

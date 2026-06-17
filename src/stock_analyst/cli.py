@@ -10,6 +10,7 @@ from io import StringIO
 from pathlib import Path
 
 from stock_analyst.chart_check import extract_chart_check_rows_from_page_lines
+from stock_analyst.corpus import build_local_corpus_status
 from stock_analyst.dividend_strategy import build_dividend_strategy_from_pdf
 from stock_analyst.google_access import (
     GoogleAccessError,
@@ -112,6 +113,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--manifest-name",
         default="uploads.jsonl",
         help="Manifest filename inside the upload directory.",
+    )
+
+    corpus_status = subcommands.add_parser(
+        "corpus-status",
+        help="Report metadata-only readiness for local DA_YYYY_NN.pdf issues.",
+    )
+    corpus_status.add_argument(
+        "folder",
+        type=Path,
+        nargs="?",
+        default=Path("data/private/issues"),
+        help="Local private issues folder to scan. Defaults to data/private/issues.",
     )
 
     quality_report = subcommands.add_parser(
@@ -713,6 +726,11 @@ def run_import_pdf_folder(
     }
 
 
+def run_corpus_status(folder: Path = Path("data/private/issues")) -> dict[str, object]:
+    status = build_local_corpus_status(folder)
+    return status.to_dict()
+
+
 def run_extraction_quality_report(
     manifest_path: Path,
     *,
@@ -1287,6 +1305,8 @@ def main(argv: list[str] | None = None) -> int:
                 upload_dir=args.upload_dir,
                 manifest_name=args.manifest_name,
             )
+        elif args.command == "corpus-status":
+            result = run_corpus_status(args.folder)
         elif args.command == "extraction-quality-report":
             result = run_extraction_quality_report(
                 args.manifest,

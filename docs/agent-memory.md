@@ -13,6 +13,14 @@ Last compacted: 2026-06-06
 - Local PDF intake can validate one PDF or a folder, copy PDFs into ignored
   private storage, record metadata-only JSONL manifests, and dedupe by
   checksum.
+- The local private corpus is present under ignored `data/private/issues/`
+  through latest issue `DA_2026_25.pdf`. Corpus availability is no longer a
+  blocker; use metadata-only `corpus-status` to verify counts, latest issue,
+  malformed filenames, and filename gaps without reading PDF contents. A
+  `local_corpus_files_available` status means only matching local files are
+  present; it does not imply extraction success, workbook readiness,
+  recommendation coverage, market-data readiness, exportability, or
+  family-visible readiness.
 - Extraction is local-first. PyMuPDF and Tesseract are optional local adapters;
   tests use deterministic no-network stubs. Low-text pages become local OCR
   work items, not remote uploads.
@@ -50,8 +58,9 @@ Last compacted: 2026-06-06
   identity, EUR FX/macro display context, fundamentals, and insider planning.
   They remain live-adapter-disabled until cache/throttle/fair-access review is
   complete.
-- Next real-corpus unblock is user-provided private PDFs from the last two
-  years in ignored local `data/private/issues/` or a private Drive folder.
+- Remaining corpus work is parser/review coverage against local private issues,
+  not PDF availability. Do not ask for a new PDF handoff unless a specific
+  issue is absent from `corpus-status`.
 - Use service account first for future private Drive/Sheets automation unless
   per-user Google identity becomes a product requirement.
 - Dev Google Drive/Sheets IDs are configured for the service account
@@ -83,6 +92,11 @@ Last compacted: 2026-06-06
 - `scripts/stock-analyst ocr-fixture-plan --pdf ./data/private/issues/DA_2026_03.pdf --artifact-dir ./data/private/visual-ocr`
 - `PYTHONPYCACHEPREFIX=.pycache python3 -m compileall src tests`
 - `PYTHONPATH=src python3 -m unittest discover tests`
+- `PYTHONPATH=src python3 -m stock_analyst.cli corpus-status ./data/private/issues`
+  and `scripts/stock-analyst corpus-status ./data/private/issues`: report
+  local filename metadata only (`DA_YYYY_NN.pdf` count/latest/gaps/malformed
+  names); no PDF reads, OCR, extraction, workbook planning, providers, or
+  network calls.
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --dry-run ./data/private/issues`
 - `PYTHONPATH=src python3 -m stock_analyst.cli extraction-quality-report ./data/uploads/uploads.jsonl`
