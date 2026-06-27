@@ -89,6 +89,9 @@ Created: 2026-06-06
   display fields for `EUR`, `USD`, and `AUD` with FX date/source metadata.
 - A page-by-page extraction map should guide parser training and review. It is
   not manual data entry.
+- Corpus refinement summaries aggregate section, destination, and parser-hint
+  counts across local issues only. They must not include page titles, extracted
+  source text, page rows, reviewer notes, or approval/export decisions.
 
 ## Enrichment
 

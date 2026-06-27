@@ -61,6 +61,9 @@ Last compacted: 2026-06-06
 - Remaining corpus work is parser/review coverage against local private issues,
   not PDF availability. Do not ask for a new PDF handoff unless a specific
   issue is absent from `corpus-status`.
+- Use `corpus-refinement-summary` for aggregate parser-training coverage across
+  local issues; it must stay source-text-free and does not imply review,
+  approval, exportability, or family-visible readiness.
 - Use service account first for future private Drive/Sheets automation unless
   per-user Google identity becomes a product requirement.
 - Dev Google Drive/Sheets IDs are configured for the service account
@@ -97,6 +100,9 @@ Last compacted: 2026-06-06
   local filename metadata only (`DA_YYYY_NN.pdf` count/latest/gaps/malformed
   names); no PDF reads, OCR, extraction, workbook planning, providers, or
   network calls.
+- `PYTHONPATH=src python3 -m stock_analyst.cli corpus-refinement-summary ./data/private/issues --limit 1`:
+  aggregate local refinement coverage without page titles, source text, page
+  rows, reviewer notes, providers, or network calls.
 - `PYTHONPATH=src python3 -m stock_analyst.cli process-pdf --dry-run ./data/private/issue.pdf`
 - `PYTHONPATH=src python3 -m stock_analyst.cli import-pdf-folder --dry-run ./data/private/issues`
 - `PYTHONPATH=src python3 -m stock_analyst.cli extraction-quality-report ./data/uploads/uploads.jsonl`
