@@ -54,6 +54,7 @@ from stock_analyst.pipeline import (
 from stock_analyst.quality_report import build_extraction_quality_report
 from stock_analyst.quickcheck import extract_quickcheck_rows_from_page_lines
 from stock_analyst.refinement import build_refinement_plan_from_pdf
+from stock_analyst.refinement_summary import build_corpus_refinement_summary
 from stock_analyst.recommendation_cards import extract_recommendation_cards_from_pdf
 from stock_analyst.review_approvals import (
     apply_workbook_approvals,
@@ -125,6 +126,30 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=Path("data/private/issues"),
         help="Local private issues folder to scan. Defaults to data/private/issues.",
+    )
+
+    corpus_refinement_summary = subcommands.add_parser(
+        "corpus-refinement-summary",
+        help="Summarize page classification coverage across local issues without source text.",
+    )
+    corpus_refinement_summary.add_argument(
+        "folder",
+        type=Path,
+        nargs="?",
+        default=Path("data/private/issues"),
+        help="Local private issues folder to scan. Defaults to data/private/issues.",
+    )
+    corpus_refinement_summary.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit the number of matched issues processed from oldest to newest.",
+    )
+    corpus_refinement_summary.add_argument(
+        "--min-embedded-chars",
+        type=int,
+        default=40,
+        help="Minimum trimmed embedded characters required before OCR is not queued.",
     )
 
     quality_report = subcommands.add_parser(
@@ -731,6 +756,22 @@ def run_corpus_status(folder: Path = Path("data/private/issues")) -> dict[str, o
     return status.to_dict()
 
 
+def run_corpus_refinement_summary(
+    folder: Path = Path("data/private/issues"),
+    *,
+    limit: int | None = None,
+    min_embedded_chars: int = 40,
+) -> dict[str, object]:
+    current_utc_date = datetime.now(timezone.utc).date()
+    summary = build_corpus_refinement_summary(
+        folder,
+        limit=limit,
+        min_embedded_chars=min_embedded_chars,
+        current_utc_date=current_utc_date,
+    )
+    return summary.to_dict()
+
+
 def run_extraction_quality_report(
     manifest_path: Path,
     *,
@@ -1307,6 +1348,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "corpus-status":
             result = run_corpus_status(args.folder)
+        elif args.command == "corpus-refinement-summary":
+            result = run_corpus_refinement_summary(
+                args.folder,
+                limit=args.limit,
+                min_embedded_chars=args.min_embedded_chars,
+            )
         elif args.command == "extraction-quality-report":
             result = run_extraction_quality_report(
                 args.manifest,
