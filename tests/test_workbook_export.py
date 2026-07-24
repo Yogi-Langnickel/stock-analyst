@@ -8,7 +8,7 @@ from stock_analyst.dividend_strategy import DividendStrategyRow
 from stock_analyst.depot_tables import DepotPositionRow, DepotTransactionRow
 from stock_analyst.derivative_tables import DerivativeOverviewRow
 from stock_analyst.extraction import RawPageText
-from stock_analyst.google_access import DEFAULT_SHEET_TABS
+from stock_analyst.google_access import AKTUELL_DERIVATIVE_HEADERS, DEFAULT_SHEET_TABS
 from stock_analyst.processing_policy import MagazineProcessingPolicy
 from stock_analyst.recommendation_cards import RecommendationCard
 from stock_analyst.quickcheck import QuickcheckRow
@@ -158,11 +158,8 @@ class WorkbookExportPlanTest(unittest.TestCase):
         result = plan.to_dict()
         self.assertEqual(extractor.calls, 1)
         self.assertEqual(result["issueId"], "2026-W03")
-        self.assertEqual(result["rowCount"], 3)
-        self.assertEqual(
-            result["rowsByTab"],
-            {"Extraction Audit": 1, "Latest Issue": 1, "Stocks": 1},
-        )
+        self.assertEqual(result["rowCount"], 2)
+        self.assertEqual(result["rowsByTab"], {"Extraction Audit": 1, "Stocks": 1})
 
     def test_pdf_plan_skips_front_matter_but_keeps_later_explicit_sections(self) -> None:
         class StubExtractor:
@@ -203,6 +200,129 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(stock_rows[1]["values"][0], "Back Matter AG")
         self.assertEqual(stock_rows[1]["page"], 8)
         self.assertNotIn("Front Matter AG", json.dumps(result))
+
+    def test_pdf_plan_routes_layout_table_new_recommendations_to_aktuell(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(
+                        page_number=24,
+                        text="\n".join(
+                            (
+                                "Aktie",
+                                "Existing AG",
+                                "Akt. Kurs",
+                                "10,00 €",
+                                "WKN",
+                                "EXIST1",
+                                "Ziel",
+                                "15,00 €",
+                                "Stopp",
+                                "8,00 €",
+                                "Neuempfehlung",
+                            )
+                        ),
+                        layout_text="\n".join(
+                            (
+                                "Top-Empfehlungen",
+                                "Unternehmen    WKN    Aktueller Kurs    Marktkap.    DR*    KUV    KGV    Empf.-    Ziel    Stopp    Chance    Risiko",
+                                "Alpha Engineering AG    ENG001    81,25 €    3,0    3,5    0,5    12    Neuempfehlung    108,00 €    63,00 €    •••••    •••••",
+                                "Beta Energy AG          NRG002    42,50 €    9,5    0,0    1,0    17    Neuempfehlung    55,00 €     33,00 €    •••••    •••••",
+                                "Gamma Insurance AG      INS003    112,00 €   28,0   3,6    0,5    10    Neuempfehlung    136,00 €    93,00 €    •••••    •••••",
+                            )
+                        ),
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_30.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        result = plan.to_dict()
+        stock_rows = [row for row in result["rows"] if row["tab"] == "Stocks"]
+        aktuell_rows = [row for row in result["rows"] if row["tab"] == "Aktuell"]
+        self.assertEqual(
+            [value_for(row, "Company") for row in stock_rows],
+            ["Existing AG", "Alpha Engineering AG", "Beta Energy AG", "Gamma Insurance AG"],
+        )
+        self.assertEqual(
+            [value_for(row, "Recommendation") for row in stock_rows],
+            ["new_recommendation"] * 4,
+        )
+        self.assertEqual(
+            [value_for(row, "Company", tab="Aktuell") for row in aktuell_rows],
+            ["Existing AG", "Alpha Engineering AG", "Beta Energy AG", "Gamma Insurance AG"],
+        )
+        self.assertEqual(
+            [value_for(row, "Action", tab="Aktuell") for row in aktuell_rows],
+            ["Buy"] * 4,
+        )
+
+    def test_pdf_plan_routes_all_explicit_dax_actions_to_aktuell(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(
+                        page_number=26,
+                        text="DAX overview",
+                        layout_text="\n".join(
+                            (
+                                "Unternehmen    WKN    Aktueller Kurs    Ziel    Stopp",
+                                "Alpha AG    ALPHA1    10,00 EUR    15,00 EUR    8,00 EUR",
+                                "Beta AG    BETA01    20,00 EUR    –    –",
+                                "Gamma AG    GAMMA1    30,00 EUR    40,00 EUR    20,00 EUR",
+                                "Delta AG    DELTA1    40,00 EUR    –    –",
+                            )
+                        ),
+                    ),
+                    RawPageText(
+                        page_number=27,
+                        text="DAX overview",
+                        layout_text="\n".join(
+                            (
+                                "Einschätzung    Kommentar    Unternehmen",
+                                "Kaufen    Solide Perspektive    Alpha AG",
+                                "Verkaufen    Keine Kaufargumente    Beta AG",
+                                "Halten    Abwarten auf Zahlen    Gamma AG",
+                                "Abwarten    Beobachten    Delta AG",
+                            )
+                        ),
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_30.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        rows = plan.to_dict()["rows"]
+        stock_rows = [row for row in rows if row["tab"] == "Stocks"]
+        aktuell_rows = [row for row in rows if row["tab"] == "Aktuell"]
+        self.assertEqual(
+            [value_for(row, "Recommendation") for row in stock_rows],
+            ["new_recommendation", "verkauft", "hold", "wait"],
+        )
+        self.assertEqual(
+            [value_for(row, "Company", tab="Aktuell") for row in aktuell_rows],
+            ["Alpha AG", "Beta AG", "Gamma AG", "Delta AG"],
+        )
+        self.assertEqual(
+            [value_for(row, "Action", tab="Aktuell") for row in aktuell_rows],
+            ["Buy", "Sell", "Hold", "Wait"],
+        )
+        self.assertEqual(
+            [value_for(row, "Issue:Page") for row in stock_rows],
+            ["2026-W30:26 | 2026-W30:27"] * 4,
+        )
+        self.assertEqual(
+            [value_for(row, "Source", tab="Aktuell") for row in aktuell_rows],
+            ["2026-W30:26 | 2026-W30:27"] * 4,
+        )
 
     def test_pdf_plan_can_still_use_strict_statistics_cutoff_policy(self) -> None:
         class StubExtractor:
@@ -363,23 +483,165 @@ class WorkbookExportPlanTest(unittest.TestCase):
         latest_row = next(
             row
             for row in plan.to_dict()["rows"]
-            if row["tab"] == "Latest Issue"
+            if row["tab"] == "Aktuell"
         )
 
-        self.assertEqual(value_for(latest_row, "Issue:Page", tab="Latest Issue"), "2026-W03:22")
-        self.assertEqual(value_for(latest_row, "Company", tab="Latest Issue"), "Banco Sabadell")
-        self.assertEqual(value_for(latest_row, "WKN", tab="Latest Issue"), "A0MRD4")
+        self.assertEqual(value_for(latest_row, "Source", tab="Aktuell"), "2026-W03:22")
+        self.assertEqual(value_for(latest_row, "Action", tab="Aktuell"), "Buy")
+        self.assertEqual(value_for(latest_row, "Company", tab="Aktuell"), "Banco Sabadell")
+        self.assertEqual(value_for(latest_row, "WKN", tab="Aktuell"), "A0MRD4")
         self.assertEqual(
-            value_for(latest_row, "Magazine Current Price", tab="Latest Issue"),
+            value_for(latest_row, "Price at Print", tab="Aktuell"),
             "3,33 EUR",
         )
-        self.assertEqual(value_for(latest_row, "Chance", tab="Latest Issue"), "★★★★★")
-        self.assertEqual(value_for(latest_row, "Risk", tab="Latest Issue"), "★★★★★")
-        self.assertEqual(value_for(latest_row, "Source tab", tab="Latest Issue"), "Stocks")
+        self.assertEqual(value_for(latest_row, "Chance", tab="Aktuell"), "★★★★★")
+        self.assertEqual(value_for(latest_row, "Risk", tab="Aktuell"), "★★★★★")
+        self.assertEqual(value_for(latest_row, "Source", tab="Aktuell"), "2026-W03:22")
         self.assertEqual(
-            value_for(latest_row, "Review status", tab="Latest Issue"),
+            value_for(latest_row, "Review status", tab="Aktuell"),
             ReviewStatus.NEEDS_REVIEW.value,
         )
+
+    def test_plan_emits_hold_stock_in_latest_issue_reviewer_rows(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_30.pdf"),
+            issue_id="2026-W30",
+            stock_update_date="2026-07-17",
+            recommendation_cards=(
+                RecommendationCard(
+                    issue_id="2026-W30",
+                    page=40,
+                    instrument_name="Example Automaker",
+                    instrument_type=InstrumentType.STOCK,
+                    wkn="A00002",
+                    current_price="72,12 EUR",
+                    target=None,
+                    stop=None,
+                    chance=4,
+                    risk=3,
+                    recommendation_status="hold",
+                ),
+            ),
+        )
+
+        rows = plan.to_dict()["rows"]
+        stock_row = next(row for row in rows if row["tab"] == "Stocks")
+        latest_row = next(row for row in rows if row["tab"] == "Aktuell")
+
+        self.assertEqual(value_for(stock_row, "Recommendation"), "hold")
+        self.assertEqual(value_for(latest_row, "Action", tab="Aktuell"), "Hold")
+        self.assertEqual(value_for(latest_row, "Source", tab="Aktuell"), "2026-W30:40")
+
+    def test_plan_groups_latest_issue_buy_sell_recommendations_by_asset_class(self) -> None:
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_03.pdf"),
+            issue_id="2026-W03",
+            stock_update_date="2026-05-17",
+            recommendation_cards=(
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=22,
+                    instrument_name="Stock Buy AG",
+                    instrument_type=InstrumentType.STOCK,
+                    wkn="STOCK1",
+                    current_price="10,00 EUR",
+                    target="12,00 EUR",
+                    stop="8,00 EUR",
+                    chance=4,
+                    risk=2,
+                    recommendation_status="new_recommendation",
+                ),
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=23,
+                    instrument_name="Call on Stock Buy AG",
+                    instrument_type=InstrumentType.DERIVATIVE,
+                    wkn="DERIV1",
+                    current_price="2,00 EUR",
+                    target="3,00 EUR",
+                    stop="1,00 EUR",
+                    chance=3,
+                    risk=5,
+                    recommendation_status="new_recommendation",
+                ),
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=24,
+                    instrument_name="Crypto Buy",
+                    instrument_type=InstrumentType.CRYPTO,
+                    wkn="CRYPT1",
+                    current_price="100,00 USD",
+                    target=None,
+                    stop=None,
+                    chance=None,
+                    risk=None,
+                    recommendation_status="new_recommendation",
+                ),
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=25,
+                    instrument_name="ETF Sell",
+                    instrument_type=InstrumentType.ETF,
+                    wkn="ETF001",
+                    current_price="50,00 EUR",
+                    target=None,
+                    stop=None,
+                    chance=None,
+                    risk=None,
+                    recommendation_status="sold",
+                ),
+                RecommendationCard(
+                    issue_id="2026-W03",
+                    page=26,
+                    instrument_name="Stock Hold AG",
+                    instrument_type=InstrumentType.STOCK,
+                    wkn="STOCK2",
+                    current_price="10,00 EUR",
+                    target=None,
+                    stop=None,
+                    chance=None,
+                    risk=None,
+                    recommendation_status="follow_up",
+                ),
+            ),
+        )
+
+        latest_rows = [row for row in plan.to_dict()["rows"] if row["tab"] == "Aktuell"]
+
+        self.assertEqual(len(latest_rows), 4)
+        self.assertEqual(
+            [row["rowKind"] for row in latest_rows],
+            [
+                "latest_issue_stock_buy_sell_recommendation",
+                "latest_issue_derivative_buy_sell_recommendation",
+                "latest_issue_crypto_buy_sell_recommendation",
+                "latest_issue_etf_buy_sell_recommendation",
+            ],
+        )
+        self.assertEqual(
+            [
+                row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Action")]
+                if "derivative" in str(row["rowKind"])
+                else value_for(row, "Action", tab="Aktuell")
+                for row in latest_rows
+            ],
+            ["Buy", "Buy", "Buy", "Sell"],
+        )
+        derivative_row = next(
+            row
+            for row in latest_rows
+            if row["rowKind"] == "latest_issue_derivative_buy_sell_recommendation"
+        )
+        self.assertEqual(
+            derivative_row["values"][:3],
+            ["DERIV1", "Call on Stock Buy AG", "Buy"],
+        )
+        self.assertEqual(
+            derivative_row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")],
+            "2026-W03:23",
+        )
+        self.assertTrue(all(row["requiresManualReview"] for row in latest_rows))
+        self.assertTrue(all(not row["exportable"] for row in latest_rows))
 
     def test_stock_update_date_prefers_explicit_import_date(self) -> None:
         with TemporaryDirectory() as directory:
@@ -652,7 +914,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
                     performance_since_recommendation="+88,3 %",
                     target="3,00 EUR",
                     stop="1,40 EUR",
-                    recommendation="Dabei- bleiben",
+                    recommendation="Tauschen",
                 ),
             ),
             depot_positions=(
@@ -686,6 +948,9 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(rows["Derivative Tips"]["values"][2], "Discount-Call")
         self.assertEqual(rows["Derivative Tips"]["values"][12], "+88,3 %")
         self.assertEqual(len(rows["Derivative Tips"]["values"]), len(headers_for("Derivative Tips")))
+        self.assertEqual(rows["Aktuell"]["values"][2], "Sell")
+        self.assertEqual(rows["Aktuell"]["values"][12], "")
+        self.assertEqual(rows["Aktuell"]["values"][16], "Tauschen")
         self.assertEqual(rows["AKTIONAER Depot"]["rowKind"], "aktionaer_depot_position")
         self.assertEqual(rows["AKTIONAER Depot"]["values"][0], "Amazon")
         self.assertEqual(len(rows["AKTIONAER Depot"]["values"]), len(headers_for("AKTIONAER Depot")))
@@ -1008,8 +1273,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(stock_row, "Performance since Recommendation"), "+5,5 %")
         self.assertEqual(value_for(stock_row, "Recommendation"), "hold")
         self.assertEqual(value_for(stock_row, "Held since"), "52/25")
-        latest_row = next(row for row in rows if row["tab"] == "Latest Issue")
-        self.assertIn("Aufwärtstrend", value_for(latest_row, "Comment", tab="Latest Issue"))
+        self.assertFalse(any(row["tab"] == "Aktuell" for row in rows))
         self.assertEqual(value_for(stock_row, "date updated"), "2026-05-17")
         self.assertEqual(len(stock_row["values"]), len(headers_for("Stocks")))
         self.assertFalse(any(row["tab"] == "Stock Quickcheck" for row in rows))
@@ -1066,10 +1330,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(row, "Performance since Recommendation"), "-6,6 %")
         self.assertEqual(value_for(row, "Recommendation"), "hold")
         self.assertEqual(value_for(row, "Held since"), "02/2026")
-        latest_rows = [row for row in plan.to_dict()["rows"] if row["tab"] == "Latest Issue"]
-        self.assertTrue(
-            any("Rekordhoch" in value_for(row, "Comment", tab="Latest Issue") for row in latest_rows)
-        )
+        self.assertFalse(any(row["tab"] == "Aktuell" for row in plan.to_dict()["rows"]))
         self.assertEqual(value_for(row, "Issue:Page"), "2026-W03:42 | 2026-W03:90")
 
     def test_consolidates_wkn_less_stock_mentions_by_normalized_name(self) -> None:
@@ -1114,13 +1375,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(row, "Company"), "ACME Energy")
         self.assertEqual(value_for(row, "Current price"), "10,50 EUR")
         self.assertEqual(value_for(row, "Target"), "12,50 EUR")
-        latest_rows = [row for row in plan.to_dict()["rows"] if row["tab"] == "Latest Issue"]
-        latest_comments = [
-            value_for(row, "Comment", tab="Latest Issue")
-            for row in latest_rows
-        ]
-        self.assertIn("Quick-check comment.", latest_comments)
-        self.assertIn("Follow-up wording.", latest_comments)
+        self.assertFalse(any(row["tab"] == "Aktuell" for row in plan.to_dict()["rows"]))
         self.assertEqual(value_for(row, "Issue:Page"), "2026-W03:90 | 2026-W03:91")
 
     def test_routes_chart_check_rows_to_stock_tab_only(self) -> None:

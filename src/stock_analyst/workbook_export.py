@@ -34,7 +34,7 @@ from stock_analyst.derivative_tables import (
     extract_derivative_overview_rows_from_page_lines,
 )
 from stock_analyst.extraction import RawTextExtractor, extract_pdf_text
-from stock_analyst.google_access import DEFAULT_SHEET_TABS
+from stock_analyst.google_access import AKTUELL_DERIVATIVE_HEADERS, DEFAULT_SHEET_TABS
 from stock_analyst.intake import guess_issue_date
 from stock_analyst.processing_policy import (
     MagazineProcessingPolicy,
@@ -47,6 +47,7 @@ from stock_analyst.quickcheck import (
 from stock_analyst.recommendation_cards import (
     RecommendationCard,
     RecommendationCardExtraction,
+    extract_dax_action_table_cards_from_pages,
     extract_recommendation_cards_from_pdf,
     extract_recommendation_cards_from_lines,
 )
@@ -177,6 +178,11 @@ def build_workbook_export_plan_from_pdf(
         policy=processing_policy,
     )
     pages = tuple((page.page_number, page.text.splitlines()) for page in content_pages)
+    layout_lines_by_page = {
+        page.page_number: page.layout_text.splitlines()
+        for page in content_pages
+        if page.layout_text
+    }
     cards: list[RecommendationCard] = (
         list(
             extract_recommendation_cards_from_pdf(
@@ -197,6 +203,7 @@ def build_workbook_export_plan_from_pdf(
                     lines,
                     issue_id=resolved_issue_id,
                     page_number=page_number,
+                    layout_lines=layout_lines_by_page.get(page_number, ()),
                 )
             )
         sections.extend(
@@ -204,6 +211,13 @@ def build_workbook_export_plan_from_pdf(
                 lines,
                 issue_id=resolved_issue_id,
                 page_number=page_number,
+            )
+        )
+    if extractor is not None:
+        cards.extend(
+            extract_dax_action_table_cards_from_pages(
+                tuple((page_number, layout_lines_by_page.get(page_number, ())) for page_number, _ in pages),
+                issue_id=resolved_issue_id,
             )
         )
     dividends = extract_dividend_strategy_rows_from_page_lines(
@@ -286,7 +300,13 @@ def build_workbook_export_plan(
         instrument_update_date=resolved_stock_update_date,
     )
     rows = tuple(
-        _latest_issue_stock_rows(current_issue_stock_source_rows, issue_id=issue_id)
+        _latest_issue_recommendation_rows(
+            cards=_cards_from(recommendation_cards),
+            stock_rows=current_issue_stock_source_rows,
+            derivative_overview_rows=derivative_overview,
+            issue_id=issue_id,
+            update_date=resolved_stock_update_date,
+        )
         + stock_rows
         + non_stock_card_rows
         + dividend_focus_rows
@@ -318,35 +338,47 @@ def build_workbook_export_plan(
     )
 
 
-def _latest_issue_stock_rows(
-    stock_rows: Sequence[WorkbookDraftRow],
+def _latest_issue_recommendation_rows(
     *,
+    cards: Sequence[RecommendationCard],
+    stock_rows: Sequence[WorkbookDraftRow],
+    derivative_overview_rows: Sequence[DerivativeOverviewRow],
     issue_id: str,
+    update_date: str,
 ) -> list[WorkbookDraftRow]:
     rows: list[WorkbookDraftRow] = []
     for stock_row in stock_rows:
+        recommendation = _stock_value(stock_row.values, "Recommendation")
+        publisher_action = _latest_issue_stock_action(
+            stock_row,
+            cards=cards,
+            recommendation=recommendation,
+        )
+        if publisher_action is None:
+            continue
         values_by_header = {
-            "Issue:Page": _stock_value(stock_row.values, "Issue:Page")
-            or _source_ref(issue_id, stock_row.page),
-            "Company": _stock_value(stock_row.values, "Company"),
             "WKN": _stock_value(stock_row.values, "WKN"),
-            "Recommendation": _stock_value(stock_row.values, "Recommendation"),
-            "Magazine Current Price": _stock_value(stock_row.values, "Current price"),
+            "Company": _stock_value(stock_row.values, "Company"),
+            "Action": publisher_action,
+            "Price at Print": _stock_value(stock_row.values, "Current price"),
             "Target": _stock_value(stock_row.values, "Target"),
             "Stop": _stock_value(stock_row.values, "Stop"),
+            "Dividend": _stock_value(stock_row.values, "Dividend Yield"),
+            "KUV": _stock_value(stock_row.values, "P/S Ratio 26e"),
+            "KGV": _stock_value(stock_row.values, "P/E Ratio 26e"),
             "Chance": _stock_value(stock_row.values, "Chance"),
             "Risk": _stock_value(stock_row.values, "Risk"),
-            "Dividend Yield": _stock_value(stock_row.values, "Dividend Yield"),
-            "Next Report": _stock_value(stock_row.values, "Next Report"),
             "Comment": _latest_issue_comment(stock_row),
-            "Source tab": stock_row.tab,
+            "updated": _stock_value(stock_row.values, "date updated"),
+            "Source": _stock_value(stock_row.values, "Issue:Page")
+            or _source_ref(issue_id, stock_row.page),
             "Review status": ReviewStatus.NEEDS_REVIEW.value,
-            "date updated": _stock_value(stock_row.values, "date updated"),
+            "Reviewer note": "",
         }
         rows.append(
             WorkbookDraftRow(
-                tab="Latest Issue",
-                row_kind="latest_issue_stock_recommendation",
+                tab="Aktuell",
+                row_kind="latest_issue_stock_buy_sell_recommendation",
                 source_id=_source_id(
                     "latest-stock",
                     issue_id,
@@ -358,13 +390,192 @@ def _latest_issue_stock_rows(
                 page=stock_row.page,
                 values=tuple(
                     values_by_header.get(header, "")
-                    for header in _headers_for_tab("Latest Issue")
+                    for header in _headers_for_tab("Aktuell")
                 ),
                 review_status=ReviewStatus.NEEDS_REVIEW,
                 source_block=stock_row.source_block,
             )
         )
+    for instrument_type in (
+        InstrumentType.DERIVATIVE,
+        InstrumentType.CRYPTO,
+        InstrumentType.ETF,
+    ):
+        for card in cards:
+            if card.instrument_type != instrument_type:
+                continue
+            table_name = _latest_issue_table_name(card.instrument_type)
+            publisher_action = _publisher_action(card.recommendation_status)
+            if table_name is None or publisher_action is None:
+                continue
+            values_by_header = {
+                "Action": publisher_action,
+                "Issue:Page": _source_ref(card.issue_id, card.page),
+                "Company": card.instrument_name,
+                "Derivative": card.instrument_name,
+                "WKN": card.wkn or "",
+                "Magazine Current Price": card.current_price or "",
+                "Target": card.target or "",
+                "Stop": card.stop or "",
+                "Dividend Yield": card.dividend_yield or "",
+                "KUV 2026e": card.kuv_26e or "",
+                "KGV 2026e": card.kgv_26e or "",
+                "Chance": _rating_cell(card.chance),
+                "Risk": _rating_cell(card.risk),
+                "Comment": "",
+                "Reviewer note": "",
+                "Review status": ReviewStatus.NEEDS_REVIEW.value,
+                "date updated": update_date,
+                "Source": _latest_issue_source_name(card.instrument_type),
+            }
+            if card.instrument_type == InstrumentType.DERIVATIVE:
+                values_by_header.update(
+                    {
+                        "Underlying / Price": card.underlying_price or "",
+                        "Strike / KO": card.base_price or "",
+                        "Leverage": card.omega_hebel or "",
+                        "Runtime": card.runtime or "",
+                        "Chance": _rating_cell(card.chance),
+                        "Risk": _rating_cell(card.risk),
+                        "Comment": "",
+                        "Reviewer note": "",
+                        "Review status": ReviewStatus.NEEDS_REVIEW.value,
+                        "date updated": update_date,
+                    }
+                )
+            rows.append(
+                WorkbookDraftRow(
+                    tab="Aktuell",
+                    row_kind=(
+                        f"latest_issue_{card.instrument_type.value}_buy_sell_recommendation"
+                    ),
+                    source_id=_source_id(
+                        f"latest-{card.instrument_type.value}",
+                        card.issue_id,
+                        card.page,
+                        card.wkn or card.instrument_name,
+                    ),
+                    issue_id=card.issue_id,
+                    page=card.page,
+                    values=tuple(
+                        values_by_header.get(header, "")
+                        for header in (
+                            AKTUELL_DERIVATIVE_HEADERS
+                            if card.instrument_type == InstrumentType.DERIVATIVE
+                            else _headers_for_tab("Aktuell")
+                        )
+                    ),
+                    review_status=ReviewStatus.NEEDS_REVIEW,
+                    source_block="manual_review_pending",
+                )
+            )
+    for derivative_row in derivative_overview_rows:
+        publisher_action = _publisher_action(derivative_row.recommendation)
+        if publisher_action is None:
+            continue
+        values_by_header = {
+            "Action": publisher_action,
+            "Issue:Page": _source_ref(derivative_row.issue_id, derivative_row.page),
+            "Derivative": _join_non_empty(
+                (derivative_row.underlying, derivative_row.direction)
+            ),
+            "WKN": derivative_row.wkn,
+            "Magazine Current Price": derivative_row.current_price,
+            "Target": derivative_row.target,
+            "Stop": derivative_row.stop,
+            "Underlying / Price": derivative_row.underlying,
+            "Strike / KO": derivative_row.strike_cap,
+            "Leverage": derivative_row.omega_hebel,
+            "Runtime": "",
+            "Chance": "",
+            "Risk": "",
+            "Comment": "",
+            "Reviewer note": derivative_row.recommendation,
+            "Review status": ReviewStatus.NEEDS_REVIEW.value,
+            "date updated": update_date,
+        }
+        rows.append(
+            WorkbookDraftRow(
+                tab="Aktuell",
+                row_kind="latest_issue_derivative_review_action",
+                source_id=_source_id(
+                    "latest-derivative-review",
+                    derivative_row.issue_id,
+                    derivative_row.page,
+                    derivative_row.wkn,
+                ),
+                issue_id=derivative_row.issue_id,
+                page=derivative_row.page,
+                values=tuple(
+                    values_by_header.get(header, "")
+                    for header in AKTUELL_DERIVATIVE_HEADERS
+                ),
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="manual_review_pending",
+            )
+        )
     return rows
+
+
+def _latest_issue_stock_action(
+    stock_row: WorkbookDraftRow,
+    *,
+    cards: Sequence[RecommendationCard],
+    recommendation: str,
+) -> str | None:
+    """Return an Aktuell action without promoting inferred follow-up statuses.
+
+    Canonical stock rows use ``hold`` for both an explicitly printed
+    ``Halten`` and a historical follow-up reference. Explicit source-card
+    holds and waits belong in the current-issue reviewer table; inferred
+    follow-up values do not.
+    """
+
+    normalized_recommendation = recommendation.casefold().strip()
+    if normalized_recommendation not in {"hold", "wait"}:
+        return _publisher_action(recommendation)
+
+    stock_wkn = _stock_value(stock_row.values, "WKN")
+    stock_company = _stock_value(stock_row.values, "Company")
+    explicit_source_action = any(
+        card.instrument_type == InstrumentType.STOCK
+        and card.issue_id == stock_row.issue_id
+        and card.page == stock_row.page
+        and card.recommendation_status == normalized_recommendation
+        and (card.wkn == stock_wkn or card.instrument_name == stock_company)
+        for card in cards
+    )
+    if not explicit_source_action:
+        return None
+    return "Hold" if normalized_recommendation == "hold" else "Wait"
+
+
+def _publisher_action(recommendation: str | None) -> str | None:
+    normalized = (recommendation or "").casefold().strip()
+    if normalized in {"new_recommendation", "neu"}:
+        return "Buy"
+    if normalized in {"sold", "verkauft", "verkaufen", "tauschen"}:
+        return "Sell"
+    if normalized in {"hold", "halten"}:
+        return "Hold"
+    return None
+
+
+def _latest_issue_table_name(instrument_type: InstrumentType) -> str | None:
+    return {
+        InstrumentType.STOCK: "Stocks",
+        InstrumentType.DERIVATIVE: "Derivatives",
+        InstrumentType.CRYPTO: "Crypto",
+        InstrumentType.ETF: "ETFs",
+    }.get(instrument_type)
+
+
+def _latest_issue_source_name(instrument_type: InstrumentType) -> str:
+    return {
+        InstrumentType.DERIVATIVE: "Derivative Tips",
+        InstrumentType.CRYPTO: "Crypto recommendation card",
+        InstrumentType.ETF: "ETF recommendation card",
+    }.get(instrument_type, "Recommendation card")
 
 
 def _card_rows(
@@ -418,14 +629,14 @@ def _recommendation_card_row(
         issue_id=card.issue_id,
         page=card.page,
         review_status=ReviewStatus.NEEDS_REVIEW,
-        source_block="manual_review_pending",
+        source_block=_card_source_block(card),
         values=_stock_values(
             {
                 "Company": card.instrument_name,
                 "WKN": card.wkn or "",
                 "Target": _price_currency_only(card.target),
                 "Stop": _price_currency_only(card.stop),
-                "Current price": _price_currency_only(card.current_price),
+                "Current price": _price_currency_only(card.current_price or card.entry_price),
                 "Market Cap": card.market_cap or "",
                 "Dividend Yield": _percent_only(dividend_yield),
                 "Recommendation": recommendation,
@@ -438,7 +649,7 @@ def _recommendation_card_row(
                 "Chance": _rating_cell(card.chance),
                 "Risk": _rating_cell(card.risk),
                 "Insider Activity": "",
-                "Issue:Page": _source_ref(card.issue_id, card.page),
+                "Issue:Page": _card_source_reference(card),
                 "Enrichment status": "not_started",
                 "date updated": stock_update_date,
             }
@@ -448,6 +659,27 @@ def _recommendation_card_row(
 
 def _stock_values(values_by_header: Mapping[str, str]) -> tuple[str, ...]:
     return tuple(values_by_header.get(header, "") for header in _headers_for_tab("Stocks"))
+
+
+def _card_source_block(card: RecommendationCard) -> str:
+    paired_source = next(
+        (note for note in card.extraction_notes if note.startswith("source_pages:")),
+        None,
+    )
+    if paired_source:
+        return f"manual_review_pending; {paired_source}"
+    return "manual_review_pending"
+
+
+def _card_source_reference(card: RecommendationCard) -> str:
+    paired_source = next(
+        (note for note in card.extraction_notes if note.startswith("source_pages:")),
+        None,
+    )
+    if paired_source:
+        pages = paired_source.removeprefix("source_pages:").split(",")
+        return " | ".join(_source_ref(card.issue_id, page) for page in pages if page)
+    return _source_ref(card.issue_id, card.page)
 
 
 def _stock_header_index(header: str) -> int:
@@ -959,6 +1191,8 @@ def _consolidate_stock_rows(rows: Sequence[WorkbookDraftRow]) -> list[WorkbookDr
     order: list[str] = []
     for row in rows:
         key = _stock_identity_key(row.values)
+        if row.source_block and "source_pages:" in row.source_block:
+            key = f"{key}:{row.source_id}"
         if key not in grouped:
             grouped[key] = row
             order.append(key)
@@ -1329,7 +1563,11 @@ def _validate_workbook_rows(rows: Sequence[WorkbookDraftRow]) -> None:
             raise WorkbookExportPlanError(
                 f"workbook export row targets layout-only tab {row.tab!r}"
             )
-        expected_width = len(spec.headers)
+        expected_width = (
+            len(AKTUELL_DERIVATIVE_HEADERS)
+            if row.tab == "Aktuell" and "derivative" in row.row_kind
+            else len(spec.headers)
+        )
         actual_width = len(row.values)
         if actual_width != expected_width:
             raise WorkbookExportPlanError(

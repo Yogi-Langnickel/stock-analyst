@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 from pathlib import Path
+import shutil
+import subprocess
 from typing import Protocol, Sequence
 
 from stock_analyst.intake import assert_pdf_upload, calculate_sha256
@@ -37,6 +39,7 @@ class RawPageText:
     page_number: int
     text: str
     source: str = "embedded"
+    layout_text: str | None = None
 
 
 class RawTextExtractor(Protocol):
@@ -56,6 +59,7 @@ class PageTextExtraction:
     source: str
     reading_order_start: int
     failure_reason: str | None = None
+    layout_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,13 +109,98 @@ class PyMuPdfTextExtractor:
             )
 
 
+class PopplerTextExtractor:
+    """Local Poppler fallback with reading-order text plus table layout.
+
+    ``pdftotext`` provides the regular embedded reading order. A separate
+    layout pass preserves wide recommendation-table rows without replacing
+    that normal text.
+    """
+
+    extractor_name = "poppler_pdftotext_layout"
+
+    def extract_pages(self, pdf_path: Path) -> Sequence[RawPageText]:
+        reading_order_pages = self._run(pdf_path, layout=False)
+        layout_pages = self._run(pdf_path, layout=True)
+        return tuple(
+            RawPageText(
+                page_number=index + 1,
+                text=reading_order_pages[index],
+                source="embedded",
+                layout_text=(layout_pages[index] if index < len(layout_pages) else None),
+            )
+            for index in range(len(reading_order_pages))
+        )
+
+    def _run(self, pdf_path: Path, *, layout: bool) -> list[str]:
+        command = ["pdftotext"]
+        if layout:
+            command.append("-layout")
+        command.extend((str(pdf_path), "-"))
+        try:
+            result = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise PdfTextExtractionError(
+                "local Poppler text extraction failed"
+            ) from error
+
+        pages = result.stdout.split("\f")
+        if pages and not pages[-1].strip():
+            pages.pop()
+        return pages
+
+
+class AugmentedTextExtractor:
+    """Retain a primary extractor's text while adding optional table layouts."""
+
+    extractor_name = "augmented_embedded_and_layout"
+
+    def __init__(
+        self,
+        primary: RawTextExtractor,
+        layout_extractor: PopplerTextExtractor,
+    ) -> None:
+        self._primary = primary
+        self._layout_extractor = layout_extractor
+
+    def extract_pages(self, pdf_path: Path) -> Sequence[RawPageText]:
+        primary_pages = tuple(self._primary.extract_pages(pdf_path))
+        try:
+            layout_pages = tuple(self._layout_extractor.extract_pages(pdf_path))
+        except PdfTextExtractionError:
+            return primary_pages
+        layout_by_page = {
+            page.page_number: page.layout_text or page.text for page in layout_pages
+        }
+        return tuple(
+            RawPageText(
+                page_number=page.page_number,
+                text=page.text,
+                source=page.source,
+                layout_text=layout_by_page.get(page.page_number),
+            )
+            for page in primary_pages
+        )
+
+
 def default_text_extractor() -> RawTextExtractor:
     try:
         import fitz  # type: ignore[import-not-found]  # noqa: F401
     except ModuleNotFoundError:
+        if shutil.which("pdftotext"):
+            return PopplerTextExtractor()
         return DependencyUnavailableTextExtractor()
-
-    return PyMuPdfTextExtractor()
+    primary = PyMuPdfTextExtractor()
+    if shutil.which("pdftotext"):
+        return AugmentedTextExtractor(primary, PopplerTextExtractor())
+    return primary
 
 
 def hash_text(text: str) -> str:
@@ -179,6 +268,7 @@ def extract_pdf_text(
                     if needs_ocr
                     else None
                 ),
+                layout_text=raw_page.layout_text,
             )
         )
 

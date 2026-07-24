@@ -25,82 +25,60 @@ long/short products, certificates, and derivative overview rows all use
 
 ## Active Tabs
 
-1. `Navigation Dashboard`
-   Low-clutter cockpit for the active workbook tabs. It groups the current tabs
-   into core instruments, derivatives, income, publisher portfolio, source
-   detail, and review control so the workbook has a stable entrypoint without
-   duplicating detailed financial rows.
+1. `Search`
+   Visible workbook entrypoint. Enter a company name or WKN in the merged
+   `C1:E1` input field. No Search rows are frozen. Matching
+   stock and derivative references are shown in vertically stacked sections
+   using the full reviewer values and action colors from the issue tabs.
+   `Source` is the first visible column for both sections (using the stock
+   `Source` or derivative `Issue:Page` value). Matches are ordered by numeric
+   issue year/week descending and source page ascending. The generated index
+   reads only `DA_YYYY_NN` issue tabs; `Aktuell` is deliberately excluded so the
+   current issue is not returned twice.
 
-2. `Latest Issue`
+2. `Aktuell` (Latest)
    Quick-review tab generated from the current workbook-export plan. It shows
-   selected source-linked stock recommendation fields for the latest imported
-   issue only. It is a triage view; canonical merged equity state remains in
-   `Stocks`. Comments and source-review wording belong here, not on the
-   canonical stock row.
+   only source-linked explicit publisher Buy, Sell, Hold, and Wait actions from
+   the latest imported issue. Separate Stocks and Derivatives tables use their own
+   headers; stock rows retain dividend yield, KUV, and KGV when printed.
+   Crypto and ETF rows appear only when the issue contains an actionable
+   recommendation. It is a triage view and is not part of the search index.
 
-3. `Stocks`
-   Canonical equity row per WKN/normalized company. Stock recommendation cards,
-   `Aktien im Quick-Check`, and `Chart-Check` rows all surface here, with
-   duplicate mentions consolidated and non-empty fields merged. The stock table
-   header starts on row 1 with `Company`, `WKN`, `Target`, `Stop`,
-   `Current price`, `Market Cap`, `Dividend Yield`, `Recommendation`,
-   `Held since`, `Performance since Recommendation`, `Next Report`,
-   `Report type`, `P/S Ratio 26e`, `P/E Ratio 26e`, `Chance`, `Risk`,
-   `Insider Activity`, `Issue:Page`, `Enrichment status`, and `date updated`.
-   `Next Report` is date-only; report labels such as quarterly or year-end
-   results live in `Report type`. `Current price` preserves the printed
-   `Akt. Kurs` value as amount and currency until reviewed enrichment refreshes
-   it. `Issue:Page` uses values such as `2025-W21:49`; merged source refs use
-   ` | ` so issue/page pairings remain intact.
+3. `DA_YYYY_NN` issue reviewer tabs
+   Every scanned issue receives its own reviewer tab, named from the source
+   filename convention without the `.pdf` extension (for example,
+   `DA_2026_25`). The layout and review status are the same as `Aktuell`.
+   `Aktuell` is refreshed only when the imported issue is the newest available
+   issue tab; importing an older issue leaves the current latest view intact.
+   Issue tabs are physically ordered newest first.
 
-4. `Derivative Tips`
-   Unified detailed options/derivatives table. `Issue:Page` is the trailing
-   provenance column. New derivative recommendations use printed magazine
-   values in `Magazine Entry Price` and `Magazine Current Price`; enrichment
-   must not overwrite those source fields.
-
-5. `Dividend Focus`
-   Dedicated dividend section for table-based dividend data, including dividend
-   yield, ex/cum date, next pay date, and payouts per year. `Issue:Page` is the
-   trailing provenance column.
-
-6. `AKTIONAER Depot`
-   Dedicated magazine model-depot snapshot. One row per issue/position. This
-   is publisher portfolio context, not direct app advice. Performance cells are
-   conditionally formatted green for positive values and red for negative
-   values.
-
-7. `Depot Transactions`
-   Dedicated ledger for `Durchgefuehrte Transaktionen`. One row per issue and
-   transaction, including explicit no-transaction weeks. Performance cells use
-   the same positive/negative conditional formatting as the depot tab.
-
-8. `Insider Activity`
-   Dedicated review destination for future SEC EDGAR Form 4 insider activity
-   rows. Stock rows can link to a reviewed buy/sell indicator from this tab.
-
-9. `Extraction Audit`
-   Internal audit tab for skipped pages, low-priority back matter, OCR-needed
-   pages, parser warnings, and row-level review notes.
+The previous hidden generated tabs (`Navigation Dashboard`, `Stocks`,
+`Derivative Tips`, `Dividend Focus`, `AKTIONAER Depot`, `Extraction Audit`,
+`Depot Transactions`, and `Insider Activity`) are retired from the live Google
+Sheet and deleted by bootstrap. Their local workbook-plan schemas remain
+available for extraction and validation, but Google export intentionally omits
+those rows instead of recreating duplicate live tables.
 
 ## Tab Layout Matrix
 
-The bootstrap metadata now exposes a concrete layout plan for review. It does
-not yet apply formatting such as widths, filters, colors, or protected ranges to
-the live Sheet; those should be added only after this layout is accepted.
+The bootstrap metadata exposes a concrete layout plan for review. Search refresh
+and workbook export also reconcile managed sheet protections after all generated
+values and formatting have been written:
+
+- `Search` is protected except for the merged `C1:E1` input field.
+- `Aktuell` and every existing `DA_YYYY_NN` issue tab are fully protected.
+- New issue tabs are included automatically during the export that creates them.
+- The configured service account remains an allowed protection editor so later
+  refreshes can update generated values. Spreadsheet owners retain owner access.
+- Only protections carrying the Stock Analyst managed description are replaced;
+  unrelated protections created manually are preserved.
 
 <!-- markdownlint-disable MD013 -->
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `Navigation Dashboard` | `layout_only` | 5 rows, 2 cols | `A5` | Workbook title, static navigation rows, and row-count formulas | Entry dashboard based on the active tabs. Keep rows concise, source-neutral, and review-oriented; data clears preserve this layout. Row counts are spreadsheet formulas over active tab data ranges and do not trigger enrichment. |
-| `Latest Issue` | `parser_backed` | 1 row, 3 cols | `A1` | Header row only | Current import triage rows copied from current issue stock-source rows. This tab is replaced for each workbook export, keeps comments/review wording, and must not become the canonical stock record. |
-| `Stocks` | `parser_backed` | 1 row, 2 cols | `A1` | Header row only | Canonical stock rows consolidated by WKN/name across recommendation cards, Quick Check, and Chart Check. `Current price`, `Target`, and `Stop` contain only amount and currency; `Dividend Yield` accepts only unsigned yield percentages; `P/S Ratio 26e` and `P/E Ratio 26e` accept only plain ratio values; `Chance` and `Risk` are split rating fields; `Next Report` is date-only; `Report type` stores the event label; `Recommendation` stores action/status such as `hold`, `new_recommendation`, `no_buy`, or `verkauft`; `Held since` stores the issue only for holds; `Issue:Page` preserves paired provenance; `Insider Activity` links to the dedicated insider transaction tab. |
-| `Derivative Tips` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | Unified detailed options/derivatives table. Printed source prices use `Magazine Entry Price` and `Magazine Current Price`; source ID stays in row metadata; visible provenance is trailing `Issue:Page`. |
-| `AKTIONAER Depot` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/position for the publisher model-depot snapshot; printed source prices use `Magazine Buy Price` and `Magazine Current Price`; performance cells are green for positive values and red for negative values. |
-| `Depot Transactions` | `parser_backed` | 1 row, 2 cols | `A1` | Header row | One row per issue/transaction, including explicit no-transaction weeks; printed source transaction prices use `Magazine Transaction Price`; performance cells use positive/negative conditional formatting. |
-| `Dividend Focus` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | Multi-period dividend context including `Magazine Price`, ex/cum date, pay date, and payout frequency; concise decision fields may surface in `Stocks`. |
-| `Insider Activity` | `planned` | 1 row, 3 cols | `A1` | Header row | Planned SEC Form 4 source rows with direct filing links; stock-row indicators should summarize only reviewed rows from this tab. |
-| `Extraction Audit` | `parser_backed` | 1 row, 3 cols | `A1` | Header row | First stop for parser warnings and planned-tab surfaces before row emitters exist. |
+| `Search` | `layout_only` | 0 rows, 0 cols | `A1` | Search label in `A1`, merged user input in `C1:E1`, scope note in `A2`, results from `A4` | Searches company/WKN across issue tabs only. Results preserve the full 16-column stock and 17-column derivative values, with `Source` first in both sections. Sorting uses numeric issue year/week descending and source page ascending. Generated index columns `S:AM` are hidden; `Aktuell` is excluded. |
+| `Aktuell` | `parser_backed` | 1 row, 3 cols | `A1` | Stock headers, then two intentional spacer rows and a separate Derivatives table | Current issue explicit publisher Buy, Sell, Hold, and Wait actions only. The derivative table starts `WKN`, `Derivative`, `Action`; its `Issue:Page` provenance is kept near the review fields at the tail. Stock rows retain source dividend yield, KUV, and KGV; derivative rows use underlying, strike/KO, leverage, and runtime columns. |
+| `DA_YYYY_NN` | `parser_backed` | 1 row, 3 cols | `A1` | Same compact stacked tables as `Aktuell` | One source-linked review tab per scanned issue. Uses the PDF stem convention, such as `DA_2026_25`; preserved for archive review while `Aktuell` remains the latest issue. |
 <!-- markdownlint-enable MD013 -->
 
 ## Future Asset-Class Enrichment
@@ -153,7 +131,7 @@ latest magazine recommendation, `Issue:Page`, price, target, stop, split
 `Chance` and `Risk` ratings, dividend yield/trend, quick-check signal, chart-check fields,
 performance since recommendation, 52-week range, one-year/five-year
 performance, next report date, enrichment status, and review status. Keep
-current-issue comments on `Latest Issue`.
+current-issue comments on `Aktuell`.
 
 ## Keep In Dedicated Tabs
 
@@ -259,13 +237,18 @@ Google Sheet only when the workbook plan carries `workbook-approval-audit`
 provenance from a private reviewer CSV with exact row-hash matches. It fails
 closed instead of trusting caller-controlled `approved` flags. It writes draft
 rows only when `--allow-draft-rows` is supplied for the private reviewer workbook. It
-bootstraps headers first, replaces existing rows for the same issue in affected
-tabs by default, preserves rows from other issues, and makes no enrichment
-provider calls. The write result labels this boundary explicitly: default
+bootstraps `Search` and `Aktuell`, writes the issue-specific reviewer tab,
+refreshes the issue-only search index, and makes no enrichment provider calls.
+Rows belonging to retired canonical live tabs are reported as omitted rather
+than recreating those tabs. The write result labels this boundary explicitly: default
 writes return `exportMode=approved_family_export`, `familyVisibleSafe=true`,
 and `privateDraftReviewOnly=false`; draft reviewer writes return
 `exportMode=private_draft_review_export`, `familyVisibleSafe=false`, and
 `privateDraftReviewOnly=true`.
+
+Use `scripts/stock-analyst google-sheets-refresh-search --env-file .env` to
+apply the clean live-tab structure and rebuild `Search` from existing issue
+tabs without re-exporting magazine rows.
 
 Approved-family export must consume a reviewed workbook plan created by
 `workbook-approval-audit`, not the raw parser draft. The approval workflow is

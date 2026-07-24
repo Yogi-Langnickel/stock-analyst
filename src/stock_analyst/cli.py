@@ -19,6 +19,7 @@ from stock_analyst.google_access import (
     clear_google_sheet_data_rows,
     load_google_access_config,
     redact_google_identifier,
+    refresh_google_sheet_search,
     run_google_access_smoke,
     write_refinement_plan_to_google_sheet,
     write_workbook_plan_to_google_sheet,
@@ -561,6 +562,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-headers",
         action="store_true",
         help="Clear data rows without rewriting header rows.",
+    )
+
+    google_sheets_refresh_search = subcommands.add_parser(
+        "google-sheets-refresh-search",
+        help="Prune retired generated tabs and rebuild issue-only company/WKN search.",
+    )
+    google_sheets_refresh_search.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Optional local env file with GOOGLE_* config. Do not commit it.",
     )
 
     google_sheets_export_plan = subcommands.add_parser(
@@ -1169,6 +1181,14 @@ def run_google_sheets_clear_data_command(
     return clear_google_sheet_data_rows(config, write_headers=write_headers)
 
 
+def run_google_sheets_refresh_search_command(
+    *,
+    env_file: Path | None = None,
+) -> dict[str, object]:
+    config = load_google_access_config(env_file=env_file)
+    return refresh_google_sheet_search(config)
+
+
 def run_google_sheets_export_plan_command(
     workbook_plan_file: Path,
     *,
@@ -1467,6 +1487,10 @@ def main(argv: list[str] | None = None) -> int:
             result = run_google_sheets_clear_data_command(
                 env_file=args.env_file,
                 write_headers=not args.skip_headers,
+            )
+        elif args.command == "google-sheets-refresh-search":
+            result = run_google_sheets_refresh_search_command(
+                env_file=args.env_file,
             )
         elif args.command == "google-sheets-export-plan":
             result = run_google_sheets_export_plan_command(

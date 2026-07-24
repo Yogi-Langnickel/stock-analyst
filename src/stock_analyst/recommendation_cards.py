@@ -18,6 +18,7 @@ from stock_analyst.schemas import InstrumentType, ReviewStatus
 
 LABEL_ALIASES = {
     "Akt. Kurs": "current_price",
+    "IPO-Preis": "current_price",
     "Empfehlungskurs": "entry_price",
     "Performance": "performance_since_recommendation",
     "WKN": "wkn",
@@ -68,7 +69,56 @@ WKN_RE = re.compile(r"^[A-Z0-9]{6}$")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 YEAR_RE = re.compile(r"^20\d{2}e?$")
 DECIMAL_VALUE_RE = re.compile(r"^\d+(?:,\d+)?\*?$")
-MONEY_VALUE_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s+(?:EUR|USD)$")
+EUROPEAN_AMOUNT_RE = r"[+-]?(?:\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d+)?"
+MONEY_VALUE_RE = re.compile(rf"^{EUROPEAN_AMOUNT_RE}\s+(?:EUR|USD)$")
+LAYOUT_TABLE_HEADER_RE = re.compile(
+    r"\bUnternehmen\b.*\bWKN\b.*\bChance\b.*\bRisiko\b",
+    flags=re.IGNORECASE,
+)
+LAYOUT_TABLE_ROW_RE = re.compile(
+    r"^\s*"
+    r"(?P<name>.+?)\s{2,}"
+    r"(?P<wkn>[A-Z0-9]{6})\s+"
+    rf"(?P<current_price>{EUROPEAN_AMOUNT_RE}\s*(?:€|\$|EUR|USD))\s+"
+    r"(?P<market_cap>\d+(?:,\d+)?)\s+"
+    r"(?P<dividend_yield>\d+(?:,\d+)?|–)\s+"
+    r"(?P<kuv>\d+(?:,\d+)?|–)\s+"
+    r"(?P<kgv>\d+(?:,\d+)?|–)\s+"
+    r"(?P<recommendation>.*?)\s+"
+    rf"(?P<target>{EUROPEAN_AMOUNT_RE}\s*(?:€|\$|EUR|USD))\s+"
+    rf"(?P<stop>{EUROPEAN_AMOUNT_RE}\s*(?:€|\$|EUR|USD))\s+"
+    r"(?P<chance>[•○]{5})\s+"
+    r"(?P<risk>[•○]{5})\s*$"
+)
+DAX_ACTION_TABLE_HEADER_RE = re.compile(
+    r"\bEinschätzung\b.*\bKommentar\b.*\bUnternehmen\b",
+    flags=re.IGNORECASE,
+)
+DAX_ACTION_ROW_RE = re.compile(
+    r"^\s*(?P<action>Kaufen|Verkaufen|Halten|Abwarten)\s{2,}"
+    r"(?P<comment>.*?)\s{2,}(?P<name>[^\s].*?)\s*$",
+    flags=re.IGNORECASE,
+)
+DAX_ACTION_ONLY_RE = re.compile(
+    r"^\s*(Kaufen|Verkaufen|Halten|Abwarten)\s*$",
+    flags=re.IGNORECASE,
+)
+DAX_VALUE_TABLE_HEADER_RE = re.compile(
+    r"\bUnternehmen\b.*\bWKN\b.*\bAktueller\b.*\bZiel\b.*\bStopp\b",
+    flags=re.IGNORECASE,
+)
+DAX_VALUE_ROW_RE = re.compile(
+    r"^\s*(?P<name>.+?)\s+(?P<wkn>[A-Z0-9]{6})\s+"
+    rf"(?P<current>{EUROPEAN_AMOUNT_RE}\s*(?:EUR|USD))\s+.*?\s+"
+    rf"(?P<target>{EUROPEAN_AMOUNT_RE}\s*(?:EUR|USD)|–)\s+"
+    rf"(?P<stop>{EUROPEAN_AMOUNT_RE}\s*(?:EUR|USD)|–)\s*$"
+)
+DAX_VALUE_FIELDS_RE = re.compile(
+    r"^\s*(?P<wkn>[A-Z0-9]{6})\s+"
+    rf"(?P<current>{EUROPEAN_AMOUNT_RE}\s*(?:EUR|USD))\s+.*?\s+"
+    rf"(?P<target>{EUROPEAN_AMOUNT_RE}\s*(?:EUR|USD)|–)\s+"
+    rf"(?P<stop>{EUROPEAN_AMOUNT_RE}\s*(?:EUR|USD)|–)\s*$"
+)
 
 
 @dataclass(frozen=True)
@@ -205,8 +255,15 @@ def extract_recommendation_cards_from_pdf(
                 issue_id=resolved_issue_id,
                 page_number=page.page_number,
                 visual_chance_risk_pairs=visual_pairs_by_page.get(page.page_number, ()),
+                layout_lines=(page.layout_text or "").splitlines(),
             )
         )
+    cards.extend(
+        extract_dax_action_table_cards_from_pages(
+            tuple((page.page_number, (page.layout_text or "").splitlines()) for page in pages),
+            issue_id=resolved_issue_id,
+        )
+    )
 
     return RecommendationCardExtraction(
         issue_id=resolved_issue_id,
@@ -223,10 +280,15 @@ def extract_recommendation_cards_from_lines(
     issue_id: str,
     page_number: int,
     visual_chance_risk_pairs: Sequence[_VisualChanceRiskPair] = (),
+    layout_lines: Sequence[str] = (),
 ) -> tuple[RecommendationCard, ...]:
     """Extract card rows from page lines produced by local PDF text extraction."""
 
     normalized_lines = [_clean_line(line) for line in lines if _clean_line(line)]
+    raw_layout_lines = layout_lines or lines
+    normalized_layout_lines = [
+        _clean_layout_line(line) for line in raw_layout_lines if _clean_layout_line(line)
+    ]
     if _looks_like_external_newsletter_ad(normalized_lines):
         return ()
     cards: list[RecommendationCard] = []
@@ -256,10 +318,58 @@ def extract_recommendation_cards_from_lines(
         issue_id=issue_id,
         page_number=page_number,
     )
+    layout_table_cards = _extract_layout_table_cards(
+        normalized_layout_lines,
+        issue_id=issue_id,
+        page_number=page_number,
+    )
     existing_wkns = {card.wkn for card in cards if card.wkn}
     cards.extend(card for card in table_cards if card.wkn not in existing_wkns)
-
+    existing_wkns.update(card.wkn for card in cards if card.wkn)
+    cards.extend(card for card in layout_table_cards if card.wkn not in existing_wkns)
     return _apply_visual_chance_risk_pairs(tuple(cards), visual_chance_risk_pairs)
+
+
+def extract_dax_action_table_cards_from_pages(
+    pages: Sequence[tuple[int, Sequence[str]]],
+    *,
+    issue_id: str,
+) -> tuple[RecommendationCard, ...]:
+    """Join paired DAX value/action spreads without inferring absent fields."""
+
+    layouts = {
+        page: [_clean_layout_line(line) for line in lines if _clean_layout_line(line)]
+        for page, lines in pages
+    }
+    cards: list[RecommendationCard] = []
+    for value_page, action_page in ((26, 27), (28, 29)):
+        value_rows = _extract_dax_value_rows(layouts.get(value_page, ()))
+        action_rows = _extract_dax_action_rows(layouts.get(action_page, ()))
+        if len(value_rows) != len(action_rows):
+            continue
+        for value, action in zip(value_rows, action_rows):
+            if _normalize_dax_name(value["name"]) != _normalize_dax_name(action["name"]):
+                continue
+            cards.append(
+                RecommendationCard(
+                    issue_id=issue_id,
+                    page=action_page,
+                    instrument_name=value["name"],
+                    instrument_type=InstrumentType.STOCK,
+                    wkn=value["wkn"],
+                    current_price=value["current"],
+                    target=value["target"],
+                    stop=value["stop"],
+                    chance=None,
+                    risk=None,
+                    recommendation_status=action["status"],
+                    extraction_notes=(
+                        "dax_paired_spread_extraction",
+                        f"source_pages:{value_page},{action_page}",
+                    ),
+                )
+            )
+    return tuple(cards)
 
 
 def _extract_duel_table_cards(
@@ -302,8 +412,10 @@ def _extract_duel_table_cards(
             index += 1
 
         recommendation_status: str | None = None
-        if index < len(lines) and lines[index] == "Neuempfehlung":
+        inline_prices: tuple[str, ...] = ()
+        if index < len(lines) and lines[index].startswith("Neuempfehlung"):
             recommendation_status = "new_recommendation"
+            inline_prices = _money_values_in_text(lines[index])
             index += 1
         elif index < len(lines) and lines[index].lower() == "kein kauf":
             recommendation_status = "no_buy"
@@ -311,10 +423,21 @@ def _extract_duel_table_cards(
 
         target: str | None = None
         stop: str | None = None
-        if index + 1 < len(lines) and MONEY_VALUE_RE.match(lines[index]):
-            target = lines[index]
-            stop = lines[index + 1] if MONEY_VALUE_RE.match(lines[index + 1]) else None
-            index += 2 if stop is not None else 1
+        if inline_prices:
+            target = inline_prices[0]
+            stop = inline_prices[1] if len(inline_prices) > 1 else None
+        if stop is None and index < len(lines):
+            prices = _money_values_in_text(lines[index])
+            if prices:
+                if target is None:
+                    target = prices[0]
+                    prices = prices[1:]
+                if prices:
+                    stop = prices[0]
+                index += 1
+        if stop is None and index < len(lines) and MONEY_VALUE_RE.match(lines[index]):
+            stop = lines[index]
+            index += 1
 
         if index + 1 >= len(lines) or not _is_dot_rating(lines[index]):
             continue
@@ -345,6 +468,173 @@ def _extract_duel_table_cards(
         )
 
     return tuple(cards)
+
+
+def _extract_layout_table_cards(
+    lines: Sequence[str],
+    *,
+    issue_id: str,
+    page_number: int,
+) -> tuple[RecommendationCard, ...]:
+    """Extract recommendation rows when a PDF reader preserves table columns.
+
+    Poppler's layout mode keeps each recommendation as one wide line rather
+    than the label/value sequence emitted by PyMuPDF.  This parser is kept
+    separate from ``_extract_duel_table_cards`` so that the normal reading
+    order remains strict while known table layouts are handled explicitly.
+    """
+
+    if not any(LAYOUT_TABLE_HEADER_RE.search(line) for line in lines):
+        return ()
+
+    cards: list[RecommendationCard] = []
+    for line in lines:
+        match = LAYOUT_TABLE_ROW_RE.match(line)
+        if match is None:
+            continue
+        fields = match.groupdict()
+        recommendation_text = fields["recommendation"].casefold()
+        if "neuempfehlung" in recommendation_text:
+            recommendation_status = "new_recommendation"
+        elif "kein kauf" in recommendation_text:
+            recommendation_status = "no_buy"
+        else:
+            recommendation_status = "follow_up"
+
+        performance_match = re.search(
+            r"[+-]?\d+(?:,\d+)?\s*%", fields["recommendation"]
+        )
+        cards.append(
+            RecommendationCard(
+                issue_id=issue_id,
+                page=page_number,
+                instrument_name=fields["name"].strip(),
+                instrument_type=InstrumentType.STOCK,
+                wkn=fields["wkn"],
+                current_price=_normalize_currency(fields["current_price"]),
+                target=_normalize_currency(fields["target"]),
+                stop=_normalize_currency(fields["stop"]),
+                chance=_rating_from_dots(fields["chance"]),
+                risk=_rating_from_dots(fields["risk"]),
+                recommendation_status=recommendation_status,
+                market_cap=_market_cap_from_billions_value(fields["market_cap"]),
+                performance_since_recommendation=(
+                    performance_match.group(0) if performance_match else None
+                ),
+                dividend_yield=_percentage_from_table_value(fields["dividend_yield"]),
+                kuv_26e=_dash_to_empty(fields["kuv"]),
+                kgv_26e=_dash_to_empty(fields["kgv"]),
+                extraction_notes=("layout_table_extraction",),
+            )
+        )
+    return tuple(cards)
+
+
+def _extract_dax_action_rows(lines: Sequence[str]) -> tuple[dict[str, str], ...]:
+    if not any(DAX_ACTION_TABLE_HEADER_RE.search(line) for line in lines):
+        return ()
+
+    rows: list[dict[str, str]] = []
+    for index, line in enumerate(lines):
+        match = DAX_ACTION_ROW_RE.match(line)
+        if match is not None:
+            action = match.group("action")
+            name = match.group("name").strip()
+        else:
+            action_only = DAX_ACTION_ONLY_RE.match(line)
+            if action_only is None:
+                continue
+            action = action_only.group(1)
+            name = _dax_wrapped_company_name(lines, index)
+            if name is None:
+                continue
+
+        recommendation_status = {
+            "kaufen": "new_recommendation",
+            "verkaufen": "sold",
+            "halten": "hold",
+            "abwarten": "wait",
+        }[action.casefold()]
+        rows.append({"name": name, "status": recommendation_status})
+    return tuple(rows)
+
+
+def _extract_dax_value_rows(lines: Sequence[str]) -> tuple[dict[str, str], ...]:
+    if not any(DAX_VALUE_TABLE_HEADER_RE.search(line) for line in lines):
+        return ()
+    rows: list[dict[str, str]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = DAX_VALUE_ROW_RE.match(line)
+        name: str | None = None
+        consumed = 1
+        if match is not None:
+            name = match.group("name").strip()
+        elif index + 1 < len(lines):
+            wrapped_fields = DAX_VALUE_FIELDS_RE.match(lines[index + 1])
+            if wrapped_fields is not None and re.fullmatch(r"[A-Z][A-Za-z0-9 .&-]+", line.strip()):
+                match = wrapped_fields
+                name = line.strip()
+                consumed = 2
+                if (
+                    index + 2 < len(lines)
+                    and re.fullmatch(r"[A-Z][A-Za-z0-9 .&-]+", lines[index + 2].strip())
+                ):
+                    name = f"{name} {lines[index + 2].strip()}"
+                    consumed = 3
+        if match is None:
+            index += 1
+            continue
+        values = match.groupdict()
+        rows.append(
+            {
+                "name": name or "",
+                "wkn": values["wkn"],
+                "current": _normalize_currency(values["current"]),
+                "target": "" if values["target"] == "–" else _normalize_currency(values["target"]),
+                "stop": "" if values["stop"] == "–" else _normalize_currency(values["stop"]),
+            }
+        )
+        index += consumed
+    return tuple(rows)
+
+
+def _normalize_dax_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _dax_wrapped_company_name(lines: Sequence[str], start_index: int) -> str | None:
+    """Recover a company name whose right-most table cell wrapped below action."""
+
+    parts: list[str] = []
+    candidate_lines = list(lines[max(0, start_index - 1) : start_index]) + list(
+        lines[start_index + 1 : start_index + 6]
+    )
+    for line in candidate_lines:
+        if DAX_ACTION_ONLY_RE.match(line) or DAX_ACTION_ROW_RE.match(line):
+            break
+        columns = re.split(r"\s{5,}", line.strip())
+        candidate = columns[-1].strip() if columns else ""
+        if candidate and re.fullmatch(r"[A-Z][A-Za-z0-9 .&-]+", candidate):
+            parts.append(candidate)
+    if not parts:
+        return None
+    return " ".join(parts)
+
+
+def _money_values_in_text(value: str) -> tuple[str, ...]:
+    return tuple(
+        match.group(0).strip()
+        for match in re.finditer(
+            rf"{EUROPEAN_AMOUNT_RE}\s*(?:EUR|USD)",
+            value,
+        )
+    )
+
+
+def _has_page_recommendation_signal(lines: Sequence[str], signal: str) -> bool:
+    return any(signal in line.casefold() for line in lines)
 
 
 def _apply_visual_chance_risk_pairs(
@@ -407,6 +697,14 @@ def _parse_labelled_card(
     recommendation_status = "new_recommendation" if "new_recommendation" in fields else None
     if "no_buy" in fields:
         recommendation_status = "no_buy"
+    if recommendation_status is None and "sold" in fields:
+        recommendation_status = "sold"
+    if recommendation_status is None and "hold" in fields:
+        recommendation_status = "hold"
+    if recommendation_status is None and _has_page_recommendation_signal(lines, "top-tipp"):
+        recommendation_status = "new_recommendation"
+    if recommendation_status is None and _has_page_recommendation_signal(lines, "verkaufssignal"):
+        recommendation_status = "sold"
     if "recommended_issue" in fields or "performance_since_recommendation" in fields:
         recommendation_status = recommendation_status or "follow_up"
     if instrument_type == InstrumentType.DERIVATIVE:
@@ -455,6 +753,12 @@ def _collect_fields(lines: Sequence[str], start_index: int) -> tuple[dict[str, s
             "wkn" in fields or "current_price" in fields
         ):
             break
+        if (
+            _looks_like_derivative(line)
+            and _line_at(lines, index + 1) == "WKN"
+            and ("wkn" in fields or "current_price" in fields)
+        ):
+            break
         if any(line.startswith(marker) for marker in CARD_END_MARKERS):
             break
 
@@ -482,8 +786,24 @@ def _collect_fields(lines: Sequence[str], start_index: int) -> tuple[dict[str, s
                 index = next_index
                 continue
 
-            value, next_index = _value_after_label(lines, index + consumed, key)
-            if value is not None:
+            value_index = index + consumed
+            if (
+                key == "target"
+                and value_index + 1 < len(lines)
+                and re.search(r"\bStopp\b", lines[value_index], flags=re.IGNORECASE)
+            ):
+                fields["target"] = re.sub(
+                    r"\s*\bStopp\b\s*$", "", lines[value_index], flags=re.IGNORECASE
+                ).strip()
+                fields["stop"] = lines[value_index + 1]
+                index = value_index + 2
+                continue
+
+            value, next_index = _value_after_label(lines, value_index, key)
+            # A card can expose several exchange-specific WKN labels.  Preserve
+            # the first listed identifier, which is the card's primary WKN,
+            # rather than silently replacing it with a later market listing.
+            if value is not None and (key != "wkn" or key not in fields):
                 fields[key] = value
             index = next_index
             continue
@@ -498,6 +818,16 @@ def _collect_fields(lines: Sequence[str], start_index: int) -> tuple[dict[str, s
 
         if combined.lower() == "kein kauf":
             fields["no_buy"] = "Kein Kauf"
+            index += consumed
+            continue
+
+        if combined.casefold() in {"verkaufen", "sell"}:
+            fields["sold"] = "Verkaufen"
+            index += consumed
+            continue
+
+        if combined.casefold() in {"halten", "hold"}:
+            fields["hold"] = "Halten"
             index += consumed
             continue
 
@@ -523,9 +853,15 @@ def _combined_label(lines: Sequence[str], index: int) -> tuple[str, int]:
             return "Empfohlen in Ausgabe", 3
     if line in {"Omega / Hebel", "Omega"}:
         return line, 1
-    if line == "KUV" and index + 1 < len(lines) and lines[index + 1] == "26e":
+    if re.fullmatch(r"WKN\s*\([^)]+\)", line):
+        return "WKN", 1
+    if line == "KUV" and index + 1 < len(lines) and re.fullmatch(
+        r"(?:20)?\d{2}e", lines[index + 1]
+    ):
         return "KUV 26e", 2
-    if line == "KGV" and index + 1 < len(lines) and lines[index + 1] == "26e":
+    if line == "KGV" and index + 1 < len(lines) and re.fullmatch(
+        r"(?:20)?\d{2}e", lines[index + 1]
+    ):
         return "KGV 26e", 2
     if line == "Nächster" and index + 1 < len(lines) and lines[index + 1] == "Termin":
         return "Nächster Termin", 2
@@ -773,8 +1109,10 @@ def _looks_like_derivative(instrument_name: str) -> bool:
 
 
 def _looks_like_external_newsletter_ad(lines: Sequence[str]) -> bool:
-    joined = " ".join(lines)
-    return "www.hebeltrader.de" in joined or "HEBELTRADER-Anlagegrundsätze" in joined
+    if not lines:
+        return False
+    first_line = lines[0].casefold()
+    return "www.hebeltrader.de" in first_line or "hebeltrader-anlagegrundsätze" in first_line
 
 
 def _instrument_type_for_card_start(raw_type: str) -> InstrumentType | None:
@@ -795,6 +1133,20 @@ def _clean_line(line: str) -> str:
     cleaned = cleaned.replace("€", "EUR").replace("$", "USD")
     cleaned = " ".join(cleaned.split())
     return cleaned
+
+
+def _clean_layout_line(line: str) -> str:
+    """Normalize PDF glyphs while retaining column spacing for table rows."""
+
+    cleaned = line.replace("\u2009", " ").replace("\u202f", " ").replace("\u2003", " ")
+    cleaned = cleaned.replace("\ufeff", "").replace("\b", "")
+    cleaned = EURO_SUFFIX_RE.sub(" EUR", cleaned)
+    cleaned = USD_SUFFIX_RE.sub(" USD", cleaned)
+    return cleaned.replace("€", "EUR").replace("$", "USD").rstrip()
+
+
+def _normalize_currency(value: str) -> str:
+    return _clean_line(value)
 
 
 def _is_dot_rating(value: str) -> bool:
