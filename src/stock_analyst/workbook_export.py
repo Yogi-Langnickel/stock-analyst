@@ -45,9 +45,10 @@ from stock_analyst.quickcheck import (
     extract_quickcheck_rows_from_page_lines,
 )
 from stock_analyst.recommendation_cards import (
+    PairedActionTableException,
     RecommendationCard,
     RecommendationCardExtraction,
-    extract_dax_action_table_cards_from_pages,
+    extract_dax_action_table_result_from_pages,
     extract_recommendation_cards_from_pdf,
     extract_recommendation_cards_from_lines,
 )
@@ -183,18 +184,18 @@ def build_workbook_export_plan_from_pdf(
         for page in content_pages
         if page.layout_text
     }
-    cards: list[RecommendationCard] = (
-        list(
-            extract_recommendation_cards_from_pdf(
-                pdf_path,
-                issue_id=resolved_issue_id,
-                min_embedded_chars=min_embedded_chars,
-                processing_policy=processing_policy,
-            ).cards
+    paired_action_table_exceptions: list[PairedActionTableException] = []
+    if extractor is None:
+        card_extraction = extract_recommendation_cards_from_pdf(
+            pdf_path,
+            issue_id=resolved_issue_id,
+            min_embedded_chars=min_embedded_chars,
+            processing_policy=processing_policy,
         )
-        if extractor is None
-        else []
-    )
+        cards = list(card_extraction.cards)
+        paired_action_table_exceptions.extend(card_extraction.candidate_exceptions)
+    else:
+        cards = []
     sections: list[MagazineSectionCandidate] = []
     for page_number, lines in pages:
         if extractor is not None:
@@ -214,12 +215,15 @@ def build_workbook_export_plan_from_pdf(
             )
         )
     if extractor is not None:
-        cards.extend(
-            extract_dax_action_table_cards_from_pages(
-                tuple((page_number, layout_lines_by_page.get(page_number, ())) for page_number, _ in pages),
-                issue_id=resolved_issue_id,
-            )
+        paired_tables = extract_dax_action_table_result_from_pages(
+            tuple(
+                (page_number, layout_lines_by_page.get(page_number, ()))
+                for page_number, _ in pages
+            ),
+            issue_id=resolved_issue_id,
         )
+        cards.extend(paired_tables.cards)
+        paired_action_table_exceptions.extend(paired_tables.exceptions)
     dividends = extract_dividend_strategy_rows_from_page_lines(
         pages,
         issue_id=resolved_issue_id,
@@ -251,6 +255,7 @@ def build_workbook_export_plan_from_pdf(
         chart_check_rows=chart_check_rows,
         quickcheck_rows=quickcheck_rows,
         section_inventory=tuple(sections),
+        paired_action_table_exceptions=tuple(paired_action_table_exceptions),
         stock_update_date=stock_update_date,
     )
 
@@ -267,6 +272,7 @@ def build_workbook_export_plan(
     chart_check_rows: Sequence[ChartCheckRow] = (),
     quickcheck_rows: Sequence[QuickcheckRow] = (),
     section_inventory: MagazineSectionInventory | Sequence[MagazineSectionCandidate] = (),
+    paired_action_table_exceptions: Sequence[PairedActionTableException] = (),
     stock_update_date: date | str | None = None,
 ) -> WorkbookExportPlan:
     """Convert local extraction outputs into reviewer-gated workbook rows."""
@@ -328,6 +334,12 @@ def build_workbook_export_plan(
             instrument_update_date=resolved_stock_update_date,
         )
         + _section_audit_rows(_sections_from(section_inventory))
+        + _paired_action_table_exception_rows(
+            (
+                *paired_action_table_exceptions,
+                *_candidate_exceptions_from(recommendation_cards),
+            )
+        )
     )
     return WorkbookExportPlan(
         issue_id=issue_id,
@@ -551,12 +563,19 @@ def _latest_issue_stock_action(
 
 
 def _publisher_action(recommendation: str | None) -> str | None:
-    normalized = (recommendation or "").casefold().strip()
+    normalized = re.sub(r"\s+", " ", (recommendation or "").casefold()).strip()
+    normalized = normalized.replace("- ", "-")
     if normalized in {"new_recommendation", "neu"}:
         return "Buy"
-    if normalized in {"sold", "verkauft", "verkaufen", "tauschen"}:
+    if normalized in {
+        "sold",
+        "verkauft",
+        "verkaufen",
+        "tauschen",
+        "ausgestoppt",
+    }:
         return "Sell"
-    if normalized in {"hold", "halten"}:
+    if normalized in {"hold", "halten", "dabei-bleiben", "dabei bleiben"}:
         return "Hold"
     return None
 
@@ -1427,12 +1446,73 @@ def _section_audit_rows(sections: Sequence[MagazineSectionCandidate]) -> list[Wo
     return rows
 
 
+def _paired_action_table_exception_rows(
+    exceptions: Sequence[PairedActionTableException],
+) -> list[WorkbookDraftRow]:
+    rows: list[WorkbookDraftRow] = []
+    for exception in exceptions:
+        source_pages = tuple(
+            page
+            for page in (exception.value_page, exception.action_page)
+            if page is not None
+        )
+        source_reference = " | ".join(
+            _source_ref(exception.issue_id, page) for page in source_pages
+        )
+        rows.append(
+            WorkbookDraftRow(
+                tab="Extraction Audit",
+                row_kind="paired_action_table_candidate_exception",
+                source_id=_source_id(
+                    "paired-action-table-exception",
+                    exception.issue_id,
+                    exception.page,
+                    (
+                        f"{exception.value_page or 0}:"
+                        f"{exception.action_page or 0}:"
+                        f"{exception.reason}"
+                    ),
+                ),
+                issue_id=exception.issue_id,
+                page=exception.page,
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="paired_action_table_candidate_exception",
+                warnings=(
+                    MANUAL_REVIEW_WARNING,
+                    f"paired_action_table_candidate_exception={exception.reason}",
+                ),
+                values=(
+                    "local-dry-run",
+                    source_reference,
+                    "paired_action_table_candidate",
+                    "blocker",
+                    (
+                        f"{exception.reason}; "
+                        f"value_rows={exception.value_row_count}; "
+                        f"action_rows={exception.action_row_count}"
+                    ),
+                    "review_or_record_source_exception",
+                    "",
+                ),
+            )
+        )
+    return rows
+
+
 def _cards_from(
     extraction: RecommendationCardExtraction | Sequence[RecommendationCard],
 ) -> tuple[RecommendationCard, ...]:
     if isinstance(extraction, RecommendationCardExtraction):
         return extraction.cards
     return tuple(extraction)
+
+
+def _candidate_exceptions_from(
+    extraction: RecommendationCardExtraction | Sequence[RecommendationCard],
+) -> tuple[PairedActionTableException, ...]:
+    if isinstance(extraction, RecommendationCardExtraction):
+        return extraction.candidate_exceptions
+    return ()
 
 
 def _dividend_rows_from(

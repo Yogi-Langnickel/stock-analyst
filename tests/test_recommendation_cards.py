@@ -3,6 +3,7 @@ import unittest
 from stock_analyst.recommendation_cards import (
     _VisualChanceRiskPair,
     extract_dax_action_table_cards_from_pages,
+    extract_dax_action_table_result_from_pages,
     extract_recommendation_cards_from_lines,
 )
 from stock_analyst.schemas import InstrumentType
@@ -293,6 +294,67 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(len(cards), 1)
         self.assertEqual(cards[0].recommendation_status, "sold")
 
+    def test_page_signals_apply_only_to_the_card_block_that_contains_them(self) -> None:
+        def card_lines(name: str, wkn: str, signal: str | None) -> tuple[str, ...]:
+            values = (
+                "Aktie",
+                name,
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "Akt. Kurs",
+                "10,00 EUR",
+                "WKN",
+                wkn,
+                "Ziel",
+                "12,00 EUR",
+                "Stopp",
+                "8,00 EUR",
+            )
+            return (*values, signal) if signal else values
+
+        cards = extract_recommendation_cards_from_lines(
+            (
+                *card_lines("Alpha Signal AG", "SIG001", "Top-Tipp"),
+                *card_lines("Beta Signal AG", "SIG002", "Verkaufssignal"),
+                *card_lines("Gamma Unrelated AG", "SIG003", None),
+            ),
+            issue_id="2026-W40",
+            page_number=18,
+        )
+
+        self.assertEqual(
+            [card.recommendation_status for card in cards],
+            ["new_recommendation", "sold", None],
+        )
+
+    def test_page_signal_applies_when_the_page_has_only_one_card(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Top-Tipp",
+                "Aktie",
+                "Single Card AG",
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "Akt. Kurs",
+                "10,00 EUR",
+                "WKN",
+                "ONE001",
+                "Ziel",
+                "12,00 EUR",
+                "Stopp",
+                "8,00 EUR",
+            ),
+            issue_id="2026-W40",
+            page_number=19,
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].recommendation_status, "new_recommendation")
+
     def test_extracts_follow_up_fields_and_quarterly_report_date(self) -> None:
         cards = extract_recommendation_cards_from_lines(
             (
@@ -553,6 +615,64 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertTrue(
             all(card.extraction_notes == ("dax_paired_spread_extraction", "source_pages:26,27") for card in cards)
         )
+
+    def test_discovers_shifted_paired_action_table_pages(self) -> None:
+        result = extract_dax_action_table_result_from_pages(
+            (
+                (
+                    40,
+                    (
+                        "Unternehmen    WKN    Aktueller Kurs    Ziel    Stopp",
+                        "Alpha AG    ALPHA1    10,00 EUR    15,00 EUR    8,00 EUR",
+                    ),
+                ),
+                (41, ("Unrelated layout page",)),
+                (
+                    43,
+                    (
+                        "Einschätzung    Kommentar    Unternehmen",
+                        "Kaufen    Synthetischer Hinweis    Alpha AG",
+                    ),
+                ),
+            ),
+            issue_id="2026-W40",
+        )
+
+        self.assertEqual(len(result.cards), 1)
+        self.assertEqual(result.cards[0].instrument_name, "Alpha AG")
+        self.assertEqual(
+            result.cards[0].extraction_notes,
+            ("dax_paired_spread_extraction", "source_pages:40,43"),
+        )
+        self.assertEqual(result.exceptions, ())
+
+    def test_retains_paired_table_name_mismatch_as_review_exception(self) -> None:
+        result = extract_dax_action_table_result_from_pages(
+            (
+                (
+                    40,
+                    (
+                        "Unternehmen    WKN    Aktueller Kurs    Ziel    Stopp",
+                        "Alpha AG    ALPHA1    10,00 EUR    15,00 EUR    8,00 EUR",
+                    ),
+                ),
+                (
+                    41,
+                    (
+                        "Einschätzung    Kommentar    Unternehmen",
+                        "Kaufen    Synthetischer Hinweis    Different AG",
+                    ),
+                ),
+            ),
+            issue_id="2026-W40",
+        )
+
+        self.assertEqual(result.cards, ())
+        self.assertEqual(len(result.exceptions), 1)
+        exception = result.exceptions[0]
+        self.assertEqual(exception.reason, "paired_table_name_mismatch")
+        self.assertEqual((exception.value_page, exception.action_page), (40, 41))
+        self.assertEqual((exception.value_row_count, exception.action_row_count), (1, 1))
 
     def test_extracts_follow_up_when_labels_are_grouped_before_values(self) -> None:
         cards = extract_recommendation_cards_from_lines(

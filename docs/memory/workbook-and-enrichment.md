@@ -37,6 +37,19 @@ Created: 2026-06-06
 - Planned rows must target an active workbook tab and exactly match that tab's
   configured width before JSON serialization or Google write paths can pad or
   truncate them.
+- Paired value/action tables are discovered from their layout headers rather
+  than fixed page numbers. Emit rows only when the nearest preceding or
+  co-located value table and action table have equal row counts and names in
+  the same order.
+  Missing, empty, count-mismatched, or name-mismatched candidates must emit a
+  metadata-only `paired_action_table_candidate_exception` blocker in
+  `Extraction Audit`; never silently discard them or include source text in the
+  exception.
+- Page-level `Top-Tipp` and `Verkaufssignal` wording must not set the action on
+  unrelated cards. Use the signal only when it occurs inside that card's parsed
+  block, or when the page contains exactly one card candidate. Established
+  derivative source literals `Dabei-bleiben` and `Ausgestoppt` map to reviewer
+  actions `Hold` and `Sell`.
 
 ## Active Tabs And Identity
 

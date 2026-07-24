@@ -324,6 +324,58 @@ class WorkbookExportPlanTest(unittest.TestCase):
             ["2026-W30:26 | 2026-W30:27"] * 4,
         )
 
+    def test_pdf_plan_surfaces_paired_table_mismatch_in_extraction_audit(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(
+                        page_number=40,
+                        text="Synthetic value table",
+                        layout_text="\n".join(
+                            (
+                                "Unternehmen    WKN    Aktueller Kurs    Ziel    Stopp",
+                                "Alpha AG    ALPHA1    10,00 EUR    15,00 EUR    8,00 EUR",
+                            )
+                        ),
+                    ),
+                    RawPageText(
+                        page_number=41,
+                        text="Synthetic action table",
+                        layout_text="\n".join(
+                            (
+                                "Einschätzung    Kommentar    Unternehmen",
+                                "Kaufen    Synthetischer Hinweis    Different AG",
+                            )
+                        ),
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_40.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        exception_rows = [
+            row
+            for row in plan.to_dict()["rows"]
+            if row["rowKind"] == "paired_action_table_candidate_exception"
+        ]
+        self.assertEqual(len(exception_rows), 1)
+        exception_row = exception_rows[0]
+        self.assertEqual(exception_row["tab"], "Extraction Audit")
+        self.assertEqual(
+            exception_row["sourceBlock"],
+            "paired_action_table_candidate_exception",
+        )
+        self.assertEqual(exception_row["values"][1], "2026-W40:40 | 2026-W40:41")
+        self.assertIn("paired_table_name_mismatch", exception_row["values"][4])
+        self.assertIn(
+            "paired_action_table_candidate_exception=paired_table_name_mismatch",
+            exception_row["warnings"],
+        )
+
     def test_pdf_plan_can_still_use_strict_statistics_cutoff_policy(self) -> None:
         class StubExtractor:
             extractor_name = "stub"
@@ -959,6 +1011,56 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(
             len(rows["Depot Transactions"]["values"]),
             len(headers_for("Depot Transactions")),
+        )
+
+    def test_routes_derivative_hold_and_stop_literals_to_aktuell(self) -> None:
+        def derivative_row(wkn: str, recommendation: str) -> DerivativeOverviewRow:
+            return DerivativeOverviewRow(
+                issue_id="2026-W40",
+                page=60,
+                underlying=f"Synthetic {wkn}",
+                product=f"Synthetic {wkn}",
+                direction="Call",
+                wkn=wkn,
+                issuer="Synthetic Issuer",
+                ratio="1,00",
+                strike_cap="10,00 EUR",
+                omega_hebel="2,0",
+                runtime="31.12.26",
+                entry_price="1,00 EUR",
+                current_price="1,20 EUR",
+                performance_since_recommendation="+20,0 %",
+                target="1,50 EUR",
+                stop="0,80 EUR",
+                recommendation=recommendation,
+            )
+
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_40.pdf"),
+            issue_id="2026-W40",
+            derivative_overview=(
+                derivative_row("HOLD01", "Dabei- bleiben"),
+                derivative_row("STOP01", "Ausgestoppt"),
+            ),
+            stock_update_date="2026-09-30",
+        )
+
+        aktuell_rows = [
+            row for row in plan.to_dict()["rows"] if row["tab"] == "Aktuell"
+        ]
+        self.assertEqual(
+            [
+                row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Action")]
+                for row in aktuell_rows
+            ],
+            ["Hold", "Sell"],
+        )
+        self.assertEqual(
+            [
+                row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Reviewer note")]
+                for row in aktuell_rows
+            ],
+            ["Dabei- bleiben", "Ausgestoppt"],
         )
 
     def test_routes_dividend_rows_to_dividend_focus(self) -> None:

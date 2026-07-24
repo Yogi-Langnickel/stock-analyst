@@ -197,6 +197,7 @@ class RecommendationCardExtraction:
     page_count: int
     external_services_enabled: bool
     cards: tuple[RecommendationCard, ...]
+    candidate_exceptions: tuple[PairedActionTableException, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -205,7 +206,43 @@ class RecommendationCardExtraction:
             "pageCount": self.page_count,
             "externalServicesEnabled": self.external_services_enabled,
             "cards": [card.to_dict() for card in self.cards],
+            "candidateExceptions": [
+                exception.to_dict() for exception in self.candidate_exceptions
+            ],
         }
+
+
+@dataclass(frozen=True)
+class PairedActionTableException:
+    """Metadata-only review exception for an unresolved paired action table."""
+
+    issue_id: str
+    value_page: int | None
+    action_page: int | None
+    reason: str
+    value_row_count: int
+    action_row_count: int
+
+    @property
+    def page(self) -> int:
+        return self.action_page or self.value_page or 1
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "issueId": self.issue_id,
+            "valuePage": self.value_page,
+            "actionPage": self.action_page,
+            "reason": self.reason,
+            "valueRowCount": self.value_row_count,
+            "actionRowCount": self.action_row_count,
+            "requiresManualReview": True,
+        }
+
+
+@dataclass(frozen=True)
+class PairedActionTableExtraction:
+    cards: tuple[RecommendationCard, ...]
+    exceptions: tuple[PairedActionTableException, ...]
 
 
 @dataclass(frozen=True)
@@ -258,12 +295,11 @@ def extract_recommendation_cards_from_pdf(
                 layout_lines=(page.layout_text or "").splitlines(),
             )
         )
-    cards.extend(
-        extract_dax_action_table_cards_from_pages(
-            tuple((page.page_number, (page.layout_text or "").splitlines()) for page in pages),
-            issue_id=resolved_issue_id,
-        )
+    paired_tables = extract_dax_action_table_result_from_pages(
+        tuple((page.page_number, (page.layout_text or "").splitlines()) for page in pages),
+        issue_id=resolved_issue_id,
     )
+    cards.extend(paired_tables.cards)
 
     return RecommendationCardExtraction(
         issue_id=resolved_issue_id,
@@ -271,6 +307,7 @@ def extract_recommendation_cards_from_pdf(
         page_count=extraction.page_count,
         external_services_enabled=False,
         cards=tuple(cards),
+        candidate_exceptions=paired_tables.exceptions,
     )
 
 
@@ -335,21 +372,83 @@ def extract_dax_action_table_cards_from_pages(
     *,
     issue_id: str,
 ) -> tuple[RecommendationCard, ...]:
-    """Join paired DAX value/action spreads without inferring absent fields."""
+    """Compatibility wrapper returning only fully reconciled paired-table cards."""
+
+    return extract_dax_action_table_result_from_pages(
+        pages,
+        issue_id=issue_id,
+    ).cards
+
+
+def extract_dax_action_table_result_from_pages(
+    pages: Sequence[tuple[int, Sequence[str]]],
+    *,
+    issue_id: str,
+) -> PairedActionTableExtraction:
+    """Join discovered value/action tables and retain unresolved candidates."""
 
     layouts = {
         page: [_clean_layout_line(line) for line in lines if _clean_layout_line(line)]
         for page, lines in pages
     }
+    value_candidates = [
+        (page, _extract_dax_value_rows(lines))
+        for page, lines in sorted(layouts.items())
+        if any(DAX_VALUE_TABLE_HEADER_RE.search(line) for line in lines)
+    ]
+    action_candidates = [
+        (page, _extract_dax_action_rows(lines))
+        for page, lines in sorted(layouts.items())
+        if any(DAX_ACTION_TABLE_HEADER_RE.search(line) for line in lines)
+    ]
     cards: list[RecommendationCard] = []
-    for value_page, action_page in ((26, 27), (28, 29)):
-        value_rows = _extract_dax_value_rows(layouts.get(value_page, ()))
-        action_rows = _extract_dax_action_rows(layouts.get(action_page, ()))
-        if len(value_rows) != len(action_rows):
+    exceptions: list[PairedActionTableException] = []
+    unused_value_candidates = list(value_candidates)
+    for action_page, action_rows in action_candidates:
+        eligible_values = [
+            candidate
+            for candidate in unused_value_candidates
+            if candidate[0] <= action_page
+        ]
+        if not eligible_values:
+            exceptions.append(
+                PairedActionTableException(
+                    issue_id=issue_id,
+                    value_page=None,
+                    action_page=action_page,
+                    reason="missing_preceding_value_table",
+                    value_row_count=0,
+                    action_row_count=len(action_rows),
+                )
+            )
+            continue
+        value_page, value_rows = eligible_values[-1]
+        unused_value_candidates.remove((value_page, value_rows))
+        if not value_rows or not action_rows:
+            reason = "empty_paired_table"
+        elif len(value_rows) != len(action_rows):
+            reason = "paired_table_row_count_mismatch"
+        elif any(
+            _normalize_dax_name(value["name"])
+            != _normalize_dax_name(action["name"])
+            for value, action in zip(value_rows, action_rows)
+        ):
+            reason = "paired_table_name_mismatch"
+        else:
+            reason = ""
+        if reason:
+            exceptions.append(
+                PairedActionTableException(
+                    issue_id=issue_id,
+                    value_page=value_page,
+                    action_page=action_page,
+                    reason=reason,
+                    value_row_count=len(value_rows),
+                    action_row_count=len(action_rows),
+                )
+            )
             continue
         for value, action in zip(value_rows, action_rows):
-            if _normalize_dax_name(value["name"]) != _normalize_dax_name(action["name"]):
-                continue
             cards.append(
                 RecommendationCard(
                     issue_id=issue_id,
@@ -369,7 +468,21 @@ def extract_dax_action_table_cards_from_pages(
                     ),
                 )
             )
-    return tuple(cards)
+    exceptions.extend(
+        PairedActionTableException(
+            issue_id=issue_id,
+            value_page=value_page,
+            action_page=None,
+            reason="missing_following_action_table",
+            value_row_count=len(value_rows),
+            action_row_count=0,
+        )
+        for value_page, value_rows in unused_value_candidates
+    )
+    return PairedActionTableExtraction(
+        cards=tuple(cards),
+        exceptions=tuple(exceptions),
+    )
 
 
 def _extract_duel_table_cards(
@@ -633,8 +746,27 @@ def _money_values_in_text(value: str) -> tuple[str, ...]:
     )
 
 
-def _has_page_recommendation_signal(lines: Sequence[str], signal: str) -> bool:
+def _has_recommendation_signal(lines: Sequence[str], signal: str) -> bool:
     return any(signal in line.casefold() for line in lines)
+
+
+def _has_unambiguous_recommendation_signal(
+    page_lines: Sequence[str],
+    card_lines: Sequence[str],
+    signal: str,
+) -> bool:
+    if _has_recommendation_signal(card_lines, signal):
+        return True
+    card_start_count = sum(
+        1
+        for index, line in enumerate(page_lines)
+        if _instrument_type_for_card_start(line) is not None
+        or (
+            _looks_like_derivative(line)
+            and _line_at(page_lines, index + 1) == "WKN"
+        )
+    )
+    return card_start_count == 1 and _has_recommendation_signal(page_lines, signal)
 
 
 def _apply_visual_chance_risk_pairs(
@@ -701,9 +833,18 @@ def _parse_labelled_card(
         recommendation_status = "sold"
     if recommendation_status is None and "hold" in fields:
         recommendation_status = "hold"
-    if recommendation_status is None and _has_page_recommendation_signal(lines, "top-tipp"):
+    card_lines = lines[start_index:next_index]
+    if recommendation_status is None and _has_unambiguous_recommendation_signal(
+        lines,
+        card_lines,
+        "top-tipp",
+    ):
         recommendation_status = "new_recommendation"
-    if recommendation_status is None and _has_page_recommendation_signal(lines, "verkaufssignal"):
+    if recommendation_status is None and _has_unambiguous_recommendation_signal(
+        lines,
+        card_lines,
+        "verkaufssignal",
+    ):
         recommendation_status = "sold"
     if "recommended_issue" in fields or "performance_since_recommendation" in fields:
         recommendation_status = recommendation_status or "follow_up"

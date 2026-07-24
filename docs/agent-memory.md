@@ -73,9 +73,10 @@ Last compacted: 2026-06-06
   approval, exportability, or family-visible readiness.
 - Use service account first for future private Drive/Sheets automation unless
   per-user Google identity becomes a product requirement.
-- Dev Google Drive/Sheets IDs are configured for the service account
-  `stock-analyst@stock-analyst-496512.iam.gserviceaccount.com`; see
-  `unblockme.md` for non-secret IDs and smoke commands.
+- Dev Google Drive/Sheets access is configured through ignored local
+  environment values and a private service-account credentials file; see
+  `unblockme.md` for variable names and smoke commands. Never place live
+  account addresses or Drive/Sheets identifiers in tracked documentation.
 - Target Drive workflow: dad drops each weekly PDF into the shared Drive folder
   between Wednesday and Thursday; a future EventBridge/Lambda preprocessor may
   check hourly for new files and record lightweight metadata, while heavy
