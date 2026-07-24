@@ -17,7 +17,17 @@ DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{2}$")
 PRICE_RE = re.compile(r"^(?:\d+(?:\.\d{3})*,\d+|\d+,\d+)\s*(?:EUR|USD|HKD)$")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 RATIO_RE = re.compile(r"^\d+(?:,\d+)?$")
-TYPE_WORDS = {"Call", "Put", "Zertifikat", "Discount-Call", "Index-Zertifikat", "Turbo-Call"}
+TYPE_WORDS = {
+    "Call",
+    "Put",
+    "Zertifikat",
+    "Discount-Call",
+    "Discount-Put",
+    "Index-Zertifikat",
+    "Turbo-Call",
+    "Turbo-Long",
+    "Turbo-Short",
+}
 
 
 @dataclass(frozen=True)

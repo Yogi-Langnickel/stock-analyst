@@ -5,18 +5,35 @@ from unittest.mock import patch
 
 from stock_analyst.cli import run_google_drive_pdfs_command
 from stock_analyst.google_access import (
+    ACTIVE_GOOGLE_SHEET_TABS,
+    AKTUELL_DERIVATIVE_HEADERS,
     DEFAULT_SHEET_TABS,
     GoogleAccessError,
+    MANAGED_PROTECTION_DESCRIPTION_PREFIX,
+    _apply_managed_sheet_protections,
+    _auto_resize_issue_review_tab_columns,
+    _build_aktuell_table_format_requests,
+    _build_issue_search_index_rows,
+    _build_issue_search_results_formula,
+    _build_reviewer_action_format_requests,
+    _build_search_format_requests,
+    _fetch_sheet_ids_by_title,
+    _reorder_issue_review_tabs_newest_first,
     bootstrap_google_sheet,
     build_drive_pdf_metadata_result,
     clear_google_sheet_data_rows,
     list_drive_pdf_metadata,
     load_env_file,
     load_google_access_config,
+    refresh_google_sheet_search,
     run_google_access_smoke,
     write_refinement_plan_to_google_sheet,
     write_workbook_plan_to_google_sheet,
     write_drive_pdf_metadata_manifest,
+)
+
+TEST_SERVICE_ACCOUNT_CREDENTIALS = (
+    '{"client_email":"stock-analyst@example.iam.gserviceaccount.com"}'
 )
 
 
@@ -78,6 +95,37 @@ class _FakeSpreadsheets:
 
     def batchUpdate(self, **kwargs):
         self.batch_update_requests.append(kwargs)
+        sheets = self.payload.get("sheets", [])
+        for request in kwargs.get("body", {}).get("requests", []):
+            if "addSheet" in request:
+                properties = dict(request["addSheet"].get("properties", {}))
+                if "sheetId" not in properties:
+                    properties["sheetId"] = max(
+                        (
+                            int(item.get("properties", {}).get("sheetId", 0))
+                            for item in sheets
+                        ),
+                        default=0,
+                    ) + 1
+                sheets.append({"properties": properties})
+            if "deleteSheet" in request:
+                sheet_id = request["deleteSheet"]["sheetId"]
+                sheets[:] = [
+                    item
+                    for item in sheets
+                    if item.get("properties", {}).get("sheetId") != sheet_id
+                ]
+            if "updateSheetProperties" in request:
+                update = request["updateSheetProperties"]["properties"]
+                sheet_id = update["sheetId"]
+                sheet_index = next(
+                    index
+                    for index, item in enumerate(sheets)
+                    if item["properties"].get("sheetId") == sheet_id
+                )
+                sheet = sheets.pop(sheet_index)
+                sheet["properties"].update(update)
+                sheets.insert(min(int(update.get("index", sheet_index)), len(sheets)), sheet)
         return _FakeExecute({"updated": True})
 
     def values(self):
@@ -87,6 +135,7 @@ class _FakeSpreadsheets:
 class _FakeValues:
     def __init__(self):
         self.batch_update_requests = []
+        self.batch_get_requests = []
         self.clear_requests = []
         self.get_requests = []
         self.values_by_range = {}
@@ -98,6 +147,20 @@ class _FakeValues:
         if self.fail_batch_update and len(self.batch_update_requests) > self.fail_batch_update_after:
             raise RuntimeError("simulated batch update failure")
         return _FakeExecute({"updated": True})
+
+    def batchGet(self, **kwargs):
+        self.batch_get_requests.append(kwargs)
+        return _FakeExecute(
+            {
+                "valueRanges": [
+                    {
+                        "range": range_name,
+                        "values": self.values_by_range.get(range_name, []),
+                    }
+                    for range_name in kwargs.get("ranges", [])
+                ]
+            }
+        )
 
     def clear(self, **kwargs):
         self.clear_requests.append(kwargs)
@@ -117,6 +180,723 @@ class _FakeSheets:
 
 
 class GoogleAccessTest(unittest.TestCase):
+    def test_managed_protections_cover_existing_and_future_review_tabs(self) -> None:
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 10, "title": "Search"},
+                        "protectedRanges": [
+                            {
+                                "protectedRangeId": 91,
+                                "description": (
+                                    f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} Search"
+                                ),
+                            },
+                            {
+                                "protectedRangeId": 92,
+                                "description": "Family-owned manual protection",
+                            },
+                        ],
+                    },
+                    {"properties": {"sheetId": 20, "title": "Aktuell"}},
+                    {"properties": {"sheetId": 30, "title": "DA_2026_30"}},
+                    {"properties": {"sheetId": 40, "title": "Notes"}},
+                ],
+            }
+        )
+
+        protected_tabs = _apply_managed_sheet_protections(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+            editor_email="stock-analyst@example.iam.gserviceaccount.com",
+        )
+
+        self.assertEqual(protected_tabs, ["Search", "Aktuell", "DA_2026_30"])
+        requests = sheets.spreadsheets_resource.batch_update_requests[-1]["body"][
+            "requests"
+        ]
+        self.assertIn(
+            {"deleteProtectedRange": {"protectedRangeId": 91}},
+            requests,
+        )
+        self.assertNotIn(
+            {"deleteProtectedRange": {"protectedRangeId": 92}},
+            requests,
+        )
+        added = [
+            request["addProtectedRange"]["protectedRange"]
+            for request in requests
+            if "addProtectedRange" in request
+        ]
+        self.assertEqual(
+            [item["range"]["sheetId"] for item in added],
+            [10, 20, 30],
+        )
+        self.assertEqual(
+            added[0]["unprotectedRanges"],
+            [
+                {
+                    "sheetId": 10,
+                    "startRowIndex": 0,
+                    "endRowIndex": 1,
+                    "startColumnIndex": 2,
+                    "endColumnIndex": 5,
+                }
+            ],
+        )
+        self.assertNotIn("unprotectedRanges", added[1])
+        self.assertNotIn("unprotectedRanges", added[2])
+        for protected_range in added:
+            self.assertFalse(protected_range["warningOnly"])
+            self.assertEqual(
+                protected_range["editors"],
+                {
+                    "users": [
+                        "stock-analyst@example.iam.gserviceaccount.com"
+                    ],
+                    "domainUsersCanEdit": False,
+                },
+            )
+
+    def test_active_google_sheet_tabs_keep_search_and_aktuell_only(self) -> None:
+        self.assertEqual(
+            [spec.title for spec in ACTIVE_GOOGLE_SHEET_TABS],
+            ["Search", "Aktuell"],
+        )
+        self.assertIn("Stocks", [spec.title for spec in DEFAULT_SHEET_TABS])
+        self.assertIn("Derivative Tips", [spec.title for spec in DEFAULT_SHEET_TABS])
+
+    def test_issue_search_index_preserves_full_rows_newest_issue_first_without_aktuell(self) -> None:
+        stock_header = list(_headers_for("Aktuell"))
+        stock_row = ["" for _ in stock_header]
+        stock_row[stock_header.index("WKN")] = "A0TEST"
+        stock_row[stock_header.index("Company")] = "Example AG"
+        stock_row[stock_header.index("Action")] = "Buy"
+        stock_row[stock_header.index("Source")] = "2026-W30:12"
+        stock_row[stock_header.index("Review status")] = "approved"
+        derivative_header = list(AKTUELL_DERIVATIVE_HEADERS)
+        derivative_row = ["" for _ in derivative_header]
+        derivative_row[derivative_header.index("WKN")] = "D0TEST"
+        derivative_row[derivative_header.index("Derivative")] = "Example Call"
+        derivative_row[derivative_header.index("Action")] = "Hold"
+        derivative_row[derivative_header.index("Issue:Page")] = "2026-W30:18"
+        derivative_row[derivative_header.index("Review status")] = "needs_review"
+        older_stock_row = list(stock_row)
+        older_stock_row[stock_header.index("Action")] = "Hold"
+        older_stock_row[stock_header.index("Source")] = "2026-W29:10"
+
+        rows = _build_issue_search_index_rows(
+            issue_tab_values_by_title={
+                "Aktuell": [stock_header, stock_row],
+                "DA_2026_29": [stock_header, older_stock_row],
+                "DA_2026_30": [
+                    stock_header,
+                    stock_row,
+                    [],
+                    [],
+                    ["Derivatives"],
+                    derivative_header,
+                    derivative_row,
+                ],
+            },
+            sheet_ids_by_title={
+                "Aktuell": 20,
+                "DA_2026_29": 29,
+                "DA_2026_30": 30,
+            },
+        )
+
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0][:4], [
+            "Stock",
+            202630,
+            12,
+            "a0test example ag",
+        ])
+        self.assertEqual(rows[0][4:20], stock_row)
+        self.assertEqual(rows[0][20], "")
+        self.assertEqual(rows[1][:4], [
+            "Derivative",
+            202630,
+            18,
+            "d0test example call",
+        ])
+        self.assertEqual(rows[1][4:], derivative_row)
+        self.assertEqual(rows[2][1:3], [202629, 10])
+        self.assertEqual(rows[2][4:20], older_stock_row)
+        self.assertNotIn("Aktuell", str(rows))
+
+    def test_issue_search_formula_stacks_full_reviewer_schemas_sorted_descending(self) -> None:
+        formula = _build_issue_search_results_formula()
+
+        self.assertIn("$C$1", formula)
+        self.assertNotIn("$B$1", formula)
+        self.assertIn('$S$2:$S="Stock"', formula)
+        self.assertIn('$S$2:$S="Derivative"', formula)
+        self.assertIn("$W$2:$AM", formula)
+        self.assertIn("SORT(", formula)
+        self.assertIn(",1,FALSE,2,TRUE)", formula)
+        self.assertIn('"Source","WKN","Company","Action"', formula)
+        self.assertIn('"Source","WKN","Derivative","Action"', formula)
+        self.assertIn("CHOOSECOLS(stockSorted,16,3,4,5", formula)
+        self.assertIn("CHOOSECOLS(derivativeSorted,17,3,4,5", formula)
+        self.assertIn('{"Stocks"', formula)
+        self.assertIn('{"Derivatives"', formula)
+        self.assertIn('"Price at Print"', formula)
+        self.assertIn('"Magazine Current Price"', formula)
+        self.assertIn('"Reviewer note"', formula)
+        self.assertIn("ARRAYFORMULA(ISNUMBER(SEARCH(", formula)
+        self.assertNotIn("Aktuell", formula)
+
+    def test_search_formats_match_reviewer_headers_and_action_colours(self) -> None:
+        requests = _build_search_format_requests(
+            sheet_id=42,
+            existing_rule_count=2,
+        )
+
+        self.assertEqual(
+            [request["deleteConditionalFormatRule"]["index"] for request in requests[:2]],
+            [1, 0],
+        )
+        add_rules = [
+            request["addConditionalFormatRule"]["rule"]
+            for request in requests
+            if "addConditionalFormatRule" in request
+        ]
+        formulas = [
+            rule["booleanRule"]["condition"]["values"][0]["userEnteredValue"]
+            for rule in add_rules
+        ]
+        self.assertIn('=OR($A4="Stocks",$A4="Derivatives")', formulas)
+        self.assertIn(
+            '=AND($A4="Source",$B4="WKN",$C4="Company",$D4="Action")',
+            formulas,
+        )
+        self.assertIn(
+            '=AND($A4="Source",$B4="WKN",$C4="Derivative",$D4="Action")',
+            formulas,
+        )
+        self.assertIn('=$D4="Buy"', formulas)
+        self.assertIn('=$D4="Hold"', formulas)
+        self.assertIn('=$D4="Sell"', formulas)
+        self.assertFalse(any("Wait" in formula for formula in formulas))
+        for rule in add_rules:
+            data_range = rule["ranges"][0]
+            self.assertEqual(data_range["startRowIndex"], 3)
+            self.assertEqual(data_range["startColumnIndex"], 0)
+            self.assertEqual(data_range["endColumnIndex"], 17)
+
+    def test_search_refresh_indexes_existing_issue_tabs_without_reexporting_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {"properties": {"sheetId": 10, "title": "Search"}},
+                        {"properties": {"sheetId": 20, "title": "Aktuell"}},
+                        {"properties": {"sheetId": 30, "title": "DA_2026_30"}},
+                    ],
+                }
+            )
+            stock_header = list(_headers_for("Aktuell"))
+            stock_row = ["" for _ in stock_header]
+            stock_row[0:3] = ["A0TEST", "Example AG", "Buy"]
+            stock_row[stock_header.index("Source")] = "2026-W30:12"
+            sheets.spreadsheets_resource.values_resource.values_by_range[
+                "'DA_2026_30'!A:Q"
+            ] = [stock_header, stock_row]
+            sheets.spreadsheets_resource.values_resource.values_by_range[
+                "'Search'!B1:C1"
+            ] = [["Legacy query", ""]]
+
+            result = refresh_google_sheet_search(
+                config,
+                sheets_service_factory=lambda: sheets,
+            )
+
+        self.assertEqual(result["searchIndexedRows"], 1)
+        self.assertEqual(
+            result["protectedTabs"],
+            ["Search", "Aktuell", "DA_2026_30"],
+        )
+        user_entered_batches = [
+            request["body"]["data"]
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "USER_ENTERED"
+        ]
+        search_batch = next(
+            batch
+            for batch in user_entered_batches
+            if any(item["range"] == "'Search'!A4" for item in batch)
+        )
+        self.assertIn(
+            {
+                "range": "'Search'!C1",
+                "values": [["Legacy query"]],
+            },
+            search_batch,
+        )
+        self.assertTrue(
+            any(
+                request["range"] == "'Search'!B1"
+                for request in sheets.spreadsheets_resource.values_resource.clear_requests
+            )
+        )
+        raw_batches = [
+            request["body"]["data"]
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "RAW"
+        ]
+        self.assertTrue(
+            any(
+                item["range"] == "'Search'!S2:AM2"
+                for batch in raw_batches
+                for item in batch
+            )
+        )
+        self.assertFalse(
+            any(
+                item["range"].startswith("'DA_2026_30'!")
+                for batch in user_entered_batches
+                for item in batch
+            )
+        )
+        search_properties_request = next(
+            request["updateSheetProperties"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"]["requests"]
+            if "updateSheetProperties" in request
+            and request["updateSheetProperties"]["properties"].get("sheetId") == 10
+        )
+        self.assertEqual(
+            search_properties_request["properties"]["gridProperties"][
+                "frozenRowCount"
+            ],
+            0,
+        )
+        search_structure_requests = next(
+            batch["body"]["requests"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            if any("mergeCells" in request for request in batch["body"]["requests"])
+        )
+        input_range = {
+            "sheetId": 10,
+            "startRowIndex": 0,
+            "endRowIndex": 1,
+            "startColumnIndex": 2,
+            "endColumnIndex": 5,
+        }
+        self.assertIn(
+            {"unmergeCells": {"range": input_range}},
+            search_structure_requests,
+        )
+        self.assertIn(
+            {
+                "mergeCells": {
+                    "range": input_range,
+                    "mergeType": "MERGE_ALL",
+                }
+            },
+            search_structure_requests,
+        )
+        input_format = next(
+            request["repeatCell"]
+            for request in search_structure_requests
+            if "repeatCell" in request
+            and request["repeatCell"]["range"] == input_range
+        )
+        self.assertEqual(
+            input_format["cell"]["note"],
+            "Enter a company name or WKN.",
+        )
+
+    def test_aktuell_table_format_uses_colored_stacked_section_headers(self) -> None:
+        requests = _build_aktuell_table_format_requests(
+            sheet_id=42,
+            stock_header_row=1,
+            derivative_label_row=5,
+            derivative_header_row=6,
+        )
+
+        self.assertEqual(len(requests), 4)
+        self.assertEqual(
+            requests[1]["repeatCell"]["range"],
+            {
+                "sheetId": 42,
+                "startRowIndex": 0,
+                "endRowIndex": 1,
+                "startColumnIndex": 0,
+                "endColumnIndex": 16,
+            },
+        )
+        self.assertEqual(requests[0]["repeatCell"]["range"]["startRowIndex"], 1)
+        self.assertEqual(requests[2]["repeatCell"]["range"]["startRowIndex"], 4)
+        self.assertEqual(requests[3]["repeatCell"]["range"]["startRowIndex"], 5)
+        body_reset = requests[0]["repeatCell"]
+        self.assertEqual(
+            body_reset["fields"],
+            "userEnteredFormat.backgroundColor,"
+            "userEnteredFormat.horizontalAlignment,"
+            "userEnteredFormat.textFormat.bold,"
+            "userEnteredFormat.textFormat.foregroundColor",
+        )
+        self.assertEqual(
+            body_reset["cell"]["userEnteredFormat"]["textFormat"]["foregroundColor"],
+            {"red": 0.0, "green": 0.0, "blue": 0.0},
+        )
+        self.assertFalse(body_reset["cell"]["userEnteredFormat"]["textFormat"]["bold"])
+        self.assertEqual(body_reset["cell"]["userEnteredFormat"]["horizontalAlignment"], "LEFT")
+        self.assertNotIn("endRowIndex", body_reset["range"])
+        self.assertTrue(requests[1]["repeatCell"]["cell"]["userEnteredFormat"]["textFormat"]["bold"])
+
+    def test_reviewer_action_formats_use_each_stacked_table_action_column(self) -> None:
+        requests = _build_reviewer_action_format_requests(
+            (
+                {"sheetId": 42, "title": "Aktuell", "conditionalFormats": []},
+                {"sheetId": 43, "title": "DA_2026_30", "conditionalFormats": []},
+            )
+        )
+
+        add_requests = [
+            request["addConditionalFormatRule"]
+            for request in requests
+            if "addConditionalFormatRule" in request
+        ]
+        self.assertEqual(len(add_requests), 12)
+        self.assertFalse(
+            any(
+                "Wait" in rule["rule"]["booleanRule"]["condition"]["values"][0]["userEnteredValue"]
+                for rule in add_requests
+            )
+        )
+        expected_by_sheet = {
+            42: (
+                ('=$C2="Buy"', 16, {"red": 0.85, "green": 0.94, "blue": 0.85}),
+                ('=$C2="Hold"', 16, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Sell"', 16, {"red": 0.98, "green": 0.84, "blue": 0.84}),
+                ('=$C2="Buy"', 17, {"red": 0.85, "green": 0.94, "blue": 0.85}),
+                ('=$C2="Hold"', 17, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Sell"', 17, {"red": 0.98, "green": 0.84, "blue": 0.84}),
+            ),
+            43: (
+                ('=$C2="Buy"', 16, {"red": 0.85, "green": 0.94, "blue": 0.85}),
+                ('=$C2="Hold"', 16, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Sell"', 16, {"red": 0.98, "green": 0.84, "blue": 0.84}),
+                ('=$C2="Buy"', 17, {"red": 0.85, "green": 0.94, "blue": 0.85}),
+                ('=$C2="Hold"', 17, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Sell"', 17, {"red": 0.98, "green": 0.84, "blue": 0.84}),
+            ),
+        }
+        actual_by_sheet: dict[int, set[tuple[object, object, object]]] = {}
+        for request in add_requests:
+            rule = request["rule"]
+            data_range = rule["ranges"][0]
+            formula = rule["booleanRule"]["condition"]["values"][0]["userEnteredValue"]
+            color = rule["booleanRule"]["format"]["backgroundColor"]
+            self.assertEqual(data_range["startRowIndex"], 1)
+            self.assertEqual(data_range["startColumnIndex"], 0)
+            self.assertNotIn("endRowIndex", data_range)
+            actual_by_sheet.setdefault(data_range["sheetId"], set()).add(
+                (formula, data_range["endColumnIndex"], tuple(sorted(color.items())))
+            )
+        self.assertEqual(
+            actual_by_sheet,
+            {
+                sheet_id: {
+                    (formula, end_column, tuple(sorted(color.items())))
+                    for formula, end_column, color in expected
+                }
+                for sheet_id, expected in expected_by_sheet.items()
+            },
+        )
+
+    def test_reviewer_action_formats_replace_only_owned_rules_descending(self) -> None:
+        owned_stock = {
+            "ranges": [{"sheetId": 42, "startRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 16}],
+            "booleanRule": {
+                "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": '=$C2="Buy"'}]}
+            },
+        }
+        unrelated = {
+            "ranges": [{"sheetId": 42, "startRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 16}],
+            "booleanRule": {
+                "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=LEN(A2)>0"}]}
+            },
+        }
+        owned_derivative = {
+            "ranges": [{"sheetId": 42, "startRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 17}],
+            "booleanRule": {
+                "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": '=$A2="Sell"'}]}
+            },
+        }
+
+        requests = _build_reviewer_action_format_requests(
+            ({"sheetId": 42, "title": "Aktuell", "conditionalFormats": [unrelated, owned_stock, owned_derivative]},)
+        )
+
+        self.assertEqual(
+            [request["deleteConditionalFormatRule"] for request in requests if "deleteConditionalFormatRule" in request],
+            [{"sheetId": 42, "index": 2}, {"sheetId": 42, "index": 1}],
+        )
+        self.assertEqual(
+            len([request for request in requests if "addConditionalFormatRule" in request]),
+            6,
+        )
+
+    def test_issue_recommendation_tables_leave_at_most_two_blank_rows_between_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {"properties": {"sheetId": index + 1, "title": spec.title}}
+                        for index, spec in enumerate(DEFAULT_SHEET_TABS)
+                    ],
+                }
+            )
+            stock_values = ["" for _ in _headers_for("Aktuell")]
+            stock_values[0:3] = ["Example WKN", "Example Stock", "Buy"]
+            derivative_values = ["" for _ in AKTUELL_DERIVATIVE_HEADERS]
+            derivative_values[0:3] = ["DERIV1", "Example Call", "Buy"]
+
+            write_workbook_plan_to_google_sheet(
+                config,
+                {
+                    "issueId": "2026-W30",
+                    "rows": [
+                        {
+                            "tab": "Aktuell",
+                            "rowKind": "latest_issue_stock_buy_sell_recommendation",
+                            "values": stock_values,
+                        },
+                        {
+                            "tab": "Aktuell",
+                            "rowKind": "latest_issue_derivative_buy_sell_recommendation",
+                            "values": derivative_values,
+                        },
+                    ],
+                },
+                sheets_service_factory=lambda: sheets,
+                allow_draft_rows=True,
+            )
+
+        raw_data = next(
+            request["body"]["data"]
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "RAW"
+        )
+        stock_header = next(
+            item for item in raw_data if item["range"] == "'Aktuell'!A1:P1"
+        )
+        derivative_label = next(
+            item for item in raw_data if item["range"] == "'Aktuell'!A5:Q5"
+        )
+        derivative_header = next(
+            item for item in raw_data if item["range"] == "'Aktuell'!A6:Q6"
+        )
+        self.assertEqual(stock_header["values"], [list(_headers_for("Aktuell"))])
+        self.assertEqual(derivative_label["values"], [["Derivatives", *([""] * 16)]])
+        self.assertEqual(derivative_header["values"][0][:3], ["WKN", "Derivative", "Action"])
+        self.assertEqual(derivative_header["values"][0][14], "Issue:Page")
+        self.assertTrue(
+            any(item["range"] == "'DA_2026_30'!A1:P1" for item in raw_data)
+        )
+        self.assertTrue(
+            any(item["range"] == "'DA_2026_30'!A5:Q5" for item in raw_data)
+        )
+        self.assertFalse(
+            any(item["range"] in {"'Aktuell'!A1", "'Aktuell'!A2", "'Aktuell'!A3"}
+                for item in raw_data)
+        )
+
+    def test_google_sheet_export_resyncs_existing_reviewer_grid_and_trims_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {
+                            "properties": {
+                                "sheetId": index + 1,
+                                "title": spec.title,
+                                "gridProperties": {
+                                    "frozenRowCount": 4,
+                                    "frozenColumnCount": 4,
+                                    "rowCount": 1000,
+                                },
+                            }
+                        }
+                        for index, spec in enumerate(DEFAULT_SHEET_TABS)
+                    ]
+                    + [
+                        {
+                            "properties": {
+                                "sheetId": 99,
+                                "title": "DA_2026_30",
+                                "gridProperties": {
+                                    "frozenRowCount": 4,
+                                    "frozenColumnCount": 4,
+                                    "rowCount": 1000,
+                                },
+                            }
+                        }
+                    ],
+                }
+            )
+            stock_values = ["" for _ in _headers_for("Aktuell")]
+            stock_values[0:3] = ["Example WKN", "Example Stock", "Buy"]
+            derivative_values = ["" for _ in AKTUELL_DERIVATIVE_HEADERS]
+            derivative_values[0:3] = ["DERIV1", "Example Call", "Buy"]
+
+            result = write_workbook_plan_to_google_sheet(
+                config,
+                {
+                    "issueId": "2026-W30",
+                    "rows": [
+                        {
+                            "tab": "Aktuell",
+                            "rowKind": "latest_issue_stock_buy_sell_recommendation",
+                            "values": stock_values,
+                        },
+                        {
+                            "tab": "Aktuell",
+                            "rowKind": "latest_issue_derivative_buy_sell_recommendation",
+                            "values": derivative_values,
+                        },
+                    ],
+                },
+                sheets_service_factory=lambda: sheets,
+                allow_draft_rows=True,
+            )
+
+        properties_by_title = {
+            item["properties"]["title"]: item["properties"]
+            for item in sheets.spreadsheets_resource.payload["sheets"]
+        }
+        for title in ("Aktuell", "DA_2026_30"):
+            grid = properties_by_title[title]["gridProperties"]
+            self.assertEqual(grid["frozenRowCount"], 1)
+            self.assertEqual(grid["frozenColumnCount"], 3)
+            self.assertEqual(grid["rowCount"], 8)
+        self.assertEqual(result["reviewerGridTabsSynced"], ["DA_2026_30", "Aktuell"])
+
+    def test_google_sheet_export_expands_compact_reviewer_grid_before_larger_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {
+                            "properties": {
+                                "sheetId": index + 1,
+                                "title": spec.title,
+                                "gridProperties": {
+                                    "frozenRowCount": 1,
+                                    "frozenColumnCount": 3,
+                                    "rowCount": 8,
+                                },
+                            }
+                        }
+                        for index, spec in enumerate(DEFAULT_SHEET_TABS)
+                    ]
+                    + [
+                        {
+                            "properties": {
+                                "sheetId": 99,
+                                "title": "DA_2026_30",
+                                "gridProperties": {
+                                    "frozenRowCount": 1,
+                                    "frozenColumnCount": 3,
+                                    "rowCount": 8,
+                                },
+                            }
+                        }
+                    ],
+                }
+            )
+            rows = []
+            for index in range(4):
+                values = ["" for _ in _headers_for("Aktuell")]
+                values[0:3] = ["Buy", f"2026-W30:{index + 1}", f"Stock {index + 1}"]
+                rows.append(
+                    {
+                        "tab": "Aktuell",
+                        "rowKind": "latest_issue_stock_buy_sell_recommendation",
+                        "values": values,
+                    }
+                )
+            derivative_values = ["" for _ in AKTUELL_DERIVATIVE_HEADERS]
+            derivative_values[0:3] = ["DERIV1", "Example Call", "Buy"]
+            rows.append(
+                {
+                    "tab": "Aktuell",
+                    "rowKind": "latest_issue_derivative_buy_sell_recommendation",
+                    "values": derivative_values,
+                }
+            )
+
+            result = write_workbook_plan_to_google_sheet(
+                config,
+                {"issueId": "2026-W30", "rows": rows},
+                sheets_service_factory=lambda: sheets,
+                allow_draft_rows=True,
+            )
+
+        capacity_requests = [
+            request["updateSheetProperties"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"].get("requests", [])
+            if request.get("updateSheetProperties", {}).get("fields")
+            == "gridProperties.rowCount"
+        ]
+        self.assertEqual(len(capacity_requests), 2)
+        self.assertTrue(
+            all(
+                request["properties"]["gridProperties"]["rowCount"] == 11
+                for request in capacity_requests
+            )
+        )
+        self.assertEqual(result["reviewerGridTabsExpanded"], ["DA_2026_30", "Aktuell"])
+        self.assertIn("'DA_2026_30'!A11:AI", result["staleRangesCleared"])
+        self.assertIn("'Aktuell'!A11:AI", result["staleRangesCleared"])
     def _stock_sheet_row(
         self,
         *,
@@ -149,6 +929,171 @@ class GoogleAccessTest(unittest.TestCase):
         row[headers.index("date updated")] = date_updated
         return row
 
+    def test_google_sheet_export_creates_issue_tab_and_keeps_aktuell_on_newest_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {"properties": {"sheetId": index + 1, "title": spec.title}}
+                        for index, spec in enumerate(DEFAULT_SHEET_TABS)
+                    ],
+                }
+            )
+            aktuell_values = ["" for _ in _headers_for("Aktuell")]
+            aktuell_values[0:7] = [
+                "EXM123",
+                "Example Company",
+                "Buy",
+                "111,11 EUR",
+                "140,00 EUR",
+                "95,00 EUR",
+                "",
+            ]
+            latest_plan = {
+                "issueId": "2026-W25",
+                "rows": [
+                    {
+                        "tab": "Aktuell",
+                        "rowKind": "latest_issue_stock_buy_sell_recommendation",
+                        "values": aktuell_values,
+                    }
+                ],
+            }
+
+            latest_result = write_workbook_plan_to_google_sheet(
+                config,
+                latest_plan,
+                sheets_service_factory=lambda: sheets,
+                allow_draft_rows=True,
+            )
+            sheets.spreadsheets_resource.values_resource.values_by_range[
+                "'DA_2026_25'!A:Q"
+            ] = [list(_headers_for("Aktuell")), aktuell_values]
+
+            earlier_plan = {**latest_plan, "issueId": "2026-W24"}
+            earlier_result = write_workbook_plan_to_google_sheet(
+                config,
+                earlier_plan,
+                sheets_service_factory=lambda: sheets,
+                allow_draft_rows=True,
+            )
+
+        self.assertEqual(latest_result["issueTab"], "DA_2026_25")
+        self.assertTrue(latest_result["aktuellUpdated"])
+        self.assertEqual(
+            latest_result["protectedTabs"],
+            ["Search", "Aktuell", "DA_2026_25"],
+        )
+        self.assertIn("'DA_2026_25'!A3:Q4", latest_result["staleRangesCleared"])
+        self.assertNotIn("'DA_2026_25'!A2:Q4", latest_result["staleRangesCleared"])
+        self.assertEqual(earlier_result["issueTab"], "DA_2026_24")
+        self.assertFalse(earlier_result["aktuellUpdated"])
+        self.assertEqual(
+            earlier_result["protectedTabs"],
+            ["Search", "Aktuell", "DA_2026_25", "DA_2026_24"],
+        )
+        titles = [item["properties"]["title"] for item in sheets.spreadsheets_resource.payload["sheets"]]
+        self.assertIn("DA_2026_25", titles)
+        self.assertIn("DA_2026_24", titles)
+
+        raw_batches = [
+            request["body"]["data"]
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "RAW"
+        ]
+        issue_raw_batches = [
+            batch
+            for batch in raw_batches
+            if any(item["range"].startswith("'DA_") for item in batch)
+        ]
+        self.assertTrue(any(item["range"] == "'DA_2026_25'!A2:P2" for item in issue_raw_batches[0]))
+        self.assertTrue(any(item["range"] == "'Aktuell'!A2:P2" for item in issue_raw_batches[0]))
+        self.assertTrue(any(item["range"] == "'DA_2026_24'!A2:P2" for item in issue_raw_batches[1]))
+        self.assertFalse(any(item["range"] == "'Aktuell'!A2:P2" for item in issue_raw_batches[1]))
+
+        search_batches = [
+            request["body"]["data"]
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "USER_ENTERED"
+            and any(item["range"] == "'Search'!A4" for item in request["body"]["data"])
+        ]
+        self.assertEqual(earlier_result["searchIndexedRows"], 2)
+        search_data = search_batches[-1]
+        search_formula = next(item for item in search_data if item["range"] == "'Search'!A4")
+        search_index = next(
+            item
+            for batch in raw_batches
+            for item in batch
+            if item["range"] == "'Search'!S2:AM3"
+        )
+        self.assertNotIn("Aktuell", search_formula["values"][0][0])
+        self.assertEqual(
+            [row[1] for row in search_index["values"]],
+            [202625, 202624],
+        )
+        self.assertEqual(search_index["values"][0][4:20], aktuell_values)
+
+    def test_issue_review_tabs_reorder_newest_first_and_auto_resize_all_columns(self) -> None:
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {"properties": {"sheetId": 10, "title": "Navigation Dashboard"}},
+                    {"properties": {"sheetId": 20, "title": "Aktuell"}},
+                    {"properties": {"sheetId": 30, "title": "Stocks"}},
+                    {"properties": {"sheetId": 40, "title": "DA_2026_28"}},
+                    {"properties": {"sheetId": 50, "title": "DA_2026_30"}},
+                    {"properties": {"sheetId": 60, "title": "DA_2026_29"}},
+                ],
+            }
+        )
+
+        reordered = _reorder_issue_review_tabs_newest_first(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+        )
+        sheet_ids = _fetch_sheet_ids_by_title(sheets, spreadsheet_id="test-spreadsheet")
+        resized = _auto_resize_issue_review_tab_columns(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+            sheet_ids_by_title=sheet_ids,
+        )
+
+        titles = [
+            item["properties"]["title"]
+            for item in sheets.spreadsheets_resource.payload["sheets"]
+        ]
+        self.assertEqual(titles[:3], ["Navigation Dashboard", "Aktuell", "Stocks"])
+        self.assertEqual(titles[3:], ["DA_2026_30", "DA_2026_29", "DA_2026_28"])
+        self.assertEqual(reordered, ["DA_2026_30", "DA_2026_29", "DA_2026_28"])
+        self.assertEqual(resized, ["Aktuell", "DA_2026_30", "DA_2026_29", "DA_2026_28"])
+
+        resize_requests = [
+            request["autoResizeDimensions"]["dimensions"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"].get("requests", [])
+            if "autoResizeDimensions" in request
+        ]
+        self.assertEqual(
+            resize_requests,
+            [
+                {"sheetId": 20, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 17},
+                {"sheetId": 50, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 17},
+                {"sheetId": 60, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 17},
+                {"sheetId": 40, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 17},
+            ],
+        )
+
     def test_load_env_file_parses_quoted_google_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_file = Path(temp_dir) / ".env.google"
@@ -156,7 +1101,7 @@ class GoogleAccessTest(unittest.TestCase):
                 '\n'.join(
                     (
                         'GOOGLE_SERVICE_ACCOUNT_EMAIL="stock-analyst@example.iam.gserviceaccount.com"',
-                        'GOOGLE_DRIVE_FOLDER_ID="1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb"',
+                        'GOOGLE_DRIVE_FOLDER_ID="synthetic-drive-folder-id-0001"',
                     )
                 ),
                 encoding="utf-8",
@@ -168,23 +1113,22 @@ class GoogleAccessTest(unittest.TestCase):
             values["GOOGLE_SERVICE_ACCOUNT_EMAIL"],
             "stock-analyst@example.iam.gserviceaccount.com",
         )
-        self.assertEqual(values["GOOGLE_DRIVE_FOLDER_ID"], "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb")
+        self.assertEqual(values["GOOGLE_DRIVE_FOLDER_ID"], "synthetic-drive-folder-id-0001")
 
     def test_config_requires_existing_credentials_and_google_ids(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
 
             config = load_google_access_config(
                 env={
-                    "GOOGLE_SERVICE_ACCOUNT_EMAIL": "stock-analyst@example.iam.gserviceaccount.com",
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
 
-        self.assertEqual(config.drive_folder_id, "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb")
+        self.assertEqual(config.drive_folder_id, "synthetic-drive-folder-id-0001")
         self.assertEqual(config.service_account_email, "stock-analyst@example.iam.gserviceaccount.com")
         self.assertNotEqual(
             config.to_public_dict()["serviceAccountEmail"],
@@ -195,8 +1139,8 @@ class GoogleAccessTest(unittest.TestCase):
         with self.assertRaisesRegex(GoogleAccessError, "GOOGLE_APPLICATION_CREDENTIALS does not exist"):
             load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": "/missing/service-account.json",
                 }
             )
@@ -208,8 +1152,8 @@ class GoogleAccessTest(unittest.TestCase):
             config = load_google_access_config(
                 env={
                     "GOOGLE_SERVICE_ACCOUNT_EMAIL": "stock-analyst@example.iam.gserviceaccount.com",
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -252,11 +1196,11 @@ class GoogleAccessTest(unittest.TestCase):
     def test_drive_pdf_metadata_listing_is_metadata_only_and_paginated(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -307,11 +1251,11 @@ class GoogleAccessTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             credentials_path = root / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -345,11 +1289,11 @@ class GoogleAccessTest(unittest.TestCase):
     def test_drive_pdf_metadata_can_include_private_ids_for_private_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -476,11 +1420,11 @@ class GoogleAccessTest(unittest.TestCase):
     def test_google_sheet_bootstrap_creates_missing_tabs_and_headers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -500,171 +1444,160 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertNotEqual(result["spreadsheetId"], config.sheets_spreadsheet_id)
         self.assertNotIn(config.sheets_spreadsheet_id, str(result))
-        self.assertIn("Derivative Tips", result["createdTabs"])
-        self.assertIn("Dividend Focus", result["createdTabs"])
-        self.assertIn("Latest Issue", result["createdTabs"])
-        self.assertIn("Insider Activity", result["createdTabs"])
+        self.assertIn("Search", result["createdTabs"])
+        self.assertIn("Aktuell", result["createdTabs"])
+        self.assertNotIn("Derivative Tips", result["createdTabs"])
         self.assertEqual(result["headerRowsWritten"], len(result["tabs"]))
         batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
         self.assertIn(
-            {"addSheet": {"properties": {"title": "Derivative Tips"}}},
+            {"addSheet": {"properties": {"title": "Search"}}},
             batch_body["requests"],
         )
         self.assertIn(
-            {"addSheet": {"properties": {"title": "Dividend Focus"}}},
+            {"addSheet": {"properties": {"title": "Aktuell"}}},
             batch_body["requests"],
         )
         values_body = sheets.spreadsheets_resource.values_resource.batch_update_requests[0]["body"]
         self.assertEqual(values_body["valueInputOption"], "USER_ENTERED")
         self.assertIn(
             {
-                "range": "'Navigation Dashboard'!A5:G5",
+                "range": "'Search'!A1:A1",
+                "values": [["Search company or WKN"]],
+            },
+            values_body["data"],
+        )
+        self.assertIn(
+            {
+                "range": "'Search'!A2",
                 "values": [[
-                    "Area",
-                    "Open",
-                    "What this tab is for",
-                    "Reviewer action",
-                    "Row count",
-                    "Status",
-                    "Notes",
+                    "Searches issue tabs only. Aktuell is excluded to avoid duplicate current-issue results."
                 ]],
             },
             values_body["data"],
         )
+        self.assertNotIn("'Stocks'!A1:T1", str(values_body["data"]))
+        search_tab = next(tab for tab in result["tabs"] if tab["title"] == "Search")
+        self.assertEqual(search_tab["headerRow"], 1)
+        self.assertEqual(search_tab["frozenRows"], 0)
+        self.assertEqual(search_tab["frozenColumns"], 0)
+        self.assertEqual(search_tab["tableStartsAt"], "A1")
+        self.assertEqual(search_tab["parserStatus"], "layout_only")
         self.assertIn(
-            {
-                "range": "'Navigation Dashboard'!A6",
-                "values": [["Core review"]],
-            },
-            values_body["data"],
+            "Source is the first result column for both stock and derivative matches.",
+            search_tab["layoutNotes"],
         )
-        self.assertIn(
-            {
-                "range": "'Navigation Dashboard'!B6",
-                "values": [["Latest Issue"]],
-            },
-            values_body["data"],
-        )
-        self.assertIn(
-            {
-                "range": "'Navigation Dashboard'!E6",
-                "values": [["=COUNTA('Latest Issue'!A2:A)"]],
-            },
-            values_body["data"],
-        )
-        self.assertIn(
-            {
-                "range": "'Navigation Dashboard'!F12",
-                "values": [["planned; review required"]],
-            },
-            values_body["data"],
-        )
-        self.assertNotIn({"range": "'Stocks'!A1", "values": [["date updated"]]}, values_body["data"])
-        self.assertNotIn({"range": "'Stocks'!B1", "values": [[""]]}, values_body["data"])
-        self.assertNotIn(
-            "'Stocks'!A1:T1",
-            [request["range"] for request in sheets.spreadsheets_resource.values_resource.clear_requests],
-        )
-        self.assertIn(
-            {
-                "range": "'Stocks'!A1:T1",
-                "values": [[
-                    "Company",
-                    "WKN",
-                    "Target",
-                    "Stop",
-                    "Current price",
-                    "Market Cap",
-                    "Dividend Yield",
-                    "Recommendation",
-                    "Held since",
-                    "Performance since Recommendation",
-                    "Next Report",
-                    "Report type",
-                    "P/S Ratio 26e",
-                    "P/E Ratio 26e",
-                    "Chance",
-                    "Risk",
-                    "Insider Activity",
-                    "Issue:Page",
-                    "Enrichment status",
-                    "date updated",
-                ]],
-            },
-            values_body["data"],
-        )
-        stock_tab = next(tab for tab in result["tabs"] if tab["title"] == "Stocks")
-        self.assertEqual(stock_tab["headerRow"], 1)
-        self.assertEqual(stock_tab["frozenRows"], 1)
-        self.assertEqual(stock_tab["frozenColumns"], 2)
-        self.assertEqual(stock_tab["tableStartsAt"], "A1")
-        self.assertEqual(stock_tab["parserStatus"], "parser_backed")
-        self.assertIn(
-            "Only explicit stock mentions become rows; do not fan out index constituents.",
-            stock_tab["layoutNotes"],
-        )
-        self.assertIn(
-            "Quick-check and chart-check stock rows also surface here with atomic source refs.",
-            stock_tab["layoutNotes"],
-        )
-        self.assertEqual(stock_tab["metadataCells"], [])
+        self.assertEqual(search_tab["metadataCells"][0]["cell"], "A2")
         tab_status = {tab["title"]: tab["parserStatus"] for tab in result["tabs"]}
-        self.assertNotIn("ETF", tab_status)
-        self.assertNotIn("Options", tab_status)
-        self.assertNotIn("Crypto", tab_status)
-        self.assertEqual(tab_status["Derivative Tips"], "parser_backed")
-        self.assertEqual(tab_status["Latest Issue"], "parser_backed")
-        self.assertEqual(tab_status["Dividend Focus"], "parser_backed")
-        self.assertEqual(tab_status["Extraction Audit"], "parser_backed")
-        self.assertEqual(tab_status["AKTIONAER Depot"], "parser_backed")
-        self.assertEqual(tab_status["Depot Transactions"], "parser_backed")
-        self.assertNotIn("Chart Check", tab_status)
-        self.assertNotIn("Stock Quickcheck", tab_status)
-        self.assertNotIn("Refinement", tab_status)
-        self.assertEqual(tab_status["Insider Activity"], "planned")
-        self.assertEqual(tab_status["Navigation Dashboard"], "layout_only")
-        navigation_tab = next(tab for tab in result["tabs"] if tab["title"] == "Navigation Dashboard")
-        self.assertEqual(navigation_tab["headerRow"], 5)
-        self.assertEqual(navigation_tab["frozenRows"], 5)
-        self.assertEqual(navigation_tab["frozenColumns"], 2)
-        self.assertEqual(navigation_tab["tableStartsAt"], "A5")
+        self.assertEqual(set(tab_status), {"Search", "Aktuell"})
+        self.assertEqual(tab_status["Search"], "layout_only")
+        self.assertEqual(tab_status["Aktuell"], "parser_backed")
         headers_by_tab = {tab["title"]: tab["headers"] for tab in result["tabs"]}
-        self.assertEqual(headers_by_tab["Latest Issue"][0], "Issue:Page")
-        self.assertEqual(headers_by_tab["Latest Issue"][4], "Magazine Current Price")
-        self.assertEqual(headers_by_tab["Derivative Tips"][10], "Magazine Entry Price")
-        self.assertEqual(headers_by_tab["Derivative Tips"][11], "Magazine Current Price")
-        self.assertEqual(headers_by_tab["AKTIONAER Depot"][3], "Buy date")
-        self.assertEqual(headers_by_tab["AKTIONAER Depot"][4], "Sale date")
-        self.assertEqual(headers_by_tab["AKTIONAER Depot"][5], "Magazine Buy Price")
-        self.assertEqual(headers_by_tab["AKTIONAER Depot"][6], "Magazine Current Price")
-        self.assertEqual(headers_by_tab["Depot Transactions"][5], "Magazine Transaction Price")
-        self.assertEqual(headers_by_tab["Stocks"][10], "Next Report")
-        self.assertEqual(headers_by_tab["Stocks"][11], "Report type")
-        self.assertEqual(headers_by_tab["Stocks"][16], "Insider Activity")
-        self.assertEqual(headers_by_tab["Insider Activity"][14], "SEC filing URL")
-        self.assertEqual(headers_by_tab["Dividend Focus"][3], "Magazine Price")
+        self.assertEqual(headers_by_tab["Search"], ["Search company or WKN"])
+        self.assertEqual(headers_by_tab["Aktuell"][0], "WKN")
+        self.assertEqual(headers_by_tab["Aktuell"][3], "Price at Print")
         for tab in result["tabs"]:
-            self.assertGreaterEqual(tab["frozenRows"], 1)
+            if tab["title"] == "Search":
+                self.assertEqual(tab["frozenRows"], 0)
+            else:
+                self.assertGreaterEqual(tab["frozenRows"], 1)
             self.assertIn("layoutNotes", tab)
             self.assertTrue(tab["tableStartsAt"])
 
-        instrument_tabs = {
-            "Stocks",
-            "Derivative Tips",
-            "Dividend Focus",
-        }
-        for tab in result["tabs"]:
-            if tab["title"] in instrument_tabs:
-                self.assertEqual(tab["headers"][-1], "date updated")
+    def test_google_sheet_bootstrap_renames_latest_issue_to_aktuell_without_data_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {"properties": {"sheetId": 10, "title": "Navigation Dashboard"}},
+                        {"properties": {"sheetId": 20, "title": "Latest Issue"}},
+                        {"properties": {"sheetId": 30, "title": "Stocks"}},
+                    ],
+                }
+            )
+
+            result = bootstrap_google_sheet(config, sheets_service_factory=lambda: sheets)
+
+        self.assertNotIn("Aktuell", result["createdTabs"])
+        self.assertEqual(result["renamedTabs"], [{"from": "Latest Issue", "to": "Aktuell"}])
+        rename_request = sheets.spreadsheets_resource.batch_update_requests[0]["body"]["requests"][0]
+        self.assertEqual(
+            rename_request,
+            {
+                "updateSheetProperties": {
+                    "properties": {"sheetId": 20, "title": "Aktuell", "index": 1},
+                    "fields": "title,index",
+                }
+            },
+        )
+        self.assertEqual(
+            [item["properties"]["title"] for item in sheets.spreadsheets_resource.payload["sheets"]],
+            ["Search", "Aktuell"],
+        )
+
+    def test_google_sheet_bootstrap_moves_aktuell_to_first_when_search_is_not_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {"properties": {"sheetId": 10, "title": "Navigation Dashboard"}},
+                        {"properties": {"sheetId": 20, "title": "Stocks"}},
+                        {"properties": {"sheetId": 30, "title": "Aktuell"}},
+                    ],
+                }
+            )
+
+            bootstrap_google_sheet(
+                config,
+                sheets_service_factory=lambda: sheets,
+                tab_specs=(),
+                write_headers=False,
+                prune_extra_tabs=False,
+            )
+
+        self.assertEqual(
+            sheets.spreadsheets_resource.batch_update_requests[0]["body"]["requests"],
+            [
+                        {
+                            "updateSheetProperties": {
+                                "properties": {"sheetId": 30, "index": 0},
+                                "fields": "index",
+                            }
+                }
+            ],
+        )
+        self.assertEqual(
+            [item["properties"]["title"] for item in sheets.spreadsheets_resource.payload["sheets"]],
+            ["Aktuell", "Navigation Dashboard", "Stocks"],
+        )
 
     def test_google_sheet_bootstrap_can_skip_header_writes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -687,11 +1620,11 @@ class GoogleAccessTest(unittest.TestCase):
     def test_google_sheet_bootstrap_prunes_only_generated_inactive_tabs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -715,19 +1648,20 @@ class GoogleAccessTest(unittest.TestCase):
             for request in batch_body["requests"]
             if "deleteSheet" in request
         ]
-        self.assertEqual(result["deletedTabCount"], 1)
-        self.assertNotIn({"sheetId": 10}, delete_requests)
+        self.assertEqual(result["deletedTabCount"], 3)
+        self.assertIn({"sheetId": 10}, delete_requests)
         self.assertIn({"sheetId": 20}, delete_requests)
+        self.assertIn({"sheetId": 40}, delete_requests)
         self.assertNotIn({"sheetId": 30}, delete_requests)
 
     def test_google_sheet_bootstrap_replaces_generated_conditional_format_rules(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -751,18 +1685,20 @@ class GoogleAccessTest(unittest.TestCase):
             result = bootstrap_google_sheet(
                 config,
                 sheets_service_factory=lambda: sheets,
+                tab_specs=DEFAULT_SHEET_TABS,
                 write_headers=False,
             )
 
-        batch_body = sheets.spreadsheets_resource.batch_update_requests[0]["body"]
         delete_requests = [
             request["deleteConditionalFormatRule"]
-            for request in batch_body["requests"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"]["requests"]
             if "deleteConditionalFormatRule" in request
         ]
         add_requests = [
             request["addConditionalFormatRule"]
-            for request in batch_body["requests"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"]["requests"]
             if "addConditionalFormatRule" in request
         ]
         self.assertEqual(result["formatRulesWritten"], 7)
@@ -788,18 +1724,18 @@ class GoogleAccessTest(unittest.TestCase):
     def test_google_sheet_clear_data_rows_preserves_headers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
             sheets = _FakeSheets(
                 {
                     "spreadsheetId": config.sheets_spreadsheet_id,
-                    "sheets": [{"properties": {"title": "Stocks"}}],
+                    "sheets": [{"properties": {"sheetId": 30, "title": "Stocks"}}],
                 }
             )
 
@@ -817,18 +1753,19 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertNotIn(config.sheets_spreadsheet_id, str(result))
         self.assertEqual(result["clearedTabCount"], len(result["clearedRanges"]))
         self.assertNotIn("'Stocks'!A1:T1", clear_ranges)
-        self.assertIn("'Stocks'!A2:T", clear_ranges)
-        self.assertNotIn("'Navigation Dashboard'!A5:E", clear_ranges)
+        self.assertNotIn("'Stocks'!A2:T", clear_ranges)
+        self.assertIn("'Aktuell'!A2:P", clear_ranges)
+        self.assertNotIn("'Search'!A2:A", clear_ranges)
         self.assertGreater(len(values_resource.batch_update_requests), 0)
 
-    def test_google_sheet_export_writes_workbook_rows_and_replaces_same_issue(self) -> None:
+    def test_google_sheet_export_omits_retired_canonical_tabs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -920,51 +1857,38 @@ class GoogleAccessTest(unittest.TestCase):
             )
 
         values_resource = sheets.spreadsheets_resource.values_resource
-        data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
-        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A2:T3")
-
+        data_ranges = next(
+            request["body"]["data"]
+            for request in values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "RAW"
+        )
         self.assertTrue(result["ok"])
         self.assertEqual(result["enrichmentProviderCalls"], 0)
         self.assertEqual(result["exportMode"], "private_draft_review_export")
         self.assertFalse(result["familyVisibleSafe"])
         self.assertTrue(result["privateDraftReviewOnly"])
-        self.assertEqual(result["rowsWritten"], 2)
-        self.assertIn("Stocks", result["clearedTabs"])
-        self.assertIn("Dividend Focus", result["clearedTabs"])
-        self.assertEqual(stocks_write["values"][0][0], "Keep Different Issue")
-        self.assertEqual(stocks_write["values"][1][0], "Banco Sabadell")
-        self.assertEqual(_stock_value(stocks_write["values"][0], "Dividend Yield"), "")
-        self.assertEqual(_stock_value(stocks_write["values"][0], "Target"), "3,33 EUR")
-        self.assertEqual(_stock_value(stocks_write["values"][0], "Stop"), "")
-        self.assertEqual(_stock_value(stocks_write["values"][0], "Current price"), "8.82 USD")
-        self.assertEqual(_stock_value(stocks_write["values"][1], "Target"), "4,30 EUR")
-        self.assertEqual(_stock_value(stocks_write["values"][1], "Stop"), "2,70 EUR")
-        self.assertEqual(_stock_value(stocks_write["values"][1], "Current price"), "3,33 EUR")
-        self.assertEqual(_stock_value(stocks_write["values"][1], "Dividend Yield"), "18,6 %")
-        self.assertEqual(_stock_value(stocks_write["values"][1], "Recommendation"), "new_recommendation")
-        self.assertEqual(_stock_value(stocks_write["values"][1], "Held since"), "")
-        self.assertEqual(
-            _stock_value(stocks_write["values"][1], "Issue:Page"),
-            "2026-W02:20 | 2026-W03:22",
-        )
-        self.assertIn("'Stocks'!A4:T4", [request["range"] for request in values_resource.clear_requests])
-        self.assertIn("'Stocks'!A4:T4", result["staleRangesCleared"])
+        self.assertEqual(result["rowsWritten"], 0)
+        self.assertEqual(result["rowsOmittedFromCleanSheet"], 2)
+        self.assertNotIn("Stocks", result["clearedTabs"])
+        self.assertNotIn("Dividend Focus", result["clearedTabs"])
+        self.assertFalse(any(item["range"].startswith("'Stocks'!") for item in data_ranges))
+        self.assertFalse(any(item["range"].startswith("'Dividend Focus'!") for item in data_ranges))
 
     def test_google_sheet_export_writes_before_clearing_stale_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
             sheets = _FakeSheets(
                 {
                     "spreadsheetId": config.sheets_spreadsheet_id,
-                    "sheets": [{"properties": {"title": "Stocks"}}],
+                    "sheets": [{"properties": {"sheetId": 30, "title": "Stocks"}}],
                 }
             )
             values_resource = sheets.spreadsheets_resource.values_resource
@@ -984,7 +1908,10 @@ class GoogleAccessTest(unittest.TestCase):
                 ],
             }
 
-            with self.assertRaisesRegex(GoogleAccessError, "workbook row export failed"):
+            with self.assertRaisesRegex(
+                GoogleAccessError,
+                "workbook row export failed during writing workbook values",
+            ):
                 write_workbook_plan_to_google_sheet(
                     config,
                     workbook_plan,
@@ -994,21 +1921,21 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertEqual(values_resource.clear_requests, [])
 
-    def test_google_sheet_export_uses_latest_stock_recommendation_and_held_since(self) -> None:
+    def test_google_sheet_export_does_not_recreate_stocks_tab_for_follow_up_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
             sheets = _FakeSheets(
                 {
                     "spreadsheetId": config.sheets_spreadsheet_id,
-                    "sheets": [{"properties": {"title": "Stocks"}}],
+                    "sheets": [{"properties": {"sheetId": 30, "title": "Stocks"}}],
                 }
             )
             sheets.spreadsheets_resource.values_resource.values_by_range["'Stocks'!A2:T"] = [
@@ -1040,26 +1967,25 @@ class GoogleAccessTest(unittest.TestCase):
                 allow_draft_rows=True,
             )
 
-        values_resource = sheets.spreadsheets_resource.values_resource
-        data_ranges = values_resource.batch_update_requests[-1]["body"]["data"]
-        stocks_write = next(item for item in data_ranges if item["range"] == "'Stocks'!A2:T2")
-
         self.assertTrue(result["ok"])
-        self.assertEqual(_stock_value(stocks_write["values"][0], "Recommendation"), "hold")
-        self.assertEqual(_stock_value(stocks_write["values"][0], "Held since"), "02/2026")
-        self.assertEqual(
-            _stock_value(stocks_write["values"][0], "Issue:Page"),
-            "2026-W02:20 | 2026-W03:22",
+        self.assertEqual(result["rowsWritten"], 0)
+        self.assertEqual(result["rowsOmittedFromCleanSheet"], 1)
+        self.assertNotIn(
+            "Stocks",
+            [
+                item["properties"]["title"]
+                for item in sheets.spreadsheets_resource.payload["sheets"]
+            ],
         )
 
     def test_google_sheet_export_rejects_short_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -1097,11 +2023,11 @@ class GoogleAccessTest(unittest.TestCase):
     def test_google_sheet_export_skips_draft_rows_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -1131,11 +2057,11 @@ class GoogleAccessTest(unittest.TestCase):
     def test_google_sheet_export_rejects_forged_approved_rows_without_audit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -1168,11 +2094,11 @@ class GoogleAccessTest(unittest.TestCase):
     def test_google_sheet_export_writes_audit_approved_rows_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -1210,18 +2136,19 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["exportMode"], "approved_family_export")
         self.assertTrue(result["familyVisibleSafe"])
         self.assertFalse(result["privateDraftReviewOnly"])
-        self.assertEqual(result["rowsWritten"], 1)
+        self.assertEqual(result["rowsWritten"], 0)
+        self.assertEqual(result["rowsOmittedFromCleanSheet"], 1)
         self.assertNotEqual(result["spreadsheetId"], config.sheets_spreadsheet_id)
         self.assertNotIn(config.sheets_spreadsheet_id, str(result))
 
     def test_google_sheet_export_rejects_invalid_approval_evidence_audit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -1262,11 +2189,11 @@ class GoogleAccessTest(unittest.TestCase):
     def test_google_sheet_export_skips_layout_only_dashboard_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )
@@ -1296,11 +2223,11 @@ class GoogleAccessTest(unittest.TestCase):
     def test_google_sheet_refinement_export_writes_page_map_and_preserves_notes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             credentials_path = Path(temp_dir) / "service-account.json"
-            credentials_path.write_text("{}", encoding="utf-8")
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
             config = load_google_access_config(
                 env={
-                    "GOOGLE_DRIVE_FOLDER_ID": "1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb",
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": "1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE",
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
                     "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
                 }
             )

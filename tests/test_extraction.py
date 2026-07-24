@@ -1,10 +1,12 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from stock_analyst.extraction import (
     OcrStatus,
     PdfTextExtractionError,
+    PopplerTextExtractor,
     RawPageText,
     TextExtractionStatus,
     extract_pdf_text,
@@ -35,6 +37,35 @@ class FailingExtractor:
 
 
 class ExtractionTest(unittest.TestCase):
+    @patch("stock_analyst.extraction.subprocess.run")
+    def test_poppler_fallback_preserves_page_boundaries_and_layout(self, run) -> None:
+        run.side_effect = (
+            type("Result", (), {"stdout": "first page\fsecond page\f"})(),
+            type("Result", (), {"stdout": "first layout\fsecond layout\f"})(),
+        )
+
+        pages = PopplerTextExtractor().extract_pages(Path("private.pdf"))
+
+        self.assertEqual(
+            pages,
+            (
+                RawPageText(
+                    page_number=1,
+                    text="first page",
+                    source="embedded",
+                    layout_text="first layout",
+                ),
+                RawPageText(
+                    page_number=2,
+                    text="second page",
+                    source="embedded",
+                    layout_text="second layout",
+                ),
+            ),
+        )
+        self.assertEqual(run.call_args_list[0].args[0], ["pdftotext", "private.pdf", "-"])
+        self.assertEqual(run.call_args_list[1].args[0], ["pdftotext", "-layout", "private.pdf", "-"])
+
     def test_extract_pdf_text_records_page_hashes_and_review_metadata(self) -> None:
         with TemporaryDirectory() as directory:
             pdf = write_pdf(Path(directory) / "issue.pdf")

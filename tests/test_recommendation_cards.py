@@ -2,6 +2,8 @@ import unittest
 
 from stock_analyst.recommendation_cards import (
     _VisualChanceRiskPair,
+    extract_dax_action_table_cards_from_pages,
+    extract_dax_action_table_result_from_pages,
     extract_recommendation_cards_from_lines,
 )
 from stock_analyst.schemas import InstrumentType
@@ -59,6 +61,299 @@ class RecommendationCardsTest(unittest.TestCase):
             card.dividend_per_share_trend,
             "2023=0,07 EUR; 2024=0,20 EUR; 2025=0,23 EUR; 2026e=0,62* EUR; 2027e=0,22 EUR",
         )
+
+    def test_extracts_stock_card_with_qualified_wkns_and_2027e_valuations(self) -> None:
+        """Regression for a current-issue card with exchange-specific WKN labels."""
+
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Aktie",
+                "Dual Listing AG",
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "Akt. Kurs",
+                "1,44 EUR",
+                "WKN (PRIMARY)",
+                "A1B2C3",
+                "WKN (SECONDARY)",
+                "D4E5F6",
+                "Ziel",
+                "3,00 EUR",
+                "Stopp",
+                "1,10 EUR",
+                "Dividendenrendite",
+                "0,0 %",
+                "KUV",
+                "27e",
+                "0,0",
+                "KGV",
+                "27e",
+                "–",
+                "Neuempfehlung",
+            ),
+            issue_id="2026-W30",
+            page_number=14,
+        )
+
+        self.assertEqual(len(cards), 1)
+        card = cards[0]
+        self.assertEqual(card.wkn, "A1B2C3")
+        self.assertEqual(card.current_price, "1,44 EUR")
+        self.assertEqual(card.target, "3,00 EUR")
+        self.assertEqual(card.stop, "1,10 EUR")
+        self.assertEqual(card.dividend_yield, "0,0 %")
+        self.assertEqual(card.kuv_26e, "0,0")
+        self.assertEqual(card.kgv_26e, "–")
+        self.assertEqual(card.recommendation_status, "new_recommendation")
+
+    def test_extracts_ipo_price_and_stop_from_a_single_line_target_label(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Aktie",
+                "Orbital Ventures AG",
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "IPO-Preis",
+                "111,11 EUR",
+                "WKN",
+                "ORB123",
+                "Ziel",
+                "140,00 EUR Stopp",
+                "95,00 EUR",
+                "Neuempfehlung",
+            ),
+            issue_id="2026-W25",
+            page_number=37,
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].current_price, "111,11 EUR")
+        self.assertEqual(cards[0].target, "140,00 EUR")
+        self.assertEqual(cards[0].stop, "95,00 EUR")
+
+    def test_extracts_duel_table_stop_when_target_is_inline_with_recommendation(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Unternehmen",
+                "WKN",
+                "Aktueller",
+                "Kurs",
+                "Marktkap.",
+                "in Mrd. €",
+                "DR*",
+                "in %",
+                "KUV",
+                "2026e",
+                "KGV",
+                "2026e",
+                "Perf. seit",
+                "Erstempf.",
+                "Empf.-",
+                "Ausgabe",
+                "Ziel",
+                "Stopp",
+                "Chance",
+                "Risiko",
+                "Footwear Example AG",
+                "SHOE01",
+                "101,00 EUR",
+                "5,2",
+                "0,0",
+                "1,5",
+                "9",
+                "Neuempfehlung 140,00 EUR",
+                "90,00 EUR",
+                "•••••",
+                "•••••",
+            ),
+            issue_id="2026-W25",
+            page_number=54,
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].target, "140,00 EUR")
+        self.assertEqual(cards[0].stop, "90,00 EUR")
+
+    def test_extracts_duel_table_recommendation_with_dotted_thousands_values(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Unternehmen",
+                "WKN",
+                "Aktueller",
+                "Kurs",
+                "Marktkap.",
+                "in Mrd. $",
+                "DR*",
+                "in %",
+                "KUV",
+                "2027e",
+                "KGV",
+                "2027e",
+                "Perf. seit",
+                "Erstempf.",
+                "Empf.-",
+                "Ausgabe",
+                "Ziel",
+                "Stopp",
+                "Chance",
+                "Risiko",
+                "Example Storage",
+                "A00001",
+                "1.500,00 EUR",
+                "260",
+                "0,0",
+                "5,4",
+                "9",
+                "Neuempfehlung",
+                "2.000,00 EUR",
+                "1.245,00 EUR",
+                "•••••",
+                "•••••",
+            ),
+            issue_id="2026-W30",
+            page_number=36,
+        )
+
+        self.assertEqual(len(cards), 1)
+        card = cards[0]
+        self.assertEqual(card.recommendation_status, "new_recommendation")
+        self.assertEqual(card.target, "2.000,00 EUR")
+        self.assertEqual(card.stop, "1.245,00 EUR")
+
+    def test_extracts_halten_stock_card_as_hold(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Aktie",
+                "Example Automaker",
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "Akt. Kurs",
+                "72,12 EUR",
+                "WKN",
+                "A00002",
+                "Markt-",
+                "kapitalisierung",
+                "33,6 Mrd. EUR",
+                "Dividendenrendite",
+                "7,8 %",
+                "KUV",
+                "27e",
+                "0,1",
+                "KGV",
+                "27e",
+                "3",
+                "Halten",
+                "Nächster",
+                "Termin",
+                "24.07.26 Quartalszahlen",
+            ),
+            issue_id="2026-W30",
+            page_number=40,
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].recommendation_status, "hold")
+
+    def test_extracts_verkaufen_stock_card_as_sold(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Aktie",
+                "Example Enterprise",
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "Akt. Kurs",
+                "185,06 EUR",
+                "WKN",
+                "851399",
+                "Markt-",
+                "kapitalisierung",
+                "173,5 Mrd. EUR",
+                "Dividendenrendite",
+                "3,2 %",
+                "KUV",
+                "27e",
+                "3,5",
+                "KGV",
+                "27e",
+                "16,1",
+                "Verkaufen",
+                "Weitere Informationen",
+            ),
+            issue_id="2026-W31",
+            page_number=37,
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].recommendation_status, "sold")
+
+    def test_page_signals_apply_only_to_the_card_block_that_contains_them(self) -> None:
+        def card_lines(name: str, wkn: str, signal: str | None) -> tuple[str, ...]:
+            values = (
+                "Aktie",
+                name,
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "Akt. Kurs",
+                "10,00 EUR",
+                "WKN",
+                wkn,
+                "Ziel",
+                "12,00 EUR",
+                "Stopp",
+                "8,00 EUR",
+            )
+            return (*values, signal) if signal else values
+
+        cards = extract_recommendation_cards_from_lines(
+            (
+                *card_lines("Alpha Signal AG", "SIG001", "Top-Tipp"),
+                *card_lines("Beta Signal AG", "SIG002", "Verkaufssignal"),
+                *card_lines("Gamma Unrelated AG", "SIG003", None),
+            ),
+            issue_id="2026-W40",
+            page_number=18,
+        )
+
+        self.assertEqual(
+            [card.recommendation_status for card in cards],
+            ["new_recommendation", "sold", None],
+        )
+
+    def test_page_signal_applies_when_the_page_has_only_one_card(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Top-Tipp",
+                "Aktie",
+                "Single Card AG",
+                "Chance",
+                "Risiko",
+                "•••••",
+                "•••••",
+                "Akt. Kurs",
+                "10,00 EUR",
+                "WKN",
+                "ONE001",
+                "Ziel",
+                "12,00 EUR",
+                "Stopp",
+                "8,00 EUR",
+            ),
+            issue_id="2026-W40",
+            page_number=19,
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].recommendation_status, "new_recommendation")
 
     def test_extracts_follow_up_fields_and_quarterly_report_date(self) -> None:
         cards = extract_recommendation_cards_from_lines(
@@ -247,6 +542,137 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(ehang.market_cap, "1,0 Mrd. EUR")
         self.assertEqual(ehang.kuv_26e, "8,2")
         self.assertEqual(ehang.kgv_26e, "156")
+
+    def test_extracts_layout_preserved_top_recommendation_rows(self) -> None:
+        """Regression for wide, one-line PDF recommendation-table rows."""
+
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Top-Empfehlungen",
+                "Unternehmen    WKN    Aktueller Kurs    Marktkap.    DR*    KUV    KGV    Empf.-    Ziel    Stopp    Chance    Risiko",
+                "Alpha Engineering AG    ENG001    81,25 €    3,0    3,5    0,5    12    Neuempfehlung    108,00 €    63,00 €    •••••    •••••",
+                "Beta Energy AG          NRG002    42,50 €    9,5    0,0    1,0    17    Neuempfehlung    55,00 €     33,00 €    •••••    •••••",
+                "Gamma Insurance AG      INS003    112,00 €   28,0   3,6    0,5    10    Neuempfehlung    136,00 €    93,00 €    •••••    •••••",
+            ),
+            issue_id="2026-W30",
+            page_number=24,
+        )
+
+        self.assertEqual(
+            [card.instrument_name for card in cards],
+            ["Alpha Engineering AG", "Beta Energy AG", "Gamma Insurance AG"],
+        )
+        self.assertEqual([card.wkn for card in cards], ["ENG001", "NRG002", "INS003"])
+        self.assertEqual(
+            [card.recommendation_status for card in cards],
+            ["new_recommendation", "new_recommendation", "new_recommendation"],
+        )
+        self.assertEqual(cards[0].current_price, "81,25 EUR")
+        self.assertEqual(cards[1].target, "55,00 EUR")
+        self.assertEqual(cards[2].stop, "93,00 EUR")
+        self.assertEqual(cards[2].dividend_yield, "3,6 %")
+        self.assertEqual(cards[2].kuv_26e, "0,5")
+        self.assertEqual(cards[2].kgv_26e, "10")
+        self.assertEqual(
+            [card.extraction_notes for card in cards],
+            [("layout_table_extraction",)] * 3,
+        )
+
+    def test_extracts_dax_action_table_rows_and_preserves_wait(self) -> None:
+        cards = extract_dax_action_table_cards_from_pages(
+            (
+                (26, (
+                    "Unternehmen    WKN    Aktueller Kurs    Ziel    Stopp",
+                    "Alpha AG    ALPHA1    10,00 EUR    15,00 EUR    8,00 EUR",
+                    "Beta AG    BETA01    20,00 EUR    –    –",
+                    "Gamma AG    GAMMA1    30,00 EUR    40,00 EUR    20,00 EUR",
+                    "Delta AG    DELTA1    40,00 EUR    –    –",
+                    "Epsilon Medical AG    MED005    50,00 EUR    –    –",
+                )),
+                (27, (
+                    "Einschätzung    Kommentar    Unternehmen",
+                    "Kaufen    Solide Perspektive    Alpha AG",
+                    "Verkaufen    Keine Kaufargumente    Beta AG",
+                    "Halten    Abwarten auf Zahlen    Gamma AG",
+                    "Abwarten    Beobachten    Delta AG",
+                    "Verkaufen    Schwieriges Umfeld    Epsilon Medical AG",
+                )),
+            ),
+            issue_id="2026-W30",
+        )
+
+        self.assertEqual(
+            [card.instrument_name for card in cards],
+            ["Alpha AG", "Beta AG", "Gamma AG", "Delta AG", "Epsilon Medical AG"],
+        )
+        self.assertEqual(
+            [card.recommendation_status for card in cards],
+            ["new_recommendation", "sold", "hold", "wait", "sold"],
+        )
+        self.assertEqual([card.wkn for card in cards], ["ALPHA1", "BETA01", "GAMMA1", "DELTA1", "MED005"])
+        self.assertEqual(cards[2].target, "40,00 EUR")
+        self.assertEqual(cards[2].stop, "20,00 EUR")
+        self.assertTrue(
+            all(card.extraction_notes == ("dax_paired_spread_extraction", "source_pages:26,27") for card in cards)
+        )
+
+    def test_discovers_shifted_paired_action_table_pages(self) -> None:
+        result = extract_dax_action_table_result_from_pages(
+            (
+                (
+                    40,
+                    (
+                        "Unternehmen    WKN    Aktueller Kurs    Ziel    Stopp",
+                        "Alpha AG    ALPHA1    10,00 EUR    15,00 EUR    8,00 EUR",
+                    ),
+                ),
+                (41, ("Unrelated layout page",)),
+                (
+                    43,
+                    (
+                        "Einschätzung    Kommentar    Unternehmen",
+                        "Kaufen    Synthetischer Hinweis    Alpha AG",
+                    ),
+                ),
+            ),
+            issue_id="2026-W40",
+        )
+
+        self.assertEqual(len(result.cards), 1)
+        self.assertEqual(result.cards[0].instrument_name, "Alpha AG")
+        self.assertEqual(
+            result.cards[0].extraction_notes,
+            ("dax_paired_spread_extraction", "source_pages:40,43"),
+        )
+        self.assertEqual(result.exceptions, ())
+
+    def test_retains_paired_table_name_mismatch_as_review_exception(self) -> None:
+        result = extract_dax_action_table_result_from_pages(
+            (
+                (
+                    40,
+                    (
+                        "Unternehmen    WKN    Aktueller Kurs    Ziel    Stopp",
+                        "Alpha AG    ALPHA1    10,00 EUR    15,00 EUR    8,00 EUR",
+                    ),
+                ),
+                (
+                    41,
+                    (
+                        "Einschätzung    Kommentar    Unternehmen",
+                        "Kaufen    Synthetischer Hinweis    Different AG",
+                    ),
+                ),
+            ),
+            issue_id="2026-W40",
+        )
+
+        self.assertEqual(result.cards, ())
+        self.assertEqual(len(result.exceptions), 1)
+        exception = result.exceptions[0]
+        self.assertEqual(exception.reason, "paired_table_name_mismatch")
+        self.assertEqual((exception.value_page, exception.action_page), (40, 41))
+        self.assertEqual((exception.value_row_count, exception.action_row_count), (1, 1))
 
     def test_extracts_follow_up_when_labels_are_grouped_before_values(self) -> None:
         cards = extract_recommendation_cards_from_lines(

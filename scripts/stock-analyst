@@ -40,6 +40,7 @@ Usage:
   scripts/stock-analyst market-data-plan [--env-file .env] [--symbol TICKER] [--symbol-file path]
   scripts/stock-analyst market-symbol-map-template --workbook-plan-file path --output path
   scripts/stock-analyst google-sheets-clear-data [--env-file .env]
+  scripts/stock-analyst google-sheets-refresh-search [--env-file .env]
   scripts/stock-analyst google-sheets-export-plan <workbook-plan.json> [--env-file .env]
   scripts/stock-analyst google-sheets-refinement <pdf> [--env-file .env]
   scripts/stock-analyst python <python args...>
@@ -73,7 +74,7 @@ case "${COMMAND}" in
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "$@"
     ;;
-  workbook-export-plan|refinement-plan|recommendation-cards|section-inventory|dividend-strategy|quick-check|chart-check|visual-ocr-review|ocr-fixture-plan|ocr-needed|market-data-plan|market-symbol-map-template|process-pdf|import-pdf-folder|corpus-status|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap|google-sheets-clear-data|google-sheets-export-plan|google-sheets-refinement)
+  workbook-export-plan|refinement-plan|recommendation-cards|section-inventory|dividend-strategy|quick-check|chart-check|visual-ocr-review|ocr-fixture-plan|ocr-needed|market-data-plan|market-symbol-map-template|process-pdf|import-pdf-folder|corpus-status|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap|google-sheets-clear-data|google-sheets-refresh-search|google-sheets-export-plan|google-sheets-refinement)
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "${COMMAND}" "$@"
     ;;

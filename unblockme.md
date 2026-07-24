@@ -109,12 +109,11 @@ Drive adapter setup steps when requested:
 PYTHONPATH=src python3 -m stock_analyst.cli google-access-smoke --env-file .env
 ```
 
-Current configured dev values, without secrets:
-
-- Service account:
-  `stock-analyst@stock-analyst-496512.iam.gserviceaccount.com`
-- Drive folder ID: `1HqFI8-T1tXuyHedVx3U7D2AA0tHG53tb`
-- Spreadsheet ID: `1vE0YAMOoAP3SeFI6vXnzmSlGdaFRfBkQcoCYVMwz4UE`
+Keep the current dev values only in ignored local `.env` or other approved
+private configuration. Tracked documentation must use the variable names above,
+never a live service-account address, Drive folder ID, spreadsheet ID,
+credentials path, or credential content. If setup is incomplete, obtain the
+values through the private family-admin handoff and populate `.env` locally.
 
 ## Google Sheet Setup
 

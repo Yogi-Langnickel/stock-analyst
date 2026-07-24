@@ -37,17 +37,39 @@ Created: 2026-06-06
 - Planned rows must target an active workbook tab and exactly match that tab's
   configured width before JSON serialization or Google write paths can pad or
   truncate them.
+- Paired value/action tables are discovered from their layout headers rather
+  than fixed page numbers. Emit rows only when the nearest preceding or
+  co-located value table and action table have equal row counts and names in
+  the same order.
+  Missing, empty, count-mismatched, or name-mismatched candidates must emit a
+  metadata-only `paired_action_table_candidate_exception` blocker in
+  `Extraction Audit`; never silently discard them or include source text in the
+  exception.
+- Page-level `Top-Tipp` and `Verkaufssignal` wording must not set the action on
+  unrelated cards. Use the signal only when it occurs inside that card's parsed
+  block, or when the page contains exactly one card candidate. Established
+  derivative source literals `Dabei-bleiben` and `Ausgestoppt` map to reviewer
+  actions `Hold` and `Sell`.
 
 ## Active Tabs And Identity
 
-- Active workbook tabs are the layout-only `Navigation Dashboard` plus
-  `Latest Issue Recommendations`, `Stocks`, `Derivative Tips`,
-  `AKTIONAER Depot`, `Depot Transactions`, `Dividend Focus`,
-  `Insider Activity`, and `Extraction Audit`.
-- `Latest Issue Recommendations` is generated for the current workbook-export
-  plan. It duplicates selected stock fields for triage only; canonical merged
-  equity state remains in `Stocks`.
-- Google Sheets export replaces `Latest Issue Recommendations` on each
+- Active Google Sheet tabs are the layout-only `Search`, `Aktuell`, and
+  newest-first `DA_YYYY_NN` issue tabs. Hidden generated summary/dashboard tabs
+  are retired and bootstrap deletes them instead of recreating them.
+- `Aktuell` is generated for the current workbook-export plan. It contains
+  only source-linked explicit publisher Buy, Sell, Hold, and Wait actions and
+  is excluded from the search index to avoid duplicating the latest issue.
+- The merged `Search!C1:E1` field matches a company name or WKN against issue
+  tabs only. Search has no frozen rows. Stock and
+  derivative results use the same full columns and values as their issue-tab
+  tables, remain vertically stacked, and sort by issue descending; generated
+  index columns `S:AM` remain hidden.
+- Search refresh and workbook export reconcile managed protections after all
+  generated writes. `Search` is protected except for `C1:E1`; `Aktuell` and
+  every existing or newly created `DA_YYYY_NN` tab are fully protected. The
+  service account remains an allowed editor, and unrelated manual protections
+  are preserved.
+- Google Sheets export replaces `Aktuell` on each
   same-issue export so the tab stays focused on the latest plan.
 - Google Sheets row replacement writes the new combined ranges before clearing
   stale trailing rows. Do not reintroduce clear-before-write behavior; a failed
@@ -65,9 +87,9 @@ Created: 2026-06-06
   The approval application boundary enforces the same evidence rule for final
   `approved` and `rejected` decisions even when called directly in code, not
   only when loading CSV rows.
-- `Navigation Dashboard` is a static reviewer cockpit. Do not emit workbook
-  rows to it, do not trigger enrichment from it, and preserve its body rows
-  during generated data clears.
+- Local workbook-plan schemas may still emit canonical `Stocks`, derivatives,
+  dividend, depot, insider, and audit rows for extraction and validation.
+  Google export omits those retired live-tab rows.
 - Stocks update by WKN when present, falling back to normalized company name.
   Later magazine mentions update existing instrument rows rather than append
   duplicates, and merge issue/page provenance.

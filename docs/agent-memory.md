@@ -37,16 +37,23 @@ Last compacted: 2026-06-06
   remote/OCR planning after the first detected `Statistik` body section. Local
   workbook export still scans non-front-matter embedded text across the whole
   issue so later explicit sections are not dropped.
-- Workbook/export routing, row identity, active tabs, Latest Issue
+- Workbook/export routing, row identity, active tabs, Aktuell
   Recommendations, market-data provider metadata, and no-extra-key enrichment
   candidates live in `docs/memory/workbook-and-enrichment.md`.
-- Active workbook tabs are `Navigation Dashboard`,
-  `Latest Issue Recommendations`, `Stocks`, `Derivative Tips`,
-  `AKTIONAER Depot`, `Depot Transactions`, `Dividend Focus`,
-  `Insider Activity`, and `Extraction Audit`.
-- `Latest Issue Recommendations` is generated quick-review triage for the
-  current workbook-export plan only. Canonical merged equity state remains in
-  `Stocks`.
+- Active Google Sheet tabs are `Search`, `Aktuell`, and newest-first
+  `DA_YYYY_NN` issue tabs. The former generated summary/dashboard tabs are
+  retired from the live workbook and pruned by bootstrap.
+- `Aktuell` is generated quick-review triage for explicit publisher Buy, Sell,
+  Hold, and Wait actions in the current workbook-export plan only. It is
+  excluded from `Search` so the latest issue is not duplicated.
+- The merged `Search!C1:E1` field matches company names and WKNs against issue
+  tabs only. Search has no frozen rows. Stock and
+  derivative results are stacked vertically with their full reviewer values and
+  action colors. `Source` is column A for both sections. Results sort by numeric
+  issue year/week descending and source page ascending.
+- Search refresh and workbook export protect `Search`, `Aktuell`, and all
+  `DA_YYYY_NN` tabs after generated writes finish. Only merged `Search!C1:E1`
+  remains editable; the service account is retained as a protection editor.
 - Market-data enrichment is disabled by default. Provider metadata/config
   scaffolding exists for Stooq CSV, Alpha Vantage, Twelve Data, Finnhub, FMP,
   OpenFIGI, ECB FX, SEC companyfacts, SEC EDGAR Form 4, GLEIF LEI, and
@@ -66,9 +73,10 @@ Last compacted: 2026-06-06
   approval, exportability, or family-visible readiness.
 - Use service account first for future private Drive/Sheets automation unless
   per-user Google identity becomes a product requirement.
-- Dev Google Drive/Sheets IDs are configured for the service account
-  `stock-analyst@stock-analyst-496512.iam.gserviceaccount.com`; see
-  `unblockme.md` for non-secret IDs and smoke commands.
+- Dev Google Drive/Sheets access is configured through ignored local
+  environment values and a private service-account credentials file; see
+  `unblockme.md` for variable names and smoke commands. Never place live
+  account addresses or Drive/Sheets identifiers in tracked documentation.
 - Target Drive workflow: dad drops each weekly PDF into the shared Drive folder
   between Wednesday and Thursday; a future EventBridge/Lambda preprocessor may
   check hourly for new files and record lightweight metadata, while heavy

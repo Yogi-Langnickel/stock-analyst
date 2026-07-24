@@ -112,3 +112,163 @@ Revisions applied:
 - Added Google scope, credential rotation, and revocation guidance.
 - Added Scrapling robots/terms/rate-limit/source-owner requirements.
 - Moved minimum auth, roles, and audit before Google export.
+
+## 2026-07-23 Clean Workbook Search Review
+
+### Iteration 1: Product And Accessibility Reviewer
+
+Findings:
+
+- Required: place the input above results rather than to their right so it
+  remains visible on narrow screens.
+- Initial direction: use a compact reference view. This was superseded after
+  reviewer feedback that comparing Search with issue tabs is easier when both
+  expose the same columns and values.
+- Required: keep stock and derivative results vertically stacked and show an
+  explicit no-match state for each section.
+- Medium: auto-resizing an empty formula result can collapse useful columns.
+
+Revisions applied:
+
+- `Search!B1` is the highlighted input, with results beginning at `A4`.
+- Results now reproduce all 16 stock columns and all 17 derivative columns.
+- Stock and derivative matches are stacked in one spill formula.
+- Visible result columns use stable reviewer-oriented widths; generated index
+  columns `S:AM` are hidden.
+
+### Iteration 2: Privacy And Export-Reliability Reviewer
+
+Findings:
+
+- Required: exclude `Aktuell` from the index because its latest-issue rows are
+  duplicates of the corresponding issue tab.
+- Required: delete only known generated inactive tabs; preserve manual tabs and
+  every `DA_YYYY_NN` issue tab.
+- Required: remove retired tabs from normal bootstrap/export ownership so a
+  later import cannot recreate them.
+- Required: rebuild search from live issue-tab rows and preserve source links;
+  do not call enrichment or copy article text.
+- Live verification initially found that Sheets treated the `LET` search match
+  expression as a scalar. The index and exact-WKN diagnostic were correct, but
+  the result filters returned no rows.
+
+Revisions applied:
+
+- Normal Google bootstrap owns only `Search` and `Aktuell`, while issue tabs
+  remain generated history.
+- Known retired generated tabs are pruned; unknown/manual tabs are untouched.
+- The search index reads only issue reviewer rows and preserves every displayed
+  reviewer value without adding a second visible schema.
+- Local canonical schemas remain available for extraction validation, but their
+  rows are reported as omitted from the clean Google Sheet.
+- The result formula now wraps its match expression in `ARRAYFORMULA`; a
+  reversible live WKN lookup returned the expected row without a formula error,
+  and the input cell was restored afterward.
+- Full-row results are explicitly sorted by issue descending and source-row
+  order, with the same stock/derivative headers and action colors as issue tabs.
+
+### Iteration 3: Reviewer Data-Fidelity Review
+
+Findings:
+
+- Required: Search must expose the original issue-row values, not a second
+  condensed projection that can drift from reviewer tabs.
+- Required: stock and derivative schemas must remain distinct even though they
+  share the first three columns.
+- Required: matching rows must be ordered newest issue first, with original row
+  order retained within each issue.
+- Required: hidden index writes must use raw input so formula-like reviewer text
+  is not reinterpreted.
+
+Revisions applied:
+
+- The hidden index stores four routing fields followed by all 17 possible
+  reviewer values; stock rows retain their 16 values plus one structural blank.
+- Visible Stocks and Derivatives sections use the exact corresponding headers.
+- Formula sorting uses issue descending and numeric source-row ascending.
+- Index writes use `RAW`; only the visible result formula uses `USER_ENTERED`.
+
+### Iteration 4: Reviewer Presentation And Mobile Review
+
+Findings:
+
+- Required: keep the search input above the tables while restoring the full
+  reviewer width requested by the user.
+- Required: reuse stock/derivative header colors and row-level Buy/Hold/Sell
+  colors; explicit `Wait` remains neutral.
+- Required: expose all result columns `A:Q` and move generated index data out of
+  the visible reviewer area.
+- Live gate: verify full headers, exact row values, issue ordering, column
+  visibility, and conditional-format rules after refresh.
+
+Revisions applied:
+
+- Search stays in `B1`; results begin at `A4`.
+- Visible columns `A:Q` use stable reviewer-oriented widths.
+- Generated routing/index columns moved to hidden `S:AM`.
+- Search owns and refreshes its section, header, and action conditional-format
+  rules without altering issue-tab formatting.
+- Reversible live verification confirmed exact stock and derivative headers,
+  exact returned values, issue-descending/source-row ordering, visible `A:Q`,
+  hidden `R:AM`, valid widths, six owned conditional-format rules, and matching
+  action colors; the search input was restored afterward.
+
+### Follow-up: Source-First Chronology
+
+- Search moves each row's existing stock `Source` or derivative `Issue:Page`
+  value to a single leading `Source` column.
+- The hidden index uses a numeric `YYYYNN` issue key and source-page number so
+  sorting treats the issue label as a date indicator: newest issue first, then
+  ascending page.
+- Results continue at row 4.
+
+### Follow-up: Search Input Placement
+
+- Search no longer freezes any rows.
+- The input moves from `B1` to a merged `C1:E1` field, while results continue
+  at row 4.
+
+## 2026-07-25 Managed Family-Sheet Protection Review
+
+### Iteration 1: Family Usability And Accidental-Edit Review
+
+Findings:
+
+- Required: the family search user must be able to change only the merged
+  `Search!C1:E1` query field.
+- Required: generated formulas, hidden search-index columns, `Aktuell`, and all
+  issue-history tabs must reject accidental edits.
+- Required: existing issue tabs must be covered without manual per-tab work,
+  and newly exported issue tabs must receive the same protection.
+
+Revisions applied:
+
+- Search refresh and workbook export now protect `Search`, `Aktuell`, and every
+  title matching `DA_YYYY_NN`.
+- The Search protection is sheet-wide with only `C1:E1` listed as an
+  unprotected range; the other managed tabs are fully protected.
+- Protection reconciliation runs after generated values, formatting, grid
+  sizing, and search-index updates have completed.
+
+### Iteration 2: Export Reliability And Ownership Review
+
+Findings:
+
+- Required: protection must not lock the exporter out of future refreshes.
+- Required: repeat exports must be idempotent and must not accumulate managed
+  protections.
+- Required: user-created protections outside the exporter contract must remain
+  untouched.
+- Required: protection ownership must come from configured private credentials,
+  without printing or hard-coding the live service-account address.
+
+Revisions applied:
+
+- The configured service-account email is the explicit managed-range editor;
+  when the environment value is absent it is read locally from the credentials
+  file's `client_email`.
+- Each run deletes only protections carrying the Stock Analyst managed
+  description prefix, then recreates the exact current protection set.
+- Unrelated manual protections are preserved.
+- Focused tests cover existing issue tabs, the Search exception, managed-only
+  replacement, and protection results returned by refresh and export.
