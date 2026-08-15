@@ -383,6 +383,30 @@ class GoogleAccessTest(unittest.TestCase):
         with self.assertRaisesRegex(GoogleAccessError, "fingerprint does not match"):
             preflight_workbook_plan_google_sheet_export(plan)
 
+    def test_workbook_export_preflight_rejects_approved_value_type_tamper(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": ["2", *([""] * (len(_headers_for("Aktuell")) - 1))],
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        preflight_workbook_plan_google_sheet_export(plan)
+
+        row["values"][0] = 2
+        with self.assertRaisesRegex(GoogleAccessError, "fingerprint does not match"):
+            preflight_workbook_plan_google_sheet_export(plan)
+
     def test_workbook_export_preflight_rejects_approved_source_id_tamper(self) -> None:
         row = {
             "sourceId": "row-001",

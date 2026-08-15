@@ -44,9 +44,10 @@ def workbook_row_values_sha256(values: Sequence[object]) -> str:
     """Hash exact workbook row cell values for stale-approval detection."""
 
     payload = json.dumps(
-        ["" if value is None else str(value) for value in values],
+        values,
         ensure_ascii=False,
         separators=(",", ":"),
+        sort_keys=True,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

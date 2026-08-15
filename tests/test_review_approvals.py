@@ -68,6 +68,16 @@ def workbook_plan() -> dict[str, object]:
 
 
 class ReviewApprovalTest(unittest.TestCase):
+    def test_row_values_hash_preserves_json_value_types(self) -> None:
+        self.assertNotEqual(
+            workbook_row_values_sha256(["2"]),
+            workbook_row_values_sha256([2]),
+        )
+        self.assertNotEqual(
+            workbook_row_values_sha256([None]),
+            workbook_row_values_sha256([""]),
+        )
+
     def test_approved_rows_fingerprint_uses_documented_canonical_payload(self) -> None:
         rows = [
             {
