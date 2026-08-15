@@ -9,6 +9,7 @@ from stock_analyst.sec_insider import (
     SEC_SUBMISSIONS_URL,
     SEC_TICKER_MAP_URL,
     SecInsiderConfig,
+    SecInsiderError,
     SecResolvedIssuer,
     SecStockCandidate,
     enrich_sec_form4,
@@ -60,6 +61,70 @@ AMENDED_FORM4_XML = FORM4_XML.replace(
 
 
 class SecInsiderTests(unittest.TestCase):
+    def test_ticker_payload_without_usable_record_is_not_cached_and_recovers(self) -> None:
+        invalid_ticker_payload = json.dumps({"error": {}}).encode()
+        valid_ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        valid_submissions = self._submissions_payload(
+            forms=[], accessions=[], documents=[], filing_dates=[]
+        )
+        ticker_attempts = 0
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            nonlocal ticker_attempts
+            if url == SEC_TICKER_MAP_URL:
+                ticker_attempts += 1
+                return invalid_ticker_payload if ticker_attempts == 1 else valid_ticker_payload
+            return valid_submissions
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            config = SecInsiderConfig("Stock Analyst owner@example.com", cache_dir)
+            candidate = SecStockCandidate("Example", "A0TEST", "EXM", "2026-W34:10")
+            with self.assertRaisesRegex(SecInsiderError, "ticker response"):
+                enrich_sec_form4(
+                    (candidate,), config, fetch_bytes=fetch,
+                    now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+                )
+            self.assertFalse((cache_dir / "company-tickers.json").exists())
+
+            recovered = enrich_sec_form4(
+                (candidate,), config, fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(ticker_attempts, 2)
+        self.assertEqual(recovered.resolved_issuer_count, 1)
+        self.assertFalse(recovered.archive_coverage_partial)
+
+    def test_semantically_invalid_cached_ticker_is_quarantined_and_refetched(self) -> None:
+        valid_ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        valid_submissions = self._submissions_payload(
+            forms=[], accessions=[], documents=[], filing_dates=[]
+        )
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            return valid_ticker_payload if url == SEC_TICKER_MAP_URL else valid_submissions
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            ticker_cache = cache_dir / "company-tickers.json"
+            ticker_cache.write_bytes(json.dumps({"error": {}}).encode())
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", "EXM", "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", cache_dir),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+            self.assertTrue(ticker_cache.with_suffix(".json.corrupt").exists())
+            self.assertEqual(ticker_cache.read_bytes(), valid_ticker_payload)
+
+        self.assertEqual(result.resolved_issuer_count, 1)
+
     def test_invalid_fetched_submissions_json_is_not_promoted_and_recovers(self) -> None:
         ticker_payload = json.dumps(
             {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
@@ -565,6 +630,119 @@ class SecInsiderTests(unittest.TestCase):
         self.assertEqual(result.failed_issuer_count, 1)
         self.assertTrue(result.archive_coverage_partial)
         self.assertFalse(result.request_budget_exhausted)
+
+    def test_semantically_invalid_recent_rows_are_partial_and_not_cached(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        invalid_rows = {
+            "form": ("", "0000001234-26-000001", "one.xml", "2026-08-01"),
+            "accession": ("4", "../../unsafe", "one.xml", "2026-08-01"),
+            "document": ("4", "0000001234-26-000001", "../unsafe.xml", "2026-08-01"),
+            "filing_date": ("4", "0000001234-26-000001", "one.xml", "2026-02-30"),
+        }
+        for label, (form, accession, document, filing_date) in invalid_rows.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
+                malformed = self._submissions_payload(
+                    forms=[form], accessions=[accession], documents=[document],
+                    filing_dates=[filing_date],
+                )
+
+                def fetch(url: str, _user_agent: str) -> bytes:
+                    return ticker_payload if url == SEC_TICKER_MAP_URL else malformed
+
+                cache_dir = Path(temp_dir)
+                result = enrich_sec_form4(
+                    (SecStockCandidate("Example", "A0TEST", "EXM", "2026-W34:10"),),
+                    SecInsiderConfig("Stock Analyst owner@example.com", cache_dir),
+                    fetch_bytes=fetch,
+                    now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+                )
+
+                self.assertEqual(result.failed_issuer_count, 1)
+                self.assertTrue(result.archive_coverage_partial)
+                self.assertFalse(
+                    (cache_dir / "submissions" / "CIK0000001234.json").exists()
+                )
+
+    def test_semantically_invalid_cached_recent_rows_are_quarantined_and_refetched(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        invalid = self._submissions_payload(
+            forms=["4"], accessions=["0000001234-26-000001"],
+            documents=["one.xml"], filing_dates=["not-a-date"],
+        )
+        valid = self._submissions_payload(
+            forms=[], accessions=[], documents=[], filing_dates=[]
+        )
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            return ticker_payload if url == SEC_TICKER_MAP_URL else valid
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            submission_cache = cache_dir / "submissions" / "CIK0000001234.json"
+            submission_cache.parent.mkdir(parents=True)
+            submission_cache.write_bytes(invalid)
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", "EXM", "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", cache_dir),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+            self.assertTrue(submission_cache.with_suffix(".json.corrupt").exists())
+            self.assertEqual(submission_cache.read_bytes(), valid)
+
+        self.assertEqual(result.failed_issuer_count, 0)
+        self.assertFalse(result.archive_coverage_partial)
+
+    def test_semantically_invalid_archive_row_is_partial_and_not_cached(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        archive_name = "CIK0000001234-submissions-001.json"
+        submissions_payload = json.dumps(
+            {
+                "filings": {
+                    "recent": {
+                        "form": [], "accessionNumber": [],
+                        "primaryDocument": [], "filingDate": [],
+                    },
+                    "files": [{"name": archive_name, "filingTo": "2026-08-01"}],
+                }
+            }
+        ).encode()
+        invalid_archive = self._submissions_payload(
+            forms=["4"], accessions=["0000001234-26-000001"],
+            documents=["one.xml"], filing_dates=["not-a-date"],
+            recent_wrapper=False,
+        )
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            if url == SEC_TICKER_MAP_URL:
+                return ticker_payload
+            if url == SEC_SUBMISSIONS_URL.format(cik="0000001234"):
+                return submissions_payload
+            return invalid_archive
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", "EXM", "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", cache_dir),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+            self.assertFalse(
+                (cache_dir / "submissions" / "archives" / archive_name).exists()
+            )
+
+        self.assertEqual(result.failed_issuer_count, 1)
+        self.assertTrue(result.archive_coverage_partial)
+        self.assertEqual(result.archive_file_count, 0)
 
     def test_archive_mismatched_arrays_are_partial_and_not_cached(self) -> None:
         ticker_payload = json.dumps(

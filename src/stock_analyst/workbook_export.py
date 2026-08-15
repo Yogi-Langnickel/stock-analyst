@@ -8,7 +8,7 @@ for manual review.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -363,7 +363,7 @@ def _latest_issue_recommendation_rows(
     update_date: str,
 ) -> list[WorkbookDraftRow]:
     rows: list[WorkbookDraftRow] = []
-    emitted_derivative_wkns: set[str] = set()
+    emitted_derivative_row_indexes: dict[str, int] = {}
     for stock_row in stock_rows:
         recommendation = _stock_value(stock_row.values, "Recommendation")
         publisher_action = _latest_issue_stock_action(
@@ -487,13 +487,10 @@ def _latest_issue_recommendation_rows(
                 )
             )
             if card.instrument_type == InstrumentType.DERIVATIVE and card.wkn:
-                emitted_derivative_wkns.add(card.wkn)
+                emitted_derivative_row_indexes[card.wkn] = len(rows) - 1
     for derivative_row in derivative_overview_rows:
         publisher_action = _publisher_action(derivative_row.recommendation)
-        if (
-            publisher_action is None
-            or derivative_row.wkn in emitted_derivative_wkns
-        ):
+        if publisher_action is None:
             continue
         values_by_header = {
             "Action": publisher_action,
@@ -516,6 +513,37 @@ def _latest_issue_recommendation_rows(
             "Review status": ReviewStatus.NEEDS_REVIEW.value,
             "date updated": update_date,
         }
+        if derivative_row.wkn in emitted_derivative_row_indexes:
+            existing_index = emitted_derivative_row_indexes[derivative_row.wkn]
+            existing = rows[existing_index]
+            merged_values = list(existing.values)
+            for header, value in values_by_header.items():
+                header_index = AKTUELL_DERIVATIVE_HEADERS.index(header)
+                if value and not merged_values[header_index]:
+                    merged_values[header_index] = value
+            merged_values[AKTUELL_DERIVATIVE_HEADERS.index("Action")] = publisher_action
+            merged_values[
+                AKTUELL_DERIVATIVE_HEADERS.index("Reviewer note")
+            ] = derivative_row.recommendation
+            combined_source = _combined_source_references(
+                merged_values[AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")],
+                _derivative_source_ref(derivative_row),
+            )
+            merged_values[
+                AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")
+            ] = combined_source
+            rows[existing_index] = replace(
+                existing,
+                values=tuple(merged_values),
+                source_block=(
+                    "manual_review_pending; source_pages:"
+                    + ",".join(
+                        reference.rsplit(":", 1)[-1]
+                        for reference in combined_source.split(" | ")
+                    )
+                ),
+            )
+            continue
         rows.append(
             WorkbookDraftRow(
                 tab="Aktuell",
@@ -1765,6 +1793,16 @@ def _source_ref(issue_id: str, page: int | str) -> str:
 
 def _derivative_source_ref(row: DerivativeOverviewRow) -> str:
     return " | ".join(_source_ref(row.issue_id, page) for page in row.source_pages)
+
+
+def _combined_source_references(*references: str) -> str:
+    combined: list[str] = []
+    for reference in references:
+        for item in reference.split(" | "):
+            normalized = item.strip()
+            if normalized and normalized not in combined:
+                combined.append(normalized)
+    return " | ".join(combined)
 
 
 def _join_non_empty(values: Sequence[str | None]) -> str:

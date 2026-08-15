@@ -1213,7 +1213,28 @@ class WorkbookExportPlanTest(unittest.TestCase):
                 row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Action")]
                 for row in aktuell_rows
             ],
-            ["Buy", "Hold", "Hold", "Hold", "Hold"],
+            ["Hold", "Hold", "Hold", "Hold", "Hold"],
+        )
+        rows_by_wkn = {
+            row["values"][AKTUELL_DERIVATIVE_HEADERS.index("WKN")]: row
+            for row in aktuell_rows
+        }
+        duplicate = rows_by_wkn["DUP001"]
+        self.assertEqual(
+            duplicate["values"][AKTUELL_DERIVATIVE_HEADERS.index("Derivative")],
+            "Synthetic duplicate",
+        )
+        self.assertEqual(
+            duplicate["values"][AKTUELL_DERIVATIVE_HEADERS.index("Reviewer note")],
+            "Stopp nachziehen",
+        )
+        self.assertEqual(
+            duplicate["values"][AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")],
+            "2026-W40:12 | 2026-W40:62 | 2026-W40:63",
+        )
+        self.assertEqual(
+            duplicate["sourceBlock"],
+            "manual_review_pending; source_pages:12,62,63",
         )
         self.assertEqual(
             [

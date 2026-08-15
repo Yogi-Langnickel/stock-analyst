@@ -42,6 +42,7 @@ from stock_analyst.google_access import (
     write_insider_activity_rows_to_google_sheet,
     write_workbook_plan_to_google_sheet,
 )
+from stock_analyst.review_approvals import approved_workbook_rows_fingerprint
 
 TEST_SERVICE_ACCOUNT_CREDENTIALS = (
     '{"client_email":"stock-analyst@example.iam.gserviceaccount.com"}'
@@ -62,6 +63,7 @@ COMPLETE_EMPTY_APPROVAL_AUDIT = {
     "hashMismatchRows": 0,
     "invalidEvidenceRows": 0,
     "staleApprovalDetected": False,
+    "approvedRowsFingerprint": approved_workbook_rows_fingerprint([]),
 }
 APPROVED_EMPTY_WORKBOOK_PLAN = json.dumps(
     {
@@ -81,6 +83,29 @@ def _headers_for(tab: str) -> tuple[str, ...]:
 
 def _stock_value(row: list[str], header: str) -> str:
     return row[_headers_for("Stocks").index(header)]
+
+
+def _complete_approval_audit(rows: list[dict[str, object]]) -> dict[str, object]:
+    approved = sum(row.get("reviewStatus") == "approved" for row in rows)
+    rejected = sum(row.get("reviewStatus") == "rejected" for row in rows)
+    needs_review = len(rows) - approved - rejected
+    matched = approved + rejected
+    return {
+        "externalServicesEnabled": False,
+        "networkAccess": False,
+        "approvalSource": "private_reviewer_csv",
+        "rowCount": len(rows),
+        "approvalRowsImported": matched,
+        "matchedApprovalRows": matched,
+        "unmatchedApprovalRows": 0,
+        "approvedRows": approved,
+        "rejectedRows": rejected,
+        "needsReviewRows": needs_review,
+        "hashMismatchRows": 0,
+        "invalidEvidenceRows": 0,
+        "staleApprovalDetected": False,
+        "approvedRowsFingerprint": approved_workbook_rows_fingerprint(rows),
+    }
 
 
 class _FakeExecute:
@@ -311,6 +336,7 @@ class GoogleAccessTest(unittest.TestCase):
             "networkAccess": "false",
             "rowCount": False,
             "approvalRowsImported": "0",
+            "approvedRowsFingerprint": "not-a-sha256",
         }
         for field, invalid_value in invalid_values.items():
             with self.subTest(field=field):
@@ -324,6 +350,171 @@ class GoogleAccessTest(unittest.TestCase):
                             "rows": [],
                         }
                     )
+
+    def test_workbook_export_preflight_rejects_unsupported_approval_audit_fields(self) -> None:
+        audit = dict(COMPLETE_EMPTY_APPROVAL_AUDIT)
+        audit["untrustedExtra"] = 0
+        with self.assertRaisesRegex(GoogleAccessError, "unsupported fields"):
+            preflight_workbook_plan_google_sheet_export(
+                {"issueId": "2026-W32", "approvalAudit": audit, "rows": []}
+            )
+
+    def test_workbook_export_preflight_binds_approved_rows_to_current_values(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": ["A0TEST", *([""] * (len(_headers_for("Aktuell")) - 1))],
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        preflight_workbook_plan_google_sheet_export(plan)
+
+        row["values"][0] = "CHANGED"
+        with self.assertRaisesRegex(GoogleAccessError, "fingerprint does not match"):
+            preflight_workbook_plan_google_sheet_export(plan)
+
+    def test_workbook_export_preflight_rejects_approved_source_id_tamper(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": [""] * len(_headers_for("Aktuell")),
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        row["sourceId"] = "row-tampered"
+        with self.assertRaisesRegex(GoogleAccessError, "fingerprint does not match"):
+            preflight_workbook_plan_google_sheet_export(plan)
+
+    def test_workbook_export_preflight_rejects_approved_status_metadata_tamper(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": [""] * len(_headers_for("Aktuell")),
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        row["exportable"] = False
+        with self.assertRaisesRegex(GoogleAccessError, "approved row count"):
+            preflight_workbook_plan_google_sheet_export(plan)
+
+    def test_family_export_rejects_extraction_blocker_before_any_writer(self) -> None:
+        approved = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": [""] * len(_headers_for("Aktuell")),
+        }
+        blocker_values = [""] * len(_headers_for("Extraction Audit"))
+        blocker_values[_headers_for("Extraction Audit").index("Severity")] = "blocker"
+        blocker_values[_headers_for("Extraction Audit").index("Action")] = "resolve"
+        blocker = {
+            "sourceId": "audit-001",
+            "tab": "Extraction Audit",
+            "rowKind": "derivative_overview_pairing_exception",
+            "reviewStatus": "needs_review",
+            "exportable": False,
+            "requiresManualReview": True,
+            "sourceBlock": "derivative_overview_pairing_exception",
+            "values": blocker_values,
+        }
+        rows = [approved, blocker]
+        plan = {
+            "issueId": "2026-W32",
+            "rows": rows,
+            "approvalAudit": _complete_approval_audit(rows),
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            with (
+                patch("stock_analyst.cli.load_google_access_config") as load_config,
+                patch("stock_analyst.cli.write_workbook_plan_to_google_sheet") as write_issue,
+                patch("stock_analyst.cli.write_insider_activity_rows_to_google_sheet") as write_insiders,
+            ):
+                with self.assertRaisesRegex(GoogleAccessError, "Extraction Audit blocker"):
+                    run_google_sheets_export_plan_command(plan_path)
+
+        load_config.assert_not_called()
+        write_issue.assert_not_called()
+        write_insiders.assert_not_called()
+
+    def test_family_preflight_allows_nonactionable_audit_context(self) -> None:
+        context_values = [""] * len(_headers_for("Extraction Audit"))
+        context_values[_headers_for("Extraction Audit").index("Severity")] = "info"
+        context = {
+            "sourceId": "audit-context",
+            "tab": "Extraction Audit",
+            "reviewStatus": "needs_review",
+            "exportable": False,
+            "requiresManualReview": True,
+            "sourceBlock": "context",
+            "values": context_values,
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [context],
+            "approvalAudit": _complete_approval_audit([context]),
+        }
+        preflight_workbook_plan_google_sheet_export(plan)
+
+    def test_family_preflight_rejects_aktuell_needs_review_but_draft_allows_it(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "needs_review",
+            "exportable": False,
+            "requiresManualReview": True,
+            "sourceBlock": "card",
+            "values": [""] * len(_headers_for("Aktuell")),
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        with self.assertRaisesRegex(GoogleAccessError, "Aktuell needs_review"):
+            preflight_workbook_plan_google_sheet_export(plan)
+        preflight_workbook_plan_google_sheet_export(
+            {"issueId": "2026-W32", "rows": [row]},
+            allow_draft_rows=True,
+        )
 
     def test_google_sheet_export_reads_sec_identity_from_process_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3013,9 +3204,11 @@ class GoogleAccessTest(unittest.TestCase):
                     "hashMismatchRows": 0,
                     "invalidEvidenceRows": 0,
                     "staleApprovalDetected": False,
+                    "approvedRowsFingerprint": "pending",
                 },
                 "rows": [
                     {
+                        "sourceId": "stock-approved-001",
                         "tab": "Stocks",
                         "reviewStatus": "approved",
                         "exportable": True,
@@ -3027,6 +3220,9 @@ class GoogleAccessTest(unittest.TestCase):
                     }
                 ],
             }
+            workbook_plan["approvalAudit"]["approvedRowsFingerprint"] = (
+                approved_workbook_rows_fingerprint(workbook_plan["rows"])
+            )
 
             result = write_workbook_plan_to_google_sheet(
                 config,
@@ -3071,9 +3267,11 @@ class GoogleAccessTest(unittest.TestCase):
                     "hashMismatchRows": 0,
                     "invalidEvidenceRows": 1,
                     "staleApprovalDetected": False,
+                    "approvedRowsFingerprint": "pending",
                 },
                 "rows": [
                     {
+                        "sourceId": "stock-approved-001",
                         "tab": "Stocks",
                         "reviewStatus": "approved",
                         "exportable": True,
@@ -3085,6 +3283,9 @@ class GoogleAccessTest(unittest.TestCase):
                     }
                 ],
             }
+            workbook_plan["approvalAudit"]["approvedRowsFingerprint"] = (
+                approved_workbook_rows_fingerprint(workbook_plan["rows"])
+            )
 
             with self.assertRaisesRegex(GoogleAccessError, "invalid approval evidence"):
                 write_workbook_plan_to_google_sheet(

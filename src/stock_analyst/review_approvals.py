@@ -51,6 +51,38 @@ def workbook_row_values_sha256(values: Sequence[object]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def approved_workbook_rows_fingerprint(rows: Sequence[object]) -> str:
+    """Bind every approved source ID to its exact current row-values hash.
+
+    Canonical form is a JSON list sorted by ``sourceId``. Each entry has only
+    ``sourceId`` and ``rowValuesSha256``. JSON uses UTF-8, ``ensure_ascii=False``,
+    compact separators, and sorted object keys before the SHA-256 digest.
+    """
+
+    entries: list[dict[str, str]] = []
+    seen_source_ids: set[str] = set()
+    for raw_row in rows:
+        if not isinstance(raw_row, Mapping) or raw_row.get("reviewStatus") != "approved":
+            continue
+        source_id = _source_id(raw_row)
+        if source_id in seen_source_ids:
+            raise ReviewApprovalError("approved workbook rows contain duplicate source IDs")
+        seen_source_ids.add(source_id)
+        entries.append(
+            {
+                "sourceId": source_id,
+                "rowValuesSha256": workbook_row_values_sha256(_row_values(raw_row)),
+            }
+        )
+    payload = json.dumps(
+        sorted(entries, key=lambda entry: entry["sourceId"]),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def approval_template_csv_from_workbook_plan(
     workbook_plan: Mapping[str, object],
 ) -> str:
@@ -238,6 +270,7 @@ def apply_workbook_approvals(
     result["rows"] = updated_rows
     result["manualReviewRequired"] = needs_review_count > 0 or rejected_count > 0
     result["approvedRows"] = approved_count
+    approved_rows_fingerprint = approved_workbook_rows_fingerprint(updated_rows)
     result["approvalAudit"] = {
         "externalServicesEnabled": False,
         "networkAccess": False,
@@ -252,6 +285,7 @@ def apply_workbook_approvals(
         "hashMismatchRows": hash_mismatch_count,
         "invalidEvidenceRows": invalid_evidence_count,
         "staleApprovalDetected": hash_mismatch_count > 0 or invalid_evidence_count > 0,
+        "approvedRowsFingerprint": approved_rows_fingerprint,
     }
     return result
 

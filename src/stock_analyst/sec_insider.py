@@ -28,6 +28,7 @@ SEC_ARCHIVES_URL = (
 DEFAULT_LOOKBACK_DAYS = 365
 DEFAULT_MAX_REQUESTS = 100
 DEFAULT_CACHE_DIR = Path("data/market-cache/sec-edgar")
+ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 
 
 class SecInsiderError(RuntimeError):
@@ -752,8 +753,17 @@ def _validated_json_object(payload: bytes) -> Mapping[str, object]:
 
 def _validate_ticker_json(payload: bytes) -> None:
     value = _validated_json_object(payload)
-    if not value or not any(isinstance(record, Mapping) for record in value.values()):
-        raise _SecPayloadValidationError("SEC ticker response has no records")
+    usable_records = 0
+    for record in value.values():
+        if not isinstance(record, Mapping):
+            continue
+        cik = str(record.get("cik_str") or "").strip()
+        ticker = str(record.get("ticker") or "").strip()
+        title = str(record.get("title") or "").strip()
+        if cik.isdigit() and ticker and title:
+            usable_records += 1
+    if usable_records == 0:
+        raise _SecPayloadValidationError("SEC ticker response has no usable records")
 
 
 def _validate_submissions_json(payload: bytes) -> None:
@@ -787,6 +797,53 @@ def _validate_filing_arrays(
         raise _SecPayloadValidationError(
             f"{payload_name} filing arrays have mismatched lengths"
         )
+    for index, (form, accession, document, filing_date) in enumerate(
+        zip(*(value[name] for name in required_arrays))
+    ):
+        if (
+            not isinstance(form, str)
+            or not form.strip()
+            or form != form.strip()
+            or any(ord(character) < 32 for character in form)
+        ):
+            raise _SecPayloadValidationError(
+                f"{payload_name} filing row {index} has an invalid form"
+            )
+        if not isinstance(accession, str) or ACCESSION_RE.fullmatch(accession) is None:
+            raise _SecPayloadValidationError(
+                f"{payload_name} filing row {index} has an invalid accession"
+            )
+        if not _safe_primary_document(document):
+            raise _SecPayloadValidationError(
+                f"{payload_name} filing row {index} has an invalid primary document"
+            )
+        if not isinstance(filing_date, str):
+            raise _SecPayloadValidationError(
+                f"{payload_name} filing row {index} has an invalid filing date"
+            )
+        try:
+            date.fromisoformat(filing_date)
+        except ValueError as error:
+            raise _SecPayloadValidationError(
+                f"{payload_name} filing row {index} has an invalid filing date"
+            ) from error
+
+
+def _safe_primary_document(value: object) -> bool:
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    raw_document = re.sub(
+        r"^xslF345X\d+/",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return bool(
+        raw_document
+        and raw_document not in {".", ".."}
+        and "/" not in raw_document
+        and "\\" not in raw_document
+    )
 
 
 def _validate_xml(payload: bytes) -> None:

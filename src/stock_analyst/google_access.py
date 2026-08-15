@@ -11,6 +11,11 @@ from pathlib import Path
 import os
 import re
 
+from stock_analyst.review_approvals import (
+    ReviewApprovalError,
+    approved_workbook_rows_fingerprint,
+)
+
 
 GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
@@ -1600,6 +1605,8 @@ def preflight_workbook_plan_google_sheet_export(
     specs_by_title = {spec.title: spec for spec in tab_specs}
     if "Aktuell" not in specs_by_title:
         raise GoogleAccessError("workbook export tab specs are missing Aktuell")
+    if not allow_draft_rows:
+        _require_no_unresolved_family_rows(raw_rows, specs_by_title=specs_by_title)
     for raw_row in raw_rows:
         if not isinstance(raw_row, Mapping):
             continue
@@ -2232,7 +2239,15 @@ def _require_family_export_approval_audit(
         *required_boolean_fields,
         "approvalSource",
         *required_counter_fields,
+        "approvedRowsFingerprint",
     )
+    if set(approval_audit) != set(required_fields):
+        unexpected = sorted(set(approval_audit) - set(required_fields))
+        if unexpected:
+            raise GoogleAccessError(
+                "family-visible workbook export approval audit contains unsupported fields: "
+                + ", ".join(unexpected)
+            )
     for field in required_fields:
         if field not in approval_audit:
             raise GoogleAccessError(
@@ -2250,6 +2265,14 @@ def _require_family_export_approval_audit(
                 f"family-visible workbook export approval audit field {field} "
                 "must be a non-negative integer"
             )
+    approved_rows_fingerprint = approval_audit["approvedRowsFingerprint"]
+    if not isinstance(approved_rows_fingerprint, str) or re.fullmatch(
+        r"[0-9a-f]{64}", approved_rows_fingerprint
+    ) is None:
+        raise GoogleAccessError(
+            "family-visible workbook export approval audit field "
+            "approvedRowsFingerprint must be a SHA-256 hex digest"
+        )
 
     if approval_audit.get("approvalSource") != "private_reviewer_csv":
         raise GoogleAccessError(
@@ -2317,6 +2340,51 @@ def _require_family_export_approval_audit(
         raise GoogleAccessError(
             "family-visible workbook export approved row count does not match approval audit"
         )
+    try:
+        current_fingerprint = approved_workbook_rows_fingerprint(raw_rows)
+    except ReviewApprovalError as error:
+        raise GoogleAccessError(
+            "family-visible workbook export approved rows are structurally invalid"
+        ) from error
+    if approved_rows_fingerprint != current_fingerprint:
+        raise GoogleAccessError(
+            "family-visible workbook export approved row fingerprint does not match current rows"
+        )
+
+
+def _require_no_unresolved_family_rows(
+    raw_rows: Sequence[object],
+    *,
+    specs_by_title: Mapping[str, GoogleSheetTabSpec],
+) -> None:
+    audit_spec = specs_by_title.get("Extraction Audit")
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            continue
+        tab = str(raw_row.get("tab") or "").strip()
+        review_status = str(raw_row.get("reviewStatus") or "").strip()
+        if tab == "Aktuell" and review_status == "needs_review":
+            raise GoogleAccessError(
+                "family-visible workbook export cannot include actionable Aktuell needs_review rows"
+            )
+        if tab != "Extraction Audit" or review_status == "approved":
+            continue
+        values = raw_row.get("values")
+        if (
+            audit_spec is None
+            or not isinstance(values, list)
+            or len(values) != len(audit_spec.headers)
+        ):
+            raise GoogleAccessError(
+                "family-visible workbook export contains an unresolved malformed Extraction Audit row"
+            )
+        lookup = dict(zip(audit_spec.headers, values))
+        actionable = bool(str(lookup.get("Action") or "").strip())
+        blocker = str(lookup.get("Severity") or "").strip().casefold() == "blocker"
+        if actionable or blocker:
+            raise GoogleAccessError(
+                "family-visible workbook export contains an unresolved actionable Extraction Audit blocker"
+            )
 
 
 def _has_valid_reviewed_at(value: object) -> bool:
