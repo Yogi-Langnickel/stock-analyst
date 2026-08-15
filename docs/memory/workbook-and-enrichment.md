@@ -53,20 +53,20 @@ Created: 2026-06-06
 
 ## Active Tabs And Identity
 
-- Active Google Sheet tabs are the layout-only `Search`, `Aktuell`, and
-  newest-first `DA_YYYY_NN` issue tabs. Hidden generated summary/dashboard tabs
-  are retired and bootstrap deletes them instead of recreating them.
+- Active Google Sheet tabs are the layout-only `Search`, `Aktuell`, cumulative
+  `Insider Activity`, and newest-first `DA_YYYY_NN` issue tabs. Other generated
+  summary/dashboard tabs are retired and bootstrap deletes them instead of
+  recreating them.
 - `Aktuell` is generated for the current workbook-export plan. It contains
   only source-linked explicit publisher Buy, Sell, Hold, and Wait actions and
   is excluded from the search index to avoid duplicating the latest issue.
 - The merged `Search!C1:E1` field matches a company name or WKN against issue
-  tabs only. Search has no frozen rows. Stock and
-  derivative results use the same full columns and values as their issue-tab
-  tables, remain vertically stacked, and sort by issue descending; generated
-  index columns `S:AM` remain hidden.
+  tabs and company/WKN/ticker/insider against `Insider Activity`. Search has no
+  frozen rows. Stock, derivative, and insider results remain vertically stacked;
+  generated index columns `U:AQ` remain hidden.
 - Search refresh and workbook export reconcile managed protections after all
-  generated writes. `Search` is protected except for `C1:E1`; `Aktuell` and
-  every existing or newly created `DA_YYYY_NN` tab are fully protected. The
+  generated writes. `Search` is protected except for `C1:E1`; `Aktuell`,
+  `Insider Activity`, and every existing or newly created `DA_YYYY_NN` tab are fully protected. The
   service account remains an allowed editor, and unrelated manual protections
   are preserved.
 - Google Sheets export replaces `Aktuell` on each
@@ -117,7 +117,8 @@ Created: 2026-06-06
 
 ## Enrichment
 
-- Market-data enrichment is disabled by default.
+- General market-data enrichment is disabled by default. SEC Form 4 enrichment
+  runs after Google Sheets issue imports when `SEC_USER_AGENT` is configured.
 - Stooq CSV parsing exists only as fixture-driven enrichment and cannot
   overwrite magazine source values.
 - Provider symbols must currently be derived from exact-width `Stocks` rows,
@@ -138,19 +139,26 @@ Created: 2026-06-06
 - OpenFIGI, ECB FX, SEC companyfacts, SEC Form 4, GLEIF LEI, and Bundesbank
   SDMX have provider-specific dry-run descriptors for identifier mapping,
   issuer identity, EUR FX/macro display context, company facts, submissions,
-  and Form 4 XML planning. They still make no network calls.
-- SEC planning defaults to a conservative 100 calls/day local cap and still
-  requires `SEC_USER_AGENT` before any future live access.
+  and Form 4 XML planning. Dry-run descriptors still make no network calls;
+  the separate cached Form 4 importer performs live weekly access.
+- Live SEC enrichment uses a conservative 100-request run cap and requires
+  `SEC_USER_AGENT`.
 - Structured cache records can persist provider response payloads with
   credential-free metadata, freshness fields, source URL hashes, and terms
   review fields. Raw provider URLs and API keys must not be stored; response
   payload keys containing credential markers such as `apiKey`, `token`,
   `secret`, `authorization`, or `password` are rejected recursively before a
   cache file is written.
-- SEC EDGAR Form 4 is the preferred planned insider-activity enrichment source
+- SEC EDGAR Form 4 is the active insider-activity enrichment source
   for US-listed stocks already present in `Stocks`. It requires an identifying
   `SEC_USER_AGENT`, ticker-to-CIK mapping, submissions/Form 4 XML parsing,
   source filing URLs, conservative caching, and explicit not-covered handling
   for non-US or unresolved companies.
 - Finviz is comparison/reference only, not the automated insider source of
   record.
+- `Insider Activity` is a visible cumulative ledger. Weekly runs deduplicate by
+  filing transaction, retain direct SEC URLs as company hyperlinks, and Search
+  displays matching insider rows below Derivatives. The visible ledger has 12
+  columns in reviewer order; transaction codes are simplified to purchase,
+  sale, Conversion, Payment, Gift, Awarded, or Other. Acquired rows are green
+  and disposed rows are red.

@@ -40,9 +40,10 @@ Last compacted: 2026-06-06
 - Workbook/export routing, row identity, active tabs, Aktuell
   Recommendations, market-data provider metadata, and no-extra-key enrichment
   candidates live in `docs/memory/workbook-and-enrichment.md`.
-- Active Google Sheet tabs are `Search`, `Aktuell`, and newest-first
-  `DA_YYYY_NN` issue tabs. The former generated summary/dashboard tabs are
-  retired from the live workbook and pruned by bootstrap.
+- Active Google Sheet tabs are `Search`, `Aktuell`, cumulative `Insider Activity`,
+  and newest-first `DA_YYYY_NN` issue tabs. Other former generated
+  summary/dashboard tabs are retired from the live workbook and pruned by
+  bootstrap.
 - `Aktuell` is generated quick-review triage for explicit publisher Buy, Sell,
   Hold, and Wait actions in the current workbook-export plan only. It is
   excluded from `Search` so the latest issue is not duplicated.
@@ -54,17 +55,21 @@ Last compacted: 2026-06-06
 - Search refresh and workbook export protect `Search`, `Aktuell`, and all
   `DA_YYYY_NN` tabs after generated writes finish. Only merged `Search!C1:E1`
   remains editable; the service account is retained as a protection editor.
-- Market-data enrichment is disabled by default. Provider metadata/config
+- General market-data enrichment is disabled by default. Cached SEC Form 4
+  enrichment runs during issue export when `SEC_USER_AGENT` is configured;
+  it writes a deduplicated insider ledger and feeds Search. Provider metadata/config
   scaffolding exists for Stooq CSV, Alpha Vantage, Twelve Data, Finnhub, FMP,
   OpenFIGI, ECB FX, SEC companyfacts, SEC EDGAR Form 4, GLEIF LEI, and
   Bundesbank SDMX, but live adapters are not implemented. `market-data-plan`
   does not implicitly select FMP for manual symbols; dry-run provider planning
   requires explicit provider config.
-- OpenFIGI, ECB FX, SEC companyfacts, SEC Form 4, GLEIF LEI, and Bundesbank
+- `Insider Activity` exposes exactly 12 reviewer columns. Company cells retain
+  the direct SEC filing hyperlink; transaction codes use simplified labels;
+  full rows are green for Acquired and red for Disposed.
+- OpenFIGI, ECB FX, SEC companyfacts, GLEIF LEI, and Bundesbank
   SDMX have no-network dry-run descriptors for identifier mapping, issuer
-  identity, EUR FX/macro display context, fundamentals, and insider planning.
-  They remain live-adapter-disabled until cache/throttle/fair-access review is
-  complete.
+  identity, EUR FX/macro display context, and fundamentals planning. They remain
+  live-adapter-disabled until cache/throttle/fair-access review is complete.
 - Remaining corpus work is parser/review coverage against local private issues,
   not PDF availability. Do not ask for a new PDF handoff unless a specific
   issue is absent from `corpus-status`.

@@ -8,7 +8,7 @@ for manual review.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -30,8 +30,9 @@ from stock_analyst.depot_tables import (
     extract_depot_rows_from_page_lines,
 )
 from stock_analyst.derivative_tables import (
+    DerivativeOverviewPairingException,
     DerivativeOverviewRow,
-    extract_derivative_overview_rows_from_page_lines,
+    extract_derivative_overview_result_from_page_lines,
 )
 from stock_analyst.extraction import RawTextExtractor, extract_pdf_text
 from stock_analyst.google_access import AKTUELL_DERIVATIVE_HEADERS, DEFAULT_SHEET_TABS
@@ -228,7 +229,7 @@ def build_workbook_export_plan_from_pdf(
         pages,
         issue_id=resolved_issue_id,
     )
-    derivative_overview_rows = extract_derivative_overview_rows_from_page_lines(
+    derivative_overview_result = extract_derivative_overview_result_from_page_lines(
         pages,
         issue_id=resolved_issue_id,
     )
@@ -249,7 +250,8 @@ def build_workbook_export_plan_from_pdf(
         issue_id=resolved_issue_id,
         recommendation_cards=tuple(cards),
         dividend_strategy=dividends,
-        derivative_overview=derivative_overview_rows,
+        derivative_overview=derivative_overview_result.rows,
+        derivative_pairing_exceptions=derivative_overview_result.exceptions,
         depot_positions=depot_positions,
         depot_transactions=depot_transactions,
         chart_check_rows=chart_check_rows,
@@ -267,6 +269,7 @@ def build_workbook_export_plan(
     recommendation_cards: RecommendationCardExtraction | Sequence[RecommendationCard] = (),
     dividend_strategy: DividendStrategyExtraction | Sequence[DividendStrategyRow] = (),
     derivative_overview: Sequence[DerivativeOverviewRow] = (),
+    derivative_pairing_exceptions: Sequence[DerivativeOverviewPairingException] = (),
     depot_positions: Sequence[DepotPositionRow] = (),
     depot_transactions: Sequence[DepotTransactionRow] = (),
     chart_check_rows: Sequence[ChartCheckRow] = (),
@@ -325,6 +328,7 @@ def build_workbook_export_plan(
             derivative_overview,
             instrument_update_date=resolved_stock_update_date,
         )
+        + _derivative_pairing_exception_rows(derivative_pairing_exceptions)
         + _depot_position_rows(
             depot_positions,
             instrument_update_date=resolved_stock_update_date,
@@ -359,6 +363,7 @@ def _latest_issue_recommendation_rows(
     update_date: str,
 ) -> list[WorkbookDraftRow]:
     rows: list[WorkbookDraftRow] = []
+    emitted_derivative_row_indexes: dict[str, int] = {}
     for stock_row in stock_rows:
         recommendation = _stock_value(stock_row.values, "Recommendation")
         publisher_action = _latest_issue_stock_action(
@@ -481,13 +486,15 @@ def _latest_issue_recommendation_rows(
                     source_block="manual_review_pending",
                 )
             )
+            if card.instrument_type == InstrumentType.DERIVATIVE and card.wkn:
+                emitted_derivative_row_indexes[card.wkn] = len(rows) - 1
     for derivative_row in derivative_overview_rows:
         publisher_action = _publisher_action(derivative_row.recommendation)
         if publisher_action is None:
             continue
         values_by_header = {
             "Action": publisher_action,
-            "Issue:Page": _source_ref(derivative_row.issue_id, derivative_row.page),
+            "Issue:Page": _derivative_source_ref(derivative_row),
             "Derivative": _join_non_empty(
                 (derivative_row.underlying, derivative_row.direction)
             ),
@@ -506,6 +513,37 @@ def _latest_issue_recommendation_rows(
             "Review status": ReviewStatus.NEEDS_REVIEW.value,
             "date updated": update_date,
         }
+        if derivative_row.wkn in emitted_derivative_row_indexes:
+            existing_index = emitted_derivative_row_indexes[derivative_row.wkn]
+            existing = rows[existing_index]
+            merged_values = list(existing.values)
+            for header, value in values_by_header.items():
+                header_index = AKTUELL_DERIVATIVE_HEADERS.index(header)
+                if value and not merged_values[header_index]:
+                    merged_values[header_index] = value
+            merged_values[AKTUELL_DERIVATIVE_HEADERS.index("Action")] = publisher_action
+            merged_values[
+                AKTUELL_DERIVATIVE_HEADERS.index("Reviewer note")
+            ] = derivative_row.recommendation
+            combined_source = _combined_source_references(
+                merged_values[AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")],
+                _derivative_source_ref(derivative_row),
+            )
+            merged_values[
+                AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")
+            ] = combined_source
+            rows[existing_index] = replace(
+                existing,
+                values=tuple(merged_values),
+                source_block=(
+                    "manual_review_pending; source_pages:"
+                    + ",".join(
+                        reference.rsplit(":", 1)[-1]
+                        for reference in combined_source.split(" | ")
+                    )
+                ),
+            )
+            continue
         rows.append(
             WorkbookDraftRow(
                 tab="Aktuell",
@@ -575,7 +613,16 @@ def _publisher_action(recommendation: str | None) -> str | None:
         "ausgestoppt",
     }:
         return "Sell"
-    if normalized in {"hold", "halten", "dabei-bleiben", "dabei bleiben"}:
+    if normalized in {
+        "hold",
+        "halten",
+        "dabei-bleiben",
+        "dabei bleiben",
+        "stopp nachziehen",
+        "ziel/stopp nachziehen",
+        "ziel anpassen",
+        "stopp beachten",
+    }:
         return "Hold"
     return None
 
@@ -1023,7 +1070,7 @@ def _derivative_overview_rows(
                     row.stop,
                     row.recommendation,
                     ReviewStatus.NEEDS_REVIEW.value,
-                    _source_ref(row.issue_id, row.page),
+                    _derivative_source_ref(row),
                     instrument_update_date,
                 ),
             )
@@ -1499,6 +1546,66 @@ def _paired_action_table_exception_rows(
     return rows
 
 
+def _derivative_pairing_exception_rows(
+    exceptions: Sequence[DerivativeOverviewPairingException],
+) -> list[WorkbookDraftRow]:
+    rows: list[WorkbookDraftRow] = []
+    for exception in exceptions:
+        source_pages = tuple(
+            dict.fromkeys(
+                page
+                for page in (exception.base_page, *exception.metrics_pages)
+                if page is not None
+            )
+        )
+        source_reference = " | ".join(
+            _source_ref(exception.issue_id, page) for page in source_pages
+        )
+        metrics_pages = ",".join(str(page) for page in exception.metrics_pages) or "none"
+        metrics_counts = ",".join(
+            str(count) for count in exception.metrics_row_counts
+        ) or "none"
+        rows.append(
+            WorkbookDraftRow(
+                tab="Extraction Audit",
+                row_kind="derivative_overview_pairing_exception",
+                source_id=_source_id(
+                    "derivative-overview-pairing-exception",
+                    exception.issue_id,
+                    exception.page,
+                    (
+                        f"{exception.base_page or 0}:{metrics_pages}:"
+                        f"{exception.base_row_count}:{metrics_counts}:{exception.reason}"
+                    ),
+                ),
+                issue_id=exception.issue_id,
+                page=exception.page,
+                review_status=ReviewStatus.NEEDS_REVIEW,
+                source_block="derivative_overview_pairing_exception",
+                warnings=(
+                    MANUAL_REVIEW_WARNING,
+                    f"derivative_overview_pairing_exception={exception.reason}",
+                ),
+                values=(
+                    "local-dry-run",
+                    source_reference,
+                    "derivative_tips_overview_pairing",
+                    "blocker",
+                    (
+                        f"{exception.reason}; "
+                        f"base_page={exception.base_page or 'none'}; "
+                        f"metrics_pages={metrics_pages}; "
+                        f"base_rows={exception.base_row_count}; "
+                        f"metrics_rows={metrics_counts}"
+                    ),
+                    "review_or_record_source_exception",
+                    "",
+                ),
+            )
+        )
+    return rows
+
+
 def _cards_from(
     extraction: RecommendationCardExtraction | Sequence[RecommendationCard],
 ) -> tuple[RecommendationCard, ...]:
@@ -1682,6 +1789,20 @@ def _source_ref(issue_id: str, page: int | str) -> str:
     if issue and page_text:
         return f"{issue}:{page_text}"
     return issue or page_text
+
+
+def _derivative_source_ref(row: DerivativeOverviewRow) -> str:
+    return " | ".join(_source_ref(row.issue_id, page) for page in row.source_pages)
+
+
+def _combined_source_references(*references: str) -> str:
+    combined: list[str] = []
+    for reference in references:
+        for item in reference.split(" | "):
+            normalized = item.strip()
+            if normalized and normalized not in combined:
+                combined.append(normalized)
+    return " | ".join(combined)
 
 
 def _join_non_empty(values: Sequence[str | None]) -> str:

@@ -1,14 +1,22 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from stock_analyst.cli import run_google_drive_pdfs_command
+from stock_analyst.cli import (
+    run_google_drive_pdfs_command,
+    run_google_sheets_export_plan_command,
+)
 from stock_analyst.google_access import (
     ACTIVE_GOOGLE_SHEET_TABS,
     AKTUELL_DERIVATIVE_HEADERS,
+    REVIEWER_COLUMN_WIDTHS,
     DEFAULT_SHEET_TABS,
+    GoogleAccessConfig,
     GoogleAccessError,
+    LEGACY_INSIDER_ACTIVITY_HEADERS,
     MANAGED_PROTECTION_DESCRIPTION_PREFIX,
     _apply_managed_sheet_protections,
     _auto_resize_issue_review_tab_columns,
@@ -19,21 +27,50 @@ from stock_analyst.google_access import (
     _build_search_format_requests,
     _fetch_sheet_ids_by_title,
     _reorder_issue_review_tabs_newest_first,
+    _simplify_insider_transaction,
     bootstrap_google_sheet,
     build_drive_pdf_metadata_result,
     clear_google_sheet_data_rows,
     list_drive_pdf_metadata,
     load_env_file,
     load_google_access_config,
+    preflight_workbook_plan_google_sheet_export,
     refresh_google_sheet_search,
     run_google_access_smoke,
     write_refinement_plan_to_google_sheet,
-    write_workbook_plan_to_google_sheet,
     write_drive_pdf_metadata_manifest,
+    write_insider_activity_rows_to_google_sheet,
+    write_workbook_plan_to_google_sheet,
 )
+from stock_analyst.review_approvals import approved_workbook_rows_fingerprint
 
 TEST_SERVICE_ACCOUNT_CREDENTIALS = (
     '{"client_email":"stock-analyst@example.iam.gserviceaccount.com"}'
+)
+
+
+COMPLETE_EMPTY_APPROVAL_AUDIT = {
+    "externalServicesEnabled": False,
+    "networkAccess": False,
+    "approvalSource": "private_reviewer_csv",
+    "rowCount": 0,
+    "approvalRowsImported": 0,
+    "matchedApprovalRows": 0,
+    "unmatchedApprovalRows": 0,
+    "approvedRows": 0,
+    "rejectedRows": 0,
+    "needsReviewRows": 0,
+    "hashMismatchRows": 0,
+    "invalidEvidenceRows": 0,
+    "staleApprovalDetected": False,
+    "approvedRowsFingerprint": approved_workbook_rows_fingerprint([]),
+}
+APPROVED_EMPTY_WORKBOOK_PLAN = json.dumps(
+    {
+        "issueId": "2026-W32",
+        "approvalAudit": COMPLETE_EMPTY_APPROVAL_AUDIT,
+        "rows": [],
+    }
 )
 
 
@@ -46,6 +83,29 @@ def _headers_for(tab: str) -> tuple[str, ...]:
 
 def _stock_value(row: list[str], header: str) -> str:
     return row[_headers_for("Stocks").index(header)]
+
+
+def _complete_approval_audit(rows: list[dict[str, object]]) -> dict[str, object]:
+    approved = sum(row.get("reviewStatus") == "approved" for row in rows)
+    rejected = sum(row.get("reviewStatus") == "rejected" for row in rows)
+    needs_review = len(rows) - approved - rejected
+    matched = approved + rejected
+    return {
+        "externalServicesEnabled": False,
+        "networkAccess": False,
+        "approvalSource": "private_reviewer_csv",
+        "rowCount": len(rows),
+        "approvalRowsImported": matched,
+        "matchedApprovalRows": matched,
+        "unmatchedApprovalRows": 0,
+        "approvedRows": approved,
+        "rejectedRows": rejected,
+        "needsReviewRows": needs_review,
+        "hashMismatchRows": 0,
+        "invalidEvidenceRows": 0,
+        "staleApprovalDetected": False,
+        "approvedRowsFingerprint": approved_workbook_rows_fingerprint(rows),
+    }
 
 
 class _FakeExecute:
@@ -180,6 +240,870 @@ class _FakeSheets:
 
 
 class GoogleAccessTest(unittest.TestCase):
+    @staticmethod
+    def _search_whole_sheet_protection(
+        *,
+        protection_id: int,
+        description: str,
+        editor_email: str = "stock-analyst@example.iam.gserviceaccount.com",
+        domain_users_can_edit: bool = False,
+    ) -> dict[str, object]:
+        return {
+            "protectedRangeId": protection_id,
+            "description": description,
+            "range": {"sheetId": 10},
+            "warningOnly": False,
+            "editors": {
+                "users": [editor_email],
+                "domainUsersCanEdit": domain_users_can_edit,
+            },
+            "unprotectedRanges": [
+                {
+                    "sheetId": 10,
+                    "startRowIndex": 0,
+                    "endRowIndex": 1,
+                    "startColumnIndex": 2,
+                    "endColumnIndex": 5,
+                }
+            ],
+        }
+
+    @staticmethod
+    def _sheets_with_search_protections(*protected_ranges: object) -> _FakeSheets:
+        return _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 10, "title": "Search"},
+                        "protectedRanges": list(protected_ranges),
+                    }
+                ],
+            }
+        )
+
+    def test_google_sheet_export_rejects_unapproved_plan_before_any_writer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(
+                '{"issueId":"2026-W32","rows":[]}',
+                encoding="utf-8",
+            )
+            with (
+                patch("stock_analyst.cli.load_google_access_config") as load_config,
+                patch(
+                    "stock_analyst.cli.write_workbook_plan_to_google_sheet"
+                ) as write_issue,
+                patch(
+                    "stock_analyst.cli.write_insider_activity_rows_to_google_sheet"
+                ) as write_insiders,
+            ):
+                with self.assertRaisesRegex(
+                    GoogleAccessError,
+                    "approval-audit provenance",
+                ):
+                    run_google_sheets_export_plan_command(plan_path)
+
+        load_config.assert_not_called()
+        write_issue.assert_not_called()
+        write_insiders.assert_not_called()
+
+    def test_workbook_export_preflight_is_pure_and_accepts_approved_empty_plan(self) -> None:
+        preflight_workbook_plan_google_sheet_export(
+            json.loads(APPROVED_EMPTY_WORKBOOK_PLAN)
+        )
+
+    def test_workbook_export_preflight_rejects_each_missing_approval_audit_field(self) -> None:
+        for missing_field in COMPLETE_EMPTY_APPROVAL_AUDIT:
+            with self.subTest(missing_field=missing_field):
+                audit = dict(COMPLETE_EMPTY_APPROVAL_AUDIT)
+                del audit[missing_field]
+                with self.assertRaisesRegex(
+                    GoogleAccessError,
+                    f"missing required field {missing_field}",
+                ):
+                    preflight_workbook_plan_google_sheet_export(
+                        {
+                            "issueId": "2026-W32",
+                            "approvalAudit": audit,
+                            "rows": [],
+                        }
+                    )
+
+    def test_workbook_export_preflight_rejects_wrong_approval_audit_types(self) -> None:
+        invalid_values = {
+            "externalServicesEnabled": 0,
+            "networkAccess": "false",
+            "rowCount": False,
+            "approvalRowsImported": "0",
+            "approvedRowsFingerprint": "not-a-sha256",
+        }
+        for field, invalid_value in invalid_values.items():
+            with self.subTest(field=field):
+                audit = dict(COMPLETE_EMPTY_APPROVAL_AUDIT)
+                audit[field] = invalid_value
+                with self.assertRaisesRegex(GoogleAccessError, f"field {field} must"):
+                    preflight_workbook_plan_google_sheet_export(
+                        {
+                            "issueId": "2026-W32",
+                            "approvalAudit": audit,
+                            "rows": [],
+                        }
+                    )
+
+    def test_workbook_export_preflight_rejects_unsupported_approval_audit_fields(self) -> None:
+        audit = dict(COMPLETE_EMPTY_APPROVAL_AUDIT)
+        audit["untrustedExtra"] = 0
+        with self.assertRaisesRegex(GoogleAccessError, "unsupported fields"):
+            preflight_workbook_plan_google_sheet_export(
+                {"issueId": "2026-W32", "approvalAudit": audit, "rows": []}
+            )
+
+    def test_workbook_export_preflight_binds_approved_rows_to_current_values(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": ["A0TEST", *([""] * (len(_headers_for("Aktuell")) - 1))],
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        preflight_workbook_plan_google_sheet_export(plan)
+
+        row["values"][0] = "CHANGED"
+        with self.assertRaisesRegex(GoogleAccessError, "fingerprint does not match"):
+            preflight_workbook_plan_google_sheet_export(plan)
+
+    def test_workbook_export_preflight_rejects_approved_value_type_tamper(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": ["2", *([""] * (len(_headers_for("Aktuell")) - 1))],
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        preflight_workbook_plan_google_sheet_export(plan)
+
+        row["values"][0] = 2
+        with self.assertRaisesRegex(GoogleAccessError, "fingerprint does not match"):
+            preflight_workbook_plan_google_sheet_export(plan)
+
+    def test_workbook_export_preflight_rejects_approved_source_id_tamper(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": [""] * len(_headers_for("Aktuell")),
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        row["sourceId"] = "row-tampered"
+        with self.assertRaisesRegex(GoogleAccessError, "fingerprint does not match"):
+            preflight_workbook_plan_google_sheet_export(plan)
+
+    def test_workbook_export_preflight_rejects_approved_status_metadata_tamper(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": [""] * len(_headers_for("Aktuell")),
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        row["exportable"] = False
+        with self.assertRaisesRegex(GoogleAccessError, "approved row count"):
+            preflight_workbook_plan_google_sheet_export(plan)
+
+    def test_family_export_rejects_extraction_blocker_before_any_writer(self) -> None:
+        approved = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "approved",
+            "exportable": True,
+            "requiresManualReview": False,
+            "reviewedBy": "reviewer",
+            "reviewedAt": "2026-08-15T00:00:00Z",
+            "sourceBlock": "card",
+            "values": [""] * len(_headers_for("Aktuell")),
+        }
+        blocker_values = [""] * len(_headers_for("Extraction Audit"))
+        blocker_values[_headers_for("Extraction Audit").index("Severity")] = "blocker"
+        blocker_values[_headers_for("Extraction Audit").index("Action")] = "resolve"
+        blocker = {
+            "sourceId": "audit-001",
+            "tab": "Extraction Audit",
+            "rowKind": "derivative_overview_pairing_exception",
+            "reviewStatus": "needs_review",
+            "exportable": False,
+            "requiresManualReview": True,
+            "sourceBlock": "derivative_overview_pairing_exception",
+            "values": blocker_values,
+        }
+        rows = [approved, blocker]
+        plan = {
+            "issueId": "2026-W32",
+            "rows": rows,
+            "approvalAudit": _complete_approval_audit(rows),
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            with (
+                patch("stock_analyst.cli.load_google_access_config") as load_config,
+                patch("stock_analyst.cli.write_workbook_plan_to_google_sheet") as write_issue,
+                patch("stock_analyst.cli.write_insider_activity_rows_to_google_sheet") as write_insiders,
+            ):
+                with self.assertRaisesRegex(GoogleAccessError, "Extraction Audit blocker"):
+                    run_google_sheets_export_plan_command(plan_path)
+
+        load_config.assert_not_called()
+        write_issue.assert_not_called()
+        write_insiders.assert_not_called()
+
+    def test_family_preflight_allows_nonactionable_audit_context(self) -> None:
+        context_values = [""] * len(_headers_for("Extraction Audit"))
+        context_values[_headers_for("Extraction Audit").index("Severity")] = "info"
+        context = {
+            "sourceId": "audit-context",
+            "tab": "Extraction Audit",
+            "reviewStatus": "needs_review",
+            "exportable": False,
+            "requiresManualReview": True,
+            "sourceBlock": "context",
+            "values": context_values,
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [context],
+            "approvalAudit": _complete_approval_audit([context]),
+        }
+        preflight_workbook_plan_google_sheet_export(plan)
+
+    def test_family_preflight_rejects_aktuell_needs_review_but_draft_allows_it(self) -> None:
+        row = {
+            "sourceId": "row-001",
+            "tab": "Aktuell",
+            "rowKind": "stock_recommendation",
+            "reviewStatus": "needs_review",
+            "exportable": False,
+            "requiresManualReview": True,
+            "sourceBlock": "card",
+            "values": [""] * len(_headers_for("Aktuell")),
+        }
+        plan = {
+            "issueId": "2026-W32",
+            "rows": [row],
+            "approvalAudit": _complete_approval_audit([row]),
+        }
+        with self.assertRaisesRegex(GoogleAccessError, "Aktuell needs_review"):
+            preflight_workbook_plan_google_sheet_export(plan)
+        preflight_workbook_plan_google_sheet_export(
+            {"issueId": "2026-W32", "rows": [row]},
+            allow_draft_rows=True,
+        )
+
+    def test_google_sheet_export_reads_sec_identity_from_process_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(APPROVED_EMPTY_WORKBOOK_PLAN, encoding="utf-8")
+            with (
+                patch.dict(
+                    "stock_analyst.cli.os.environ",
+                    {"SEC_USER_AGENT": "Stock Analyst contact@example.test"},
+                    clear=True,
+                ),
+                patch("stock_analyst.cli.load_google_access_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.write_workbook_plan_to_google_sheet",
+                    return_value={},
+                ),
+                patch(
+                    "stock_analyst.cli.write_insider_activity_rows_to_google_sheet",
+                    return_value={"rowsRetained": 0},
+                ),
+                patch(
+                    "stock_analyst.cli.load_sec_insider_config",
+                    return_value=None,
+                ) as load_sec_config,
+            ):
+                result = run_google_sheets_export_plan_command(plan_path)
+
+        self.assertEqual(result["insiderEnrichment"]["status"], "skipped")
+        self.assertEqual(
+            load_sec_config.call_args.args[0]["SEC_USER_AGENT"],
+            "Stock Analyst contact@example.test",
+        )
+
+    def test_google_sheet_export_migrates_insider_schema_before_issue_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(APPROVED_EMPTY_WORKBOOK_PLAN, encoding="utf-8")
+            symbol_map_path = Path(temp_dir) / "symbols.csv"
+            events = []
+
+            def write_insiders(*_args, **_kwargs):
+                events.append("insiders")
+                return {
+                    "rowsAdded": 0,
+                    "rowsUpdated": 0,
+                    "rowsRetained": 1,
+                    "duplicateRowsPrevented": 0,
+                }
+
+            def write_issue(*_args, **_kwargs):
+                events.append("issue")
+                return {}
+
+            enrichment = SimpleNamespace(
+                transactions=(),
+                candidate_count=1,
+                resolved_issuer_count=1,
+                unresolved_candidate_count=0,
+                filing_count=0,
+                failed_issuer_count=0,
+                failed_filing_count=0,
+                network_request_count=0,
+                cache_hit_count=1,
+                request_budget_exhausted=False,
+                archive_file_count=0,
+                archive_coverage_partial=False,
+                transaction_revisions=(),
+            )
+            with (
+                patch.dict(
+                    "stock_analyst.cli.os.environ",
+                    {"STOCK_ANALYST_SYMBOL_MAP_FILE": str(symbol_map_path)},
+                    clear=True,
+                ),
+                patch("stock_analyst.cli.load_google_access_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.write_workbook_plan_to_google_sheet",
+                    side_effect=write_issue,
+                ),
+                patch(
+                    "stock_analyst.cli.write_insider_activity_rows_to_google_sheet",
+                    side_effect=write_insiders,
+                ),
+                patch("stock_analyst.cli.load_sec_insider_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.build_market_data_symbol_map_template_csv",
+                    return_value=(
+                        "source_id,wkn,name,symbol,status,tab,row_kind,issue,page,notes\n"
+                    ),
+                ),
+                patch("stock_analyst.cli.load_market_data_symbol_map_file", return_value={}),
+                patch(
+                    "stock_analyst.cli.market_data_candidates_from_symbol_map_template_csv",
+                    return_value=(),
+                ),
+                patch("stock_analyst.cli.enrich_sec_form4", return_value=enrichment),
+            ):
+                result = run_google_sheets_export_plan_command(plan_path)
+
+        self.assertEqual(events, ["insiders", "issue", "insiders"])
+        self.assertEqual(result["insiderEnrichment"]["status"], "completed")
+
+    def test_google_sheet_export_surfaces_sec_counts_and_marks_archive_partial(self) -> None:
+        effective_correction = SimpleNamespace(
+            filing_url="https://www.sec.gov/example#transaction-1",
+            correction_status="effective_correction",
+            to_sheet_row=lambda: [],
+        )
+        ambiguous_correction = SimpleNamespace(
+            filing_url="https://www.sec.gov/example#transaction-2",
+            correction_status="ambiguous_correction",
+            to_sheet_row=lambda: [],
+        )
+        enrichment = SimpleNamespace(
+            transactions=(effective_correction, ambiguous_correction),
+            candidate_count=1, resolved_issuer_count=1,
+            unresolved_candidate_count=0, filing_count=0, failed_issuer_count=0,
+            failed_filing_count=0, network_request_count=1, cache_hit_count=0,
+            request_budget_exhausted=False,
+            archive_file_count=2, archive_coverage_partial=True,
+            transaction_revisions=(object(), object(), object()),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(APPROVED_EMPTY_WORKBOOK_PLAN, encoding="utf-8")
+            symbol_map_path = Path(temp_dir) / "symbols.csv"
+            with (
+                patch.dict(
+                    "stock_analyst.cli.os.environ",
+                    {"STOCK_ANALYST_SYMBOL_MAP_FILE": str(symbol_map_path)},
+                    clear=True,
+                ),
+                patch("stock_analyst.cli.load_google_access_config", return_value=object()),
+                patch("stock_analyst.cli.write_workbook_plan_to_google_sheet", return_value={}),
+                patch("stock_analyst.cli.write_insider_activity_rows_to_google_sheet", return_value={}),
+                patch("stock_analyst.cli.load_sec_insider_config", return_value=object()),
+                patch("stock_analyst.cli.build_market_data_symbol_map_template_csv", return_value="source_id,wkn,name,symbol,status,tab,row_kind,issue,page,notes\n"),
+                patch("stock_analyst.cli.load_market_data_symbol_map_file", return_value={}),
+                patch("stock_analyst.cli.market_data_candidates_from_symbol_map_template_csv", return_value=()),
+                patch("stock_analyst.cli.enrich_sec_form4", return_value=enrichment),
+            ):
+                result = run_google_sheets_export_plan_command(plan_path)
+
+        self.assertEqual(result["insiderEnrichment"]["status"], "partial")
+        self.assertFalse(result["insiderEnrichment"]["complete"])
+        self.assertEqual(result["insiderEnrichment"]["archiveFileCount"], 2)
+        self.assertTrue(result["insiderEnrichment"]["archiveCoveragePartial"])
+        self.assertEqual(result["insiderEnrichment"]["transactionRevisionCount"], 3)
+        self.assertEqual(result["insiderEnrichment"]["effectiveCorrectionCount"], 1)
+        self.assertEqual(result["insiderEnrichment"]["ambiguousCorrectionCount"], 1)
+
+    def test_google_sheet_export_reports_enrichment_exception_after_issue_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(APPROVED_EMPTY_WORKBOOK_PLAN, encoding="utf-8")
+            symbol_map_path = Path(temp_dir) / "symbols.csv"
+            with (
+                patch.dict(
+                    "stock_analyst.cli.os.environ",
+                    {"STOCK_ANALYST_SYMBOL_MAP_FILE": str(symbol_map_path)},
+                    clear=True,
+                ),
+                patch("stock_analyst.cli.load_google_access_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.write_workbook_plan_to_google_sheet",
+                    return_value={"familyVisibleSafe": True},
+                ) as write_issue,
+                patch(
+                    "stock_analyst.cli.write_insider_activity_rows_to_google_sheet",
+                    return_value={},
+                ) as write_insiders,
+                patch("stock_analyst.cli.load_sec_insider_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.build_market_data_symbol_map_template_csv",
+                    return_value=(
+                        "source_id,wkn,name,symbol,status,tab,row_kind,issue,page,notes\n"
+                    ),
+                ),
+                patch(
+                    "stock_analyst.cli.market_data_candidates_from_symbol_map_template_csv",
+                    return_value=(),
+                ),
+                patch(
+                    "stock_analyst.cli.enrich_sec_form4",
+                    side_effect=ValueError("corrupt cached ticker map"),
+                ),
+            ):
+                result = run_google_sheets_export_plan_command(plan_path)
+
+        write_issue.assert_called_once()
+        self.assertEqual(write_insiders.call_count, 1)  # schema preflight/migration only
+        self.assertEqual(result["insiderEnrichment"]["status"], "failed")
+        self.assertEqual(result["insiderEnrichment"]["errorType"], "ValueError")
+        self.assertNotIn("corrupt cached ticker map", str(result))
+
+    def test_google_sheet_export_validates_local_symbol_map_before_google_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(APPROVED_EMPTY_WORKBOOK_PLAN, encoding="utf-8")
+            with (
+                patch.dict(
+                    "stock_analyst.cli.os.environ",
+                    {"STOCK_ANALYST_SYMBOL_MAP_FILE": str(Path(temp_dir) / "symbols.csv")},
+                    clear=True,
+                ),
+                patch("stock_analyst.cli.load_google_access_config", return_value=object()),
+                patch("stock_analyst.cli.load_sec_insider_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.build_market_data_symbol_map_template_csv",
+                    return_value="malformed private map",
+                ),
+                patch(
+                    "stock_analyst.cli.market_data_candidates_from_symbol_map_template_csv",
+                    side_effect=ValueError("malformed private map"),
+                ),
+                patch(
+                    "stock_analyst.cli.write_workbook_plan_to_google_sheet"
+                ) as write_issue,
+                patch(
+                    "stock_analyst.cli.write_insider_activity_rows_to_google_sheet"
+                ) as write_insiders,
+            ):
+                with self.assertRaisesRegex(ValueError, "malformed private map"):
+                    run_google_sheets_export_plan_command(plan_path)
+
+        write_issue.assert_not_called()
+        write_insiders.assert_not_called()
+
+    def test_google_sheet_export_downgrades_new_insider_rows_to_private_review(self) -> None:
+        transaction = SimpleNamespace(
+            filing_url="https://www.sec.gov/example#transaction-1",
+            correction_status="original",
+            to_sheet_row=lambda: [
+                "Example", "A0TEST", "EXM", "Jane Doe", "Director", "110",
+                "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
+            ],
+        )
+        enrichment = SimpleNamespace(
+            transactions=(transaction,), candidate_count=1, resolved_issuer_count=1,
+            unresolved_candidate_count=0, filing_count=1, failed_issuer_count=0,
+            failed_filing_count=0, network_request_count=1, cache_hit_count=0,
+            request_budget_exhausted=False,
+            archive_file_count=0, archive_coverage_partial=False,
+            transaction_revisions=(transaction,),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(APPROVED_EMPTY_WORKBOOK_PLAN, encoding="utf-8")
+            symbol_map_path = Path(temp_dir) / "symbols.csv"
+            with (
+                patch.dict(
+                    "stock_analyst.cli.os.environ",
+                    {"STOCK_ANALYST_SYMBOL_MAP_FILE": str(symbol_map_path)},
+                    clear=True,
+                ),
+                patch("stock_analyst.cli.load_google_access_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.write_workbook_plan_to_google_sheet",
+                    return_value={
+                        "exportMode": "approved_family_export",
+                        "familyVisibleSafe": True,
+                        "privateDraftReviewOnly": False,
+                    },
+                ),
+                patch(
+                    "stock_analyst.cli.write_insider_activity_rows_to_google_sheet",
+                    return_value={},
+                ),
+                patch("stock_analyst.cli.load_sec_insider_config", return_value=object()),
+                patch(
+                    "stock_analyst.cli.build_market_data_symbol_map_template_csv",
+                    return_value=(
+                        "source_id,wkn,name,symbol,status,tab,row_kind,issue,page,notes\n"
+                    ),
+                ),
+                patch(
+                    "stock_analyst.cli.market_data_candidates_from_symbol_map_template_csv",
+                    return_value=(),
+                ),
+                patch("stock_analyst.cli.enrich_sec_form4", return_value=enrichment),
+            ):
+                result = run_google_sheets_export_plan_command(plan_path)
+
+        self.assertEqual(result["exportMode"], "private_draft_review_export")
+        self.assertFalse(result["familyVisibleSafe"])
+        self.assertTrue(result["privateDraftReviewOnly"])
+        self.assertTrue(result["insiderReviewRequired"])
+
+    def test_insider_activity_merge_is_cumulative_and_deduplicated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {"properties": {"sheetId": 10, "title": "Search"}},
+                        {"properties": {"sheetId": 20, "title": "Aktuell"}},
+                        {"properties": {"sheetId": 30, "title": "Insider Activity"}},
+                    ],
+                }
+            )
+            legacy_headers = [
+                "Company", "WKN", "Ticker", "CIK", "Insider", "Relationship",
+                "Transaction date", "Transaction code", "Direction", "Shares",
+                "Price", "Transaction value", "Shares owned after", "Filing date",
+                "SEC filing URL", "Signal", "Review status", "Issue:Page", "date updated",
+            ]
+            existing = ["" for _ in legacy_headers]
+            existing[legacy_headers.index("Company")] = "Example"
+            existing[legacy_headers.index("WKN")] = "A0ONE"
+            existing[legacy_headers.index("Ticker")] = "EXM"
+            existing[legacy_headers.index("Insider")] = "Jane Doe"
+            existing[legacy_headers.index("Relationship")] = "Director"
+            existing[legacy_headers.index("Shares owned after")] = "110"
+            existing[legacy_headers.index("Transaction date")] = "2026-08-01"
+            existing[legacy_headers.index("Transaction code")] = "P"
+            existing[legacy_headers.index("Direction")] = "Acquired"
+            existing[legacy_headers.index("Shares")] = "10"
+            existing[legacy_headers.index("Price")] = "12.50"
+            existing[legacy_headers.index("Transaction value")] = "125.00"
+            existing[legacy_headers.index("SEC filing URL")] = "https://sec/one#transaction-1"
+            duplicate = [
+                "Example", "A0TWO", "EXM", "Jane Doe", "Director", "110",
+                "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
+            ]
+            new_row = list(duplicate)
+            new_row[6] = "2026-08-02"
+            sheets.spreadsheets_resource.values_resource.values_by_range[
+                "'Insider Activity'!A1:S"
+            ] = [legacy_headers, existing]
+
+            result = write_insider_activity_rows_to_google_sheet(
+                config,
+                [duplicate, new_row],
+                source_urls=(
+                    "https://sec/one#transaction-1",
+                    "https://sec/two#transaction-1",
+                ),
+                sheets_service_factory=lambda: sheets,
+            )
+
+        self.assertEqual(result["rowsAdded"], 1)
+        self.assertEqual(result["rowsUpdated"], 1)
+        self.assertEqual(result["rowsRetained"], 2)
+        raw_batches = [
+            request["body"]["data"]
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "RAW"
+        ]
+        insider_write = next(
+            item
+            for batch in raw_batches
+            for item in batch
+            if item["range"] == "'Insider Activity'!B2:L3"
+        )
+        self.assertTrue(any(row[0] == "A0ONE | A0TWO" for row in insider_write["values"]))
+        formula_batches = [
+            request["body"]["data"]
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "USER_ENTERED"
+        ]
+        company_write = next(
+            item
+            for batch in formula_batches
+            for item in batch
+            if item["range"] == "'Insider Activity'!A2:A3"
+        )
+        self.assertTrue(
+            all(value[0].startswith('=HYPERLINK("https://sec/') for value in company_write["values"])
+        )
+        grid_updates = [
+            request["updateSheetProperties"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"]["requests"]
+            if request.get("updateSheetProperties", {})
+            .get("properties", {})
+            .get("sheetId")
+            == 30
+            and "rowCount"
+            in request["updateSheetProperties"]["properties"].get(
+                "gridProperties", {}
+            )
+        ]
+        grid_update = grid_updates[0]
+        self.assertEqual(
+            grid_update["properties"]["gridProperties"]["rowCount"],
+            100,
+        )
+        column_counts = [
+            request["updateSheetProperties"]["properties"]["gridProperties"]["columnCount"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"]["requests"]
+            if request.get("updateSheetProperties", {}).get("properties", {}).get("sheetId") == 30
+            and "columnCount" in request["updateSheetProperties"]["properties"].get("gridProperties", {})
+        ]
+        self.assertEqual(column_counts[-1], 12)
+        self.assertIn(19, column_counts)
+
+    def test_insider_activity_rejects_partial_header_before_mutation(self) -> None:
+        for header in (
+            list(_headers_for("Insider Activity")[:5]),
+            [*_headers_for("Insider Activity")[:-1], "Transaction total"],
+        ):
+            with self.subTest(header=header):
+                sheets = _FakeSheets(
+                    {
+                        "spreadsheetId": "test-spreadsheet",
+                        "sheets": [
+                            {"properties": {"sheetId": 30, "title": "Insider Activity"}}
+                        ],
+                    }
+                )
+                sheets.spreadsheets_resource.values_resource.values_by_range[
+                    "'Insider Activity'!A1:S"
+                ] = [header]
+                with self.assertRaisesRegex(
+                    GoogleAccessError,
+                    "current or recognized legacy schema",
+                ):
+                    write_insider_activity_rows_to_google_sheet(
+                        GoogleAccessConfig(
+                            drive_folder_id="synthetic-drive-folder-id-0001",
+                            sheets_spreadsheet_id="test-spreadsheet",
+                            credentials_path=Path("synthetic.json"),
+                        ),
+                        (),
+                        sheets_service_factory=lambda: sheets,
+                    )
+
+                self.assertEqual(
+                    sheets.spreadsheets_resource.batch_update_requests,
+                    [],
+                )
+                self.assertEqual(
+                    sheets.spreadsheets_resource.values_resource.batch_update_requests,
+                    [],
+                )
+
+    def test_insider_activity_retry_repairs_partial_row_with_incoming_values(self) -> None:
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {"properties": {"sheetId": 10, "title": "Search"}},
+                    {"properties": {"sheetId": 20, "title": "Aktuell"}},
+                    {"properties": {"sheetId": 30, "title": "Insider Activity"}},
+                ],
+            }
+        )
+        filing_url = "https://www.sec.gov/example#transaction-1"
+        existing = [
+            f'=HYPERLINK("{filing_url}","Stale Company")',
+            "OLDWKN", "", "Jane Doe", "", "", "2026-08-01", "Other",
+            "Acquired", "", "", "",
+        ]
+        incoming = [
+            "Example", "NEWWKN", "EXM", "Jane Doe", "Director", "110",
+            "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
+        ]
+        sheets.spreadsheets_resource.values_resource.values_by_range[
+            "'Insider Activity'!A1:S"
+        ] = [list(_headers_for("Insider Activity")), existing]
+
+        write_insider_activity_rows_to_google_sheet(
+            GoogleAccessConfig(
+                drive_folder_id="synthetic-drive-folder-id-0001",
+                sheets_spreadsheet_id="test-spreadsheet",
+                credentials_path=Path("synthetic.json"),
+                service_account_email="stock-analyst@example.test",
+            ),
+            [incoming],
+            source_urls=[filing_url],
+            sheets_service_factory=lambda: sheets,
+        )
+
+        raw_write = next(
+            item
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "RAW"
+            for item in request["body"]["data"]
+            if item["range"] == "'Insider Activity'!B2:L2"
+        )
+        self.assertEqual(raw_write["values"][0], [
+            "OLDWKN | NEWWKN", "EXM", "Jane Doe", "Director", "110",
+            "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
+        ])
+
+    def test_insider_activity_has_requested_headers_and_direction_colours(self) -> None:
+        self.assertEqual(
+            _headers_for("Insider Activity"),
+            (
+                "Company", "WKN", "Ticker", "Insider", "Relationship",
+                "Shares owned after", "Transaction date", "Transaction",
+                "Direction", "Shares", "Price in USD", "Transaction value",
+            ),
+        )
+        self.assertEqual(_simplify_insider_transaction("P"), "purchase")
+        self.assertEqual(_simplify_insider_transaction("Conversion"), "Conversion")
+        self.assertEqual(_simplify_insider_transaction("C"), "Other")
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 30, "title": "Insider Activity"},
+                        "conditionalFormats": [],
+                    }
+                ],
+            }
+        )
+        bootstrap_google_sheet(
+            GoogleAccessConfig(
+                drive_folder_id="synthetic-drive-folder-id-0001",
+                sheets_spreadsheet_id="test-spreadsheet",
+                credentials_path=Path("synthetic.json"),
+            ),
+            sheets_service_factory=lambda: sheets,
+            tab_specs=(next(spec for spec in DEFAULT_SHEET_TABS if spec.title == "Insider Activity"),),
+        )
+        formulas = [
+            request["addConditionalFormatRule"]["rule"]["booleanRule"]["condition"]["values"][0]["userEnteredValue"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"]["requests"]
+            if "addConditionalFormatRule" in request
+        ]
+        self.assertIn('=$I2="Acquired"', formulas)
+        self.assertIn('=$I2="Disposed"', formulas)
+
+    def test_generic_bootstrap_fails_closed_on_legacy_insider_header(self) -> None:
+        legacy_headers = list(LEGACY_INSIDER_ACTIVITY_HEADERS)
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {"properties": {"sheetId": 10, "title": "Search"}},
+                    {"properties": {"sheetId": 20, "title": "Aktuell"}},
+                    {"properties": {"sheetId": 30, "title": "Insider Activity"}},
+                ],
+            }
+        )
+        sheets.spreadsheets_resource.values_resource.values_by_range[
+            "'Insider Activity'!A1:S1"
+        ] = [legacy_headers]
+
+        with self.assertRaisesRegex(
+            GoogleAccessError,
+            "must be migrated before bootstrap",
+        ):
+            bootstrap_google_sheet(
+                GoogleAccessConfig(
+                    drive_folder_id="synthetic-drive-folder-id-0001",
+                    sheets_spreadsheet_id="test-spreadsheet",
+                    credentials_path=Path("synthetic.json"),
+                ),
+                sheets_service_factory=lambda: sheets,
+            )
+
     def test_managed_protections_cover_existing_and_future_review_tabs(self) -> None:
         sheets = _FakeSheets(
             {
@@ -193,6 +1117,21 @@ class GoogleAccessTest(unittest.TestCase):
                                 "description": (
                                     f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} Search"
                                 ),
+                                "range": {"sheetId": 10},
+                                "warningOnly": False,
+                                "editors": {
+                                    "users": ["stock-analyst@example.iam.gserviceaccount.com"],
+                                    "domainUsersCanEdit": False,
+                                },
+                                "unprotectedRanges": [
+                                    {
+                                        "sheetId": 10,
+                                        "startRowIndex": 0,
+                                        "endRowIndex": 1,
+                                        "startColumnIndex": 2,
+                                        "endColumnIndex": 5,
+                                    }
+                                ],
                             },
                             {
                                 "protectedRangeId": 92,
@@ -217,7 +1156,7 @@ class GoogleAccessTest(unittest.TestCase):
         requests = sheets.spreadsheets_resource.batch_update_requests[-1]["body"][
             "requests"
         ]
-        self.assertIn(
+        self.assertNotIn(
             {"deleteProtectedRange": {"protectedRangeId": 91}},
             requests,
         )
@@ -232,22 +1171,10 @@ class GoogleAccessTest(unittest.TestCase):
         ]
         self.assertEqual(
             [item["range"]["sheetId"] for item in added],
-            [10, 20, 30],
+            [20, 30],
         )
-        self.assertEqual(
-            added[0]["unprotectedRanges"],
-            [
-                {
-                    "sheetId": 10,
-                    "startRowIndex": 0,
-                    "endRowIndex": 1,
-                    "startColumnIndex": 2,
-                    "endColumnIndex": 5,
-                }
-            ],
-        )
+        self.assertNotIn("unprotectedRanges", added[0])
         self.assertNotIn("unprotectedRanges", added[1])
-        self.assertNotIn("unprotectedRanges", added[2])
         for protected_range in added:
             self.assertFalse(protected_range["warningOnly"])
             self.assertEqual(
@@ -260,10 +1187,152 @@ class GoogleAccessTest(unittest.TestCase):
                 },
             )
 
-    def test_active_google_sheet_tabs_keep_search_and_aktuell_only(self) -> None:
+    def test_managed_protection_replaces_only_stale_generated_rule(self) -> None:
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 10, "title": "Search"},
+                        "protectedRanges": [
+                            {
+                                "protectedRangeId": 91,
+                                "description": f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} Search",
+                                "range": {"sheetId": 10},
+                                "warningOnly": False,
+                                "editors": {
+                                    "users": ["stock-analyst@example.iam.gserviceaccount.com"],
+                                    "domainUsersCanEdit": True,
+                                },
+                            },
+                            {
+                                "protectedRangeId": 92,
+                                "description": "Family-owned manual protection",
+                                "range": {
+                                    "sheetId": 10,
+                                    "startRowIndex": 5,
+                                    "endRowIndex": 8,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+
+        _apply_managed_sheet_protections(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+            editor_email="stock-analyst@example.iam.gserviceaccount.com",
+        )
+
+        requests = sheets.spreadsheets_resource.batch_update_requests[-1]["body"]["requests"]
+        self.assertIn({"deleteProtectedRange": {"protectedRangeId": 91}}, requests)
+        self.assertNotIn({"deleteProtectedRange": {"protectedRangeId": 92}}, requests)
+        replacement = next(
+            request["addProtectedRange"]["protectedRange"]
+            for request in requests
+            if "addProtectedRange" in request
+        )
+        self.assertEqual(
+            replacement["unprotectedRanges"],
+            [
+                {
+                    "sheetId": 10,
+                    "startRowIndex": 0,
+                    "endRowIndex": 1,
+                    "startColumnIndex": 2,
+                    "endColumnIndex": 5,
+                }
+            ],
+        )
+        self.assertEqual(
+            replacement["editors"]["users"],
+            ["stock-analyst@example.iam.gserviceaccount.com"],
+        )
+
+    def test_current_managed_protection_does_not_mask_blocking_manual_rule(self) -> None:
+        current_managed = self._search_whole_sheet_protection(
+            protection_id=91,
+            description=f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} Search",
+        )
+        blocking_manual = self._search_whole_sheet_protection(
+            protection_id=92,
+            description="Family-owned blocking protection",
+            editor_email="family-owner@example.test",
+        )
+        sheets = self._sheets_with_search_protections(
+            current_managed,
+            blocking_manual,
+        )
+
+        with self.assertRaisesRegex(
+            GoogleAccessError,
+            "incompatible manual whole-sheet protection",
+        ):
+            _apply_managed_sheet_protections(
+                sheets,
+                spreadsheet_id="test-spreadsheet",
+                editor_email="stock-analyst@example.iam.gserviceaccount.com",
+            )
+
+        self.assertEqual(sheets.spreadsheets_resource.batch_update_requests, [])
+
+    def test_stale_managed_protection_does_not_mask_blocking_manual_rule(self) -> None:
+        stale_managed = self._search_whole_sheet_protection(
+            protection_id=91,
+            description=f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} Search",
+            domain_users_can_edit=True,
+        )
+        blocking_manual = self._search_whole_sheet_protection(
+            protection_id=92,
+            description="Family-owned blocking protection",
+            editor_email="family-owner@example.test",
+        )
+        sheets = self._sheets_with_search_protections(
+            stale_managed,
+            blocking_manual,
+        )
+
+        with self.assertRaisesRegex(
+            GoogleAccessError,
+            "incompatible manual whole-sheet protection",
+        ):
+            _apply_managed_sheet_protections(
+                sheets,
+                spreadsheet_id="test-spreadsheet",
+                editor_email="stock-analyst@example.iam.gserviceaccount.com",
+            )
+
+        self.assertEqual(sheets.spreadsheets_resource.batch_update_requests, [])
+
+    def test_compatible_manual_whole_sheet_protection_coexists_with_managed_rule(self) -> None:
+        current_managed = self._search_whole_sheet_protection(
+            protection_id=91,
+            description=f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} Search",
+        )
+        compatible_manual = self._search_whole_sheet_protection(
+            protection_id=92,
+            description="Family-owned compatible protection",
+        )
+        sheets = self._sheets_with_search_protections(
+            current_managed,
+            compatible_manual,
+        )
+
+        protected_tabs = _apply_managed_sheet_protections(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+            editor_email="stock-analyst@example.iam.gserviceaccount.com",
+        )
+
+        self.assertEqual(protected_tabs, ["Search"])
+        self.assertEqual(sheets.spreadsheets_resource.batch_update_requests, [])
+
+    def test_active_google_sheet_tabs_include_insider_activity(self) -> None:
         self.assertEqual(
             [spec.title for spec in ACTIVE_GOOGLE_SHEET_TABS],
-            ["Search", "Aktuell"],
+            ["Search", "Aktuell", "Insider Activity"],
         )
         self.assertIn("Stocks", [spec.title for spec in DEFAULT_SHEET_TABS])
         self.assertIn("Derivative Tips", [spec.title for spec in DEFAULT_SHEET_TABS])
@@ -323,7 +1392,8 @@ class GoogleAccessTest(unittest.TestCase):
             18,
             "d0test example call",
         ])
-        self.assertEqual(rows[1][4:], derivative_row)
+        self.assertEqual(rows[1][4:21], derivative_row)
+        self.assertEqual(rows[1][21:], ["", ""])
         self.assertEqual(rows[2][1:3], [202629, 10])
         self.assertEqual(rows[2][4:20], older_stock_row)
         self.assertNotIn("Aktuell", str(rows))
@@ -333,9 +1403,10 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertIn("$C$1", formula)
         self.assertNotIn("$B$1", formula)
-        self.assertIn('$S$2:$S="Stock"', formula)
-        self.assertIn('$S$2:$S="Derivative"', formula)
-        self.assertIn("$W$2:$AM", formula)
+        self.assertIn('$U$2:$U="Stock"', formula)
+        self.assertIn('$U$2:$U="Derivative"', formula)
+        self.assertIn('$U$2:$U="Insider"', formula)
+        self.assertIn("$Y$2:$AQ", formula)
         self.assertIn("SORT(", formula)
         self.assertIn(",1,FALSE,2,TRUE)", formula)
         self.assertIn('"Source","WKN","Company","Action"', formula)
@@ -344,6 +1415,10 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn("CHOOSECOLS(derivativeSorted,17,3,4,5", formula)
         self.assertIn('{"Stocks"', formula)
         self.assertIn('{"Derivatives"', formula)
+        self.assertIn('{"Insider Activity"', formula)
+        self.assertIn('"Company","WKN","Ticker","Insider"', formula)
+        self.assertIn('"Price in USD","Transaction value"', formula)
+        self.assertNotIn('"SEC filing URL"', formula)
         self.assertIn('"Price at Print"', formula)
         self.assertIn('"Magazine Current Price"', formula)
         self.assertIn('"Reviewer note"', formula)
@@ -369,7 +1444,10 @@ class GoogleAccessTest(unittest.TestCase):
             rule["booleanRule"]["condition"]["values"][0]["userEnteredValue"]
             for rule in add_rules
         ]
-        self.assertIn('=OR($A4="Stocks",$A4="Derivatives")', formulas)
+        self.assertIn(
+            '=OR($A4="Stocks",$A4="Derivatives",$A4="Insider Activity")',
+            formulas,
+        )
         self.assertIn(
             '=AND($A4="Source",$B4="WKN",$C4="Company",$D4="Action")',
             formulas,
@@ -386,7 +1464,7 @@ class GoogleAccessTest(unittest.TestCase):
             data_range = rule["ranges"][0]
             self.assertEqual(data_range["startRowIndex"], 3)
             self.assertEqual(data_range["startColumnIndex"], 0)
-            self.assertEqual(data_range["endColumnIndex"], 17)
+            self.assertEqual(data_range["endColumnIndex"], 19)
 
     def test_search_refresh_indexes_existing_issue_tabs_without_reexporting_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -428,7 +1506,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["searchIndexedRows"], 1)
         self.assertEqual(
             result["protectedTabs"],
-            ["Search", "Aktuell", "DA_2026_30"],
+            ["Search", "Aktuell", "Insider Activity", "DA_2026_30"],
         )
         user_entered_batches = [
             request["body"]["data"]
@@ -460,7 +1538,7 @@ class GoogleAccessTest(unittest.TestCase):
         ]
         self.assertTrue(
             any(
-                item["range"] == "'Search'!S2:AM2"
+                item["range"] == "'Search'!U2:AQ2"
                 for batch in raw_batches
                 for item in batch
             )
@@ -478,6 +1556,8 @@ class GoogleAccessTest(unittest.TestCase):
             for request in batch["body"]["requests"]
             if "updateSheetProperties" in request
             and request["updateSheetProperties"]["properties"].get("sheetId") == 10
+            and "gridProperties"
+            in request["updateSheetProperties"]["properties"]
         )
         self.assertEqual(
             search_properties_request["properties"]["gridProperties"][
@@ -895,6 +1975,8 @@ class GoogleAccessTest(unittest.TestCase):
             )
         )
         self.assertEqual(result["reviewerGridTabsExpanded"], ["DA_2026_30", "Aktuell"])
+        self.assertIn("'DA_2026_30'!Q1:Q5", result["staleRangesCleared"])
+        self.assertIn("'Aktuell'!Q1:Q5", result["staleRangesCleared"])
         self.assertIn("'DA_2026_30'!A11:AI", result["staleRangesCleared"])
         self.assertIn("'Aktuell'!A11:AI", result["staleRangesCleared"])
     def _stock_sheet_row(
@@ -992,7 +2074,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertTrue(latest_result["aktuellUpdated"])
         self.assertEqual(
             latest_result["protectedTabs"],
-            ["Search", "Aktuell", "DA_2026_25"],
+            ["Search", "Aktuell", "Insider Activity", "DA_2026_25"],
         )
         self.assertIn("'DA_2026_25'!A3:Q4", latest_result["staleRangesCleared"])
         self.assertNotIn("'DA_2026_25'!A2:Q4", latest_result["staleRangesCleared"])
@@ -1000,7 +2082,13 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertFalse(earlier_result["aktuellUpdated"])
         self.assertEqual(
             earlier_result["protectedTabs"],
-            ["Search", "Aktuell", "DA_2026_25", "DA_2026_24"],
+            [
+                "Search",
+                "Aktuell",
+                "Insider Activity",
+                "DA_2026_25",
+                "DA_2026_24",
+            ],
         )
         titles = [item["properties"]["title"] for item in sheets.spreadsheets_resource.payload["sheets"]]
         self.assertIn("DA_2026_25", titles)
@@ -1034,7 +2122,7 @@ class GoogleAccessTest(unittest.TestCase):
             item
             for batch in raw_batches
             for item in batch
-            if item["range"] == "'Search'!S2:AM3"
+            if item["range"] == "'Search'!U2:AQ3"
         )
         self.assertNotIn("Aktuell", search_formula["values"][0][0])
         self.assertEqual(
@@ -1093,6 +2181,26 @@ class GoogleAccessTest(unittest.TestCase):
                 {"sheetId": 40, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 17},
             ],
         )
+        width_requests = [
+            request["updateDimensionProperties"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"].get("requests", [])
+            if "updateDimensionProperties" in request
+        ]
+        self.assertEqual(len(width_requests), 4 * len(REVIEWER_COLUMN_WIDTHS))
+        for tab_offset, sheet_id in enumerate((20, 50, 60, 40)):
+            tab_requests = width_requests[
+                tab_offset * len(REVIEWER_COLUMN_WIDTHS):
+                (tab_offset + 1) * len(REVIEWER_COLUMN_WIDTHS)
+            ]
+            self.assertEqual(
+                [request["range"]["sheetId"] for request in tab_requests],
+                [sheet_id] * len(REVIEWER_COLUMN_WIDTHS),
+            )
+            self.assertEqual(
+                [request["properties"]["pixelSize"] for request in tab_requests],
+                list(REVIEWER_COLUMN_WIDTHS),
+            )
 
     def test_load_env_file_parses_quoted_google_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1470,7 +2578,7 @@ class GoogleAccessTest(unittest.TestCase):
             {
                 "range": "'Search'!A2",
                 "values": [[
-                    "Searches issue tabs only. Aktuell is excluded to avoid duplicate current-issue results."
+                    "Searches issue tabs and Insider Activity. Aktuell is excluded to avoid duplicate current-issue results."
                 ]],
             },
             values_body["data"],
@@ -1483,14 +2591,15 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(search_tab["tableStartsAt"], "A1")
         self.assertEqual(search_tab["parserStatus"], "layout_only")
         self.assertIn(
-            "Source is the first result column for both stock and derivative matches.",
+            "Source is the first result column for stock and derivative matches.",
             search_tab["layoutNotes"],
         )
         self.assertEqual(search_tab["metadataCells"][0]["cell"], "A2")
         tab_status = {tab["title"]: tab["parserStatus"] for tab in result["tabs"]}
-        self.assertEqual(set(tab_status), {"Search", "Aktuell"})
+        self.assertEqual(set(tab_status), {"Search", "Aktuell", "Insider Activity"})
         self.assertEqual(tab_status["Search"], "layout_only")
         self.assertEqual(tab_status["Aktuell"], "parser_backed")
+        self.assertEqual(tab_status["Insider Activity"], "parser_backed")
         headers_by_tab = {tab["title"]: tab["headers"] for tab in result["tabs"]}
         self.assertEqual(headers_by_tab["Search"], ["Search company or WKN"])
         self.assertEqual(headers_by_tab["Aktuell"][0], "WKN")
@@ -1541,7 +2650,7 @@ class GoogleAccessTest(unittest.TestCase):
         )
         self.assertEqual(
             [item["properties"]["title"] for item in sheets.spreadsheets_resource.payload["sheets"]],
-            ["Search", "Aktuell"],
+            ["Search", "Aktuell", "Insider Activity"],
         )
 
     def test_google_sheet_bootstrap_moves_aktuell_to_first_when_search_is_not_requested(self) -> None:
@@ -1701,9 +2810,9 @@ class GoogleAccessTest(unittest.TestCase):
             for request in batch["body"]["requests"]
             if "addConditionalFormatRule" in request
         ]
-        self.assertEqual(result["formatRulesWritten"], 7)
+        self.assertEqual(result["formatRulesWritten"], 9)
         self.assertEqual(len(delete_requests), 3)
-        self.assertEqual(len(add_requests), 4)
+        self.assertEqual(len(add_requests), 6)
         sheet_ids_by_title = {
             spec.title: index + 1
             for index, spec in enumerate(DEFAULT_SHEET_TABS)
@@ -2106,14 +3215,24 @@ class GoogleAccessTest(unittest.TestCase):
             workbook_plan = {
                 "issueId": "2026-W03",
                 "approvalAudit": {
+                    "externalServicesEnabled": False,
+                    "networkAccess": False,
                     "approvalSource": "private_reviewer_csv",
                     "rowCount": 1,
+                    "approvalRowsImported": 1,
+                    "matchedApprovalRows": 1,
+                    "unmatchedApprovalRows": 0,
                     "approvedRows": 1,
+                    "rejectedRows": 0,
+                    "needsReviewRows": 0,
                     "hashMismatchRows": 0,
+                    "invalidEvidenceRows": 0,
                     "staleApprovalDetected": False,
+                    "approvedRowsFingerprint": "pending",
                 },
                 "rows": [
                     {
+                        "sourceId": "stock-approved-001",
                         "tab": "Stocks",
                         "reviewStatus": "approved",
                         "exportable": True,
@@ -2125,6 +3244,9 @@ class GoogleAccessTest(unittest.TestCase):
                     }
                 ],
             }
+            workbook_plan["approvalAudit"]["approvedRowsFingerprint"] = (
+                approved_workbook_rows_fingerprint(workbook_plan["rows"])
+            )
 
             result = write_workbook_plan_to_google_sheet(
                 config,
@@ -2156,15 +3278,24 @@ class GoogleAccessTest(unittest.TestCase):
             workbook_plan = {
                 "issueId": "2026-W03",
                 "approvalAudit": {
+                    "externalServicesEnabled": False,
+                    "networkAccess": False,
                     "approvalSource": "private_reviewer_csv",
                     "rowCount": 1,
+                    "approvalRowsImported": 1,
+                    "matchedApprovalRows": 1,
+                    "unmatchedApprovalRows": 0,
                     "approvedRows": 1,
+                    "rejectedRows": 0,
+                    "needsReviewRows": 0,
                     "hashMismatchRows": 0,
                     "invalidEvidenceRows": 1,
                     "staleApprovalDetected": False,
+                    "approvedRowsFingerprint": "pending",
                 },
                 "rows": [
                     {
+                        "sourceId": "stock-approved-001",
                         "tab": "Stocks",
                         "reviewStatus": "approved",
                         "exportable": True,
@@ -2176,6 +3307,9 @@ class GoogleAccessTest(unittest.TestCase):
                     }
                 ],
             }
+            workbook_plan["approvalAudit"]["approvedRowsFingerprint"] = (
+                approved_workbook_rows_fingerprint(workbook_plan["rows"])
+            )
 
             with self.assertRaisesRegex(GoogleAccessError, "invalid approval evidence"):
                 write_workbook_plan_to_google_sheet(

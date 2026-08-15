@@ -578,6 +578,47 @@ class RecommendationCardsTest(unittest.TestCase):
             [("layout_table_extraction",)] * 3,
         )
 
+    def test_extracts_layout_row_with_single_space_before_wkn(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Top-Empfehlungen",
+                "Unternehmen    WKN    Aktueller Kurs    Marktkap.    DR*    KUV    KGV    Empf.-    Ziel    Stopp    Chance    Risiko",
+                "Alpha Engineering AG ENG001    81,25 EUR    3,0    3,5    0,5    12    Neuempfehlung    108,00 EUR    63,00 EUR    •••••    •••••",
+            ),
+            issue_id="2026-W33",
+            page_number=40,
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].instrument_name, "Alpha Engineering AG")
+        self.assertEqual(cards[0].wkn, "ENG001")
+
+    def test_paired_table_detection_ignores_self_contained_and_quickcheck_tables(self) -> None:
+        result = extract_dax_action_table_result_from_pages(
+            (
+                (
+                    40,
+                    (
+                        "Top-Empfehlungen",
+                        "Unternehmen    WKN    Aktueller Kurs    Marktkap.    DR*    KUV    KGV    Empf.-    Ziel    Stopp    Chance    Risiko",
+                        "Alpha AG    ALPHA1    10,00 EUR    3,0    1,0    12    18    Neuempfehlung    15,00 EUR    8,00 EUR    •••••    •••••",
+                    ),
+                ),
+                (
+                    93,
+                    (
+                        "Aktien im Quick-Check",
+                        "Unternehmen    WKN    Aktueller Kurs    Empf.-kurs    Empf. in    Ziel    Stopp",
+                        "Beta AG    BETA01    20,00 EUR    18,00 EUR    30/26    25,00 EUR    15,00 EUR",
+                    ),
+                ),
+            ),
+            issue_id="2026-W33",
+        )
+
+        self.assertEqual(result.cards, ())
+        self.assertEqual(result.exceptions, ())
+
     def test_extracts_dax_action_table_rows_and_preserves_wait(self) -> None:
         cards = extract_dax_action_table_cards_from_pages(
             (

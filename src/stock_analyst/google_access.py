@@ -11,6 +11,11 @@ from pathlib import Path
 import os
 import re
 
+from stock_analyst.review_approvals import (
+    ReviewApprovalError,
+    approved_workbook_rows_fingerprint,
+)
+
 
 GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
@@ -44,10 +49,30 @@ REVIEWER_STOCK_ACTION_COLUMN_INDEX = 2  # C
 REVIEWER_DERIVATIVE_COLUMN_COUNT = len(AKTUELL_DERIVATIVE_HEADERS)  # A:Q
 REVIEWER_DERIVATIVE_ACTION_COLUMN_INDEX = 2  # C
 
+# Stable reviewer widths prevent numeric values and long labels from visually
+# overlapping after Sheets auto-resize. These apply to both Aktuell and issue
+# tabs, whose stacked stock/derivative tables share columns A:Q.
+REVIEWER_COLUMN_WIDTHS = (
+    130, 220, 90, 130, 105, 105, 150, 130, 105,
+    110, 100, 110, 180, 125, 190, 160, 180,
+)
+
 REVIEWER_ACTION_FORMATS = (
     ("Buy", {"red": 0.85, "green": 0.94, "blue": 0.85}),
     ("Hold", {"red": 1.0, "green": 0.95, "blue": 0.75}),
     ("Sell", {"red": 0.98, "green": 0.84, "blue": 0.84}),
+)
+
+INSIDER_DIRECTION_FORMATS = (
+    ("Acquired", {"red": 0.85, "green": 0.94, "blue": 0.85}),
+    ("Disposed", {"red": 0.98, "green": 0.84, "blue": 0.84}),
+)
+
+LEGACY_INSIDER_ACTIVITY_HEADERS = (
+    "Company", "WKN", "Ticker", "CIK", "Insider", "Relationship",
+    "Transaction date", "Transaction code", "Direction", "Shares", "Price",
+    "Transaction value", "Shares owned after", "Filing date", "SEC filing URL",
+    "Signal", "Review status", "Issue:Page", "date updated",
 )
 
 ISSUE_TAB_TITLE_RE = re.compile(r"^DA_(?P<year>20\d{2})_(?P<number>\d{2})$")
@@ -172,7 +197,7 @@ SEARCH_SHEET_TAB = GoogleSheetTabSpec(
     metadata_cells=(
         (
             "A2",
-            "Searches issue tabs only. Aktuell is excluded to avoid duplicate current-issue results.",
+            "Searches issue tabs and Insider Activity. Aktuell is excluded to avoid duplicate current-issue results.",
         ),
     ),
     frozen_rows=0,
@@ -180,9 +205,9 @@ SEARCH_SHEET_TAB = GoogleSheetTabSpec(
     table_starts_at="A1",
     layout_notes=(
         "Enter a company name or WKN in the merged C1:E1 field.",
-        "Source is the first result column for both stock and derivative matches.",
-        "The generated search index includes issue tabs only and excludes Aktuell.",
-        "Matches are sorted by numeric issue year/week descending, then by source page.",
+        "Source is the first result column for stock and derivative matches.",
+        "Insider Activity results use their dedicated 12-column display schema; Aktuell is excluded.",
+        "Issue matches sort newest-first; insider matches sort by transaction date.",
     ),
     parser_status="layout_only",
 )
@@ -208,7 +233,7 @@ NAVIGATION_DASHBOARD_ROWS: tuple[tuple[str, ...], ...] = (
     ("Core review", "__sheet_link__:Derivative Tips", "Calls, puts, certificates, and derivative overview rows.", "Check derivative WKN/product terms.", "=COUNTA('Derivative Tips'!A2:A)", "parser-backed; review required", "Highest risk surface; do not group rows by underlying alone."),
     ("Publisher portfolio", "__sheet_link__:AKTIONAER Depot", "Publisher model-depot position snapshots.", "Treat as source context, not advice.", "=COUNTA('AKTIONAER Depot'!A2:A)", "parser-backed; review required", "This is the publisher's model portfolio, not a household portfolio."),
     ("Publisher portfolio", "__sheet_link__:Depot Transactions", "Publisher transaction and no-transaction ledger.", "Check event history.", "=COUNTA('Depot Transactions'!A2:A)", "parser-backed; review required", "Use for source history and transaction evidence."),
-    ("Source detail", "__sheet_link__:Insider Activity", "SEC Form 4 insider activity rows and stock-level signal context.", "Review filing links and transaction classification.", "=COUNTA('Insider Activity'!A2:A)", "planned; review required", "Signals are context only and must link to source filings."),
+    ("Source detail", "__sheet_link__:Insider Activity", "SEC Form 4 insider activity rows and stock-level signal context.", "Review filing links and transaction classification.", "=COUNTA('Insider Activity'!A2:A)", "parser-backed; review required", "Signals are context only and must link to source filings."),
     ("QA", "__sheet_link__:Extraction Audit", "Parser warnings, skipped sections, OCR-needed pages, and review notes.", "Fix blockers before relying on rows.", "=COUNTA('Extraction Audit'!A2:A)", "parser-backed; internal", "Check this tab after each import."),
 )
 NAVIGATION_DASHBOARD_CELLS: tuple[tuple[str, str], ...] = tuple(
@@ -623,31 +648,25 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Company",
             "WKN",
             "Ticker",
-            "CIK",
             "Insider",
             "Relationship",
+            "Shares owned after",
             "Transaction date",
-            "Transaction code",
+            "Transaction",
             "Direction",
             "Shares",
-            "Price",
+            "Price in USD",
             "Transaction value",
-            "Shares owned after",
-            "Filing date",
-            "SEC filing URL",
-            "Signal",
-            "Review status",
-            "Issue:Page",
-            "date updated",
         ),
-        "SEC Form 4 insider activity context for reviewed stock rows.",
+        "SEC Form 4 insider activity context for magazine-backed stock candidates.",
         frozen_columns=3,
         layout_notes=(
-            "Planned parser-backed destination for SEC EDGAR Form 4 enrichment rows.",
-            "Rows remain review-gated and must retain direct SEC filing URLs.",
-            "Stock-level Insider Activity indicators should summarize only reviewed rows from this tab.",
+            "Cumulative SEC EDGAR Form 4 enrichment ledger refreshed on issue import.",
+            "Company cells retain direct SEC filing hyperlinks for source provenance.",
+            "Filing-transaction identity prevents duplicate rows across weekly imports.",
+            "Rows remain private reviewer context until separately approved; Search does not imply review.",
         ),
-        parser_status="planned",
+        parser_status="parser_backed",
     ),
     GoogleSheetTabSpec(
         "Statistics Context",
@@ -720,6 +739,7 @@ DEFAULT_SHEET_TABS = tuple(
 ACTIVE_GOOGLE_SHEET_TABS = (
     SEARCH_SHEET_TAB,
     next(spec for spec in DEFAULT_SHEET_TABS if spec.title == "Aktuell"),
+    next(spec for spec in DEFAULT_SHEET_TABS if spec.title == "Insider Activity"),
 )
 REFINEMENT_SHEET_TABS = tuple(spec for spec in ALL_SHEET_TABS if spec.title == "Refinement")
 
@@ -862,6 +882,29 @@ def bootstrap_google_sheet(
         sheet_properties = _sheet_properties_with_formats(spreadsheet)
         renamed_tabs: list[dict[str, str]] = []
         existing_title_set = {str(properties.get("title")) for properties in sheet_properties}
+        requests_current_insider_schema = any(
+            spec.title == "Insider Activity"
+            and spec.headers != LEGACY_INSIDER_ACTIVITY_HEADERS
+            for spec in tab_specs
+        )
+        if requests_current_insider_schema and "Insider Activity" in existing_title_set:
+            current_header = _sheet_values_get(
+                sheets,
+                spreadsheet_id=config.sheets_spreadsheet_id,
+                range_name="'Insider Activity'!A1:S1",
+                value_render_option="FORMULA",
+            )
+            header_values = tuple(
+                str(value or "").strip()
+                for value in (current_header[0] if current_header else [])
+            )
+            if (
+                header_values[: len(LEGACY_INSIDER_ACTIVITY_HEADERS)]
+                == LEGACY_INSIDER_ACTIVITY_HEADERS
+            ):
+                raise GoogleAccessError(
+                    "Legacy Insider Activity schema must be migrated before bootstrap"
+                )
         if "Aktuell" not in existing_title_set:
             legacy_properties = next(
                 (
@@ -943,7 +986,7 @@ def bootstrap_google_sheet(
             )
             sheet_properties = _sheet_properties_with_formats(spreadsheet)
 
-        primary_tab_titles = ("Search", "Aktuell")
+        primary_tab_titles = tuple(spec.title for spec in ACTIVE_GOOGLE_SHEET_TABS)
         existing_primary_titles = [
             str(properties.get("title"))
             for properties in sheet_properties
@@ -1015,6 +1058,8 @@ def bootstrap_google_sheet(
                 spreadsheetId=config.sheets_spreadsheet_id,
                 body={"requests": list(layout_requests)},
             ).execute()
+    except GoogleAccessError:
+        raise
     except Exception as error:
         raise GoogleAccessError(
             "Google Sheets bootstrap failed. Verify network access, API enablement, "
@@ -1112,7 +1157,7 @@ def refresh_google_sheet_search(
     *,
     sheets_service_factory=None,
 ) -> dict[str, object]:
-    """Refresh the issue-only search index without exporting magazine rows."""
+    """Refresh issue and insider Search data without exporting magazine rows."""
 
     if sheets_service_factory is None:
         _drive_service_factory, sheets_service_factory = _google_service_factories(config)
@@ -1154,6 +1199,440 @@ def refresh_google_sheet_search(
     }
 
 
+def write_insider_activity_rows_to_google_sheet(
+    config: GoogleAccessConfig,
+    rows: Sequence[Sequence[object]],
+    *,
+    source_urls: Sequence[str] = (),
+    sheets_service_factory=None,
+) -> dict[str, object]:
+    """Merge deduplicated SEC Form 4 rows and refresh the unified Search tab."""
+
+    if sheets_service_factory is None:
+        _drive_service_factory, sheets_service_factory = _google_service_factories(config)
+    spec = next(
+        candidate
+        for candidate in ACTIVE_GOOGLE_SHEET_TABS
+        if candidate.title == "Insider Activity"
+    )
+    incoming = [
+        _normalize_sheet_row_values(list(row), width=len(spec.headers))
+        for row in rows
+    ]
+    for row in rows:
+        _validate_sheet_row_width(spec.title, list(row), width=len(spec.headers))
+    if source_urls and len(source_urls) != len(incoming):
+        raise GoogleAccessError("Insider Activity source URL count does not match rows")
+    incoming_urls = list(source_urls) if source_urls else ["" for _ in incoming]
+
+    sheets = sheets_service_factory()
+    existing_sheet_ids = _fetch_sheet_ids_by_title(
+        sheets,
+        spreadsheet_id=config.sheets_spreadsheet_id,
+    )
+    existing_raw = (
+        _sheet_values_get(
+            sheets,
+            spreadsheet_id=config.sheets_spreadsheet_id,
+            range_name="'Insider Activity'!A1:S",
+            value_render_option="FORMULA",
+        )
+        if spec.title in existing_sheet_ids
+        else []
+    )
+    existing_schema = _insider_header_schema(existing_raw, spec=spec)
+    existing = _insider_records_from_sheet_values(existing_raw, spec=spec)
+    legacy_existing = existing_schema == "legacy"
+    bootstrap_specs = (
+        tuple(candidate for candidate in ACTIVE_GOOGLE_SHEET_TABS if candidate.title != spec.title)
+        if legacy_existing
+        else ACTIVE_GOOGLE_SHEET_TABS
+    )
+    bootstrap_result = bootstrap_google_sheet(
+        config,
+        sheets_service_factory=sheets_service_factory,
+        tab_specs=bootstrap_specs,
+        write_headers=True,
+        prune_extra_tabs=not legacy_existing,
+    )
+    sheet_ids_by_title = _fetch_sheet_ids_by_title(
+        sheets,
+        spreadsheet_id=config.sheets_spreadsheet_id,
+    )
+    sheet_id = sheet_ids_by_title.get(spec.title)
+    if sheet_id is None:
+        raise GoogleAccessError("Insider Activity tab is missing after workbook bootstrap")
+    wkn_index = spec.headers.index("WKN")
+    merged = {
+        _insider_record_identity(record, spec=spec): record
+        for record in existing
+    }
+    added_count = 0
+    updated_count = 0
+    for row, source_url in zip(incoming, incoming_urls):
+        record = {"values": list(row), "source_url": str(source_url or "").strip()}
+        key = _insider_record_identity(record, spec=spec)
+        if key not in merged:
+            merged[key] = record
+            added_count += 1
+            continue
+        current = merged[key]
+        current_values = list(current["values"])
+        incoming_values = list(row)
+        merged_wkn = _join_unique_sheet_values(
+            (current_values[wkn_index], row[wkn_index]), separator=" | "
+        )
+        incoming_values[wkn_index] = merged_wkn
+        merged[key] = {
+            # The freshly generated SEC projection is authoritative. This also
+            # repairs an interrupted prior write whose row was only partially
+            # populated, while retaining identity aliases and provenance.
+            "values": incoming_values,
+            "source_url": str(source_url or current.get("source_url") or "").strip(),
+        }
+        updated_count += 1
+
+    transaction_date_index = spec.headers.index("Transaction date")
+    company_index = spec.headers.index("Company")
+    combined = sorted(
+        merged.values(),
+        key=lambda record: (
+            record["values"][transaction_date_index],
+            record["values"][company_index].casefold(),
+        ),
+        reverse=True,
+    )
+    try:
+        sheets.spreadsheets().batchUpdate(
+            spreadsheetId=config.sheets_spreadsheet_id,
+            body={
+                "requests": [
+                    {
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": sheet_id,
+                                "index": 2,
+                                "gridProperties": {
+                                    "rowCount": max(100, len(combined) + 10),
+                                    "columnCount": (
+                                        len(LEGACY_INSIDER_ACTIVITY_HEADERS)
+                                        if legacy_existing
+                                        else len(spec.headers)
+                                    ),
+                                    "frozenRowCount": spec.frozen_rows,
+                                    "frozenColumnCount": spec.frozen_columns,
+                                },
+                            },
+                            "fields": (
+                                "index,gridProperties.rowCount,"
+                                "gridProperties.columnCount,"
+                                "gridProperties.frozenRowCount,"
+                                "gridProperties.frozenColumnCount"
+                            ),
+                        }
+                    }
+                ]
+            },
+        ).execute()
+        if combined:
+            sheets.spreadsheets().values().batchUpdate(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                body={
+                    "valueInputOption": "USER_ENTERED",
+                    "data": [
+                        {
+                            "range": f"'Insider Activity'!A2:A{len(combined) + 1}",
+                            "values": [
+                                [
+                                    _insider_company_formula(
+                                        record["values"][company_index],
+                                        str(record.get("source_url") or ""),
+                                    )
+                                ]
+                                for record in combined
+                            ],
+                        }
+                    ],
+                },
+            ).execute()
+            sheets.spreadsheets().values().batchUpdate(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                body={
+                    "valueInputOption": "RAW",
+                    "data": [
+                        {
+                            "range": f"'Insider Activity'!B2:L{len(combined) + 1}",
+                            "values": [record["values"][1:] for record in combined],
+                        }
+                    ],
+                },
+            ).execute()
+        sheets.spreadsheets().values().clear(
+            spreadsheetId=config.sheets_spreadsheet_id,
+            range=f"'Insider Activity'!A{len(combined) + 2}:L",
+            body={},
+        ).execute()
+        if legacy_existing:
+            sheets.spreadsheets().values().clear(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                range="'Insider Activity'!M:S",
+                body={},
+            ).execute()
+            sheets.spreadsheets().values().batchUpdate(
+                spreadsheetId=config.sheets_spreadsheet_id,
+                body={
+                    "valueInputOption": "USER_ENTERED",
+                    "data": [
+                        {
+                            "range": "'Insider Activity'!A1:L1",
+                            "values": [list(spec.headers)],
+                        }
+                    ],
+                },
+            ).execute()
+            bootstrap_result = bootstrap_google_sheet(
+                config,
+                sheets_service_factory=sheets_service_factory,
+                tab_specs=ACTIVE_GOOGLE_SHEET_TABS,
+                write_headers=True,
+            )
+        sheets.spreadsheets().batchUpdate(
+            spreadsheetId=config.sheets_spreadsheet_id,
+            body={
+                "requests": [
+                    {
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": sheet_id,
+                                "gridProperties": {
+                                    "columnCount": len(spec.headers),
+                                },
+                            },
+                            "fields": "gridProperties.columnCount",
+                        }
+                    },
+                    {
+                        "autoResizeDimensions": {
+                            "dimensions": {
+                                "sheetId": sheet_id,
+                                "dimension": "COLUMNS",
+                                "startIndex": 0,
+                                "endIndex": len(spec.headers),
+                            }
+                        }
+                    },
+                ]
+            },
+        ).execute()
+        search_indexed_row_count = _refresh_issue_search_sheet(
+            sheets,
+            spreadsheet_id=config.sheets_spreadsheet_id,
+            sheet_ids_by_title=sheet_ids_by_title,
+        )
+        protected_tabs = _apply_managed_sheet_protections(
+            sheets,
+            spreadsheet_id=config.sheets_spreadsheet_id,
+            editor_email=config.service_account_email,
+        )
+    except Exception as error:
+        raise GoogleAccessError(
+            "Google Sheets insider activity merge failed. Verify network access, "
+            "service-account sheet sharing, and workbook protections."
+        ) from error
+    return {
+        "ok": True,
+        "externalServicesEnabled": True,
+        "rowsAdded": added_count,
+        "rowsUpdated": updated_count,
+        "rowsRetained": len(combined),
+        "duplicateRowsPrevented": updated_count,
+        "searchIndexedRows": search_indexed_row_count,
+        "protectedTabs": protected_tabs,
+        "bootstrap": bootstrap_result,
+    }
+
+
+def _insider_records_from_sheet_values(
+    raw_values: Sequence[Sequence[object]],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> list[dict[str, object]]:
+    schema = _insider_header_schema(raw_values, spec=spec)
+    if schema == "empty":
+        return []
+    if schema == "legacy":
+        source_headers = LEGACY_INSIDER_ACTIVITY_HEADERS
+    else:
+        source_headers = spec.headers
+    header_indexes = {header: index for index, header in enumerate(source_headers)}
+    result: list[dict[str, object]] = []
+    for raw_row in raw_values[1:]:
+        if not any(str(value or "").strip() for value in raw_row):
+            continue
+
+        def value(header: str) -> str:
+            index = header_indexes.get(header)
+            return str(raw_row[index] or "").strip() if index is not None and index < len(raw_row) else ""
+
+        company, formula_url = _parse_insider_company_formula(value("Company"))
+        transaction = _simplify_insider_transaction(
+            value("Transaction") or value("Transaction code")
+        )
+        values = [
+            company,
+            value("WKN"),
+            value("Ticker"),
+            value("Insider"),
+            value("Relationship"),
+            value("Shares owned after"),
+            value("Transaction date"),
+            transaction,
+            value("Direction"),
+            value("Shares"),
+            value("Price in USD") or value("Price"),
+            value("Transaction value"),
+        ]
+        result.append(
+            {
+                "values": values,
+                "source_url": formula_url or value("SEC filing URL"),
+            }
+        )
+    return result
+
+
+def _insider_header_schema(
+    raw_values: Sequence[Sequence[object]],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> str:
+    """Classify the ledger header without accepting partial or drifted schemas."""
+
+    if not raw_values:
+        return "empty"
+    normalized = [str(value or "").strip() for value in raw_values[0]]
+    while normalized and not normalized[-1]:
+        normalized.pop()
+    headers = tuple(normalized)
+    if not headers:
+        return "empty"
+    if headers == LEGACY_INSIDER_ACTIVITY_HEADERS:
+        return "legacy"
+    if headers == spec.headers:
+        return "current"
+    raise GoogleAccessError(
+        "Insider Activity header does not match the current or recognized legacy schema"
+    )
+
+
+def _insider_record_identity(
+    record: Mapping[str, object],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> str:
+    source_url = str(record.get("source_url") or "").strip()
+    if source_url:
+        return source_url
+    values = record.get("values")
+    row = list(values) if isinstance(values, Sequence) and not isinstance(values, str) else []
+    return "|".join(
+        str(row[index] if index < len(row) else "").strip()
+        for index in range(len(spec.headers))
+        if index != spec.headers.index("WKN")
+    )
+
+
+def _simplify_insider_transaction(code: str) -> str:
+    normalized = code.strip()
+    return {
+        "P": "purchase",
+        "S": "sale",
+        "M": "Conversion",
+        "F": "Payment",
+        "G": "Gift",
+        "A": "Awarded",
+        "J": "Other",
+        "PURCHASE": "purchase",
+        "SALE": "sale",
+        "CONVERSION": "Conversion",
+        "PAYMENT": "Payment",
+        "GIFT": "Gift",
+        "AWARDED": "Awarded",
+        "OTHER": "Other",
+    }.get(normalized.upper(), "Other")
+
+
+def _insider_company_formula(company: str, source_url: str) -> str:
+    safe_company = company.replace('"', '""')
+    safe_url = source_url.replace('"', '""')
+    if safe_url:
+        return f'=HYPERLINK("{safe_url}","{safe_company}")'
+    return f'=T("{safe_company}")'
+
+
+def _parse_insider_company_formula(value: str) -> tuple[str, str]:
+    match = re.fullmatch(
+        r'=HYPERLINK\("(?P<url>(?:[^"]|"")*)","(?P<company>(?:[^"]|"")*)"\)',
+        value.strip(),
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return value, ""
+    return (
+        match.group("company").replace('""', '"'),
+        match.group("url").replace('""', '"'),
+    )
+
+
+def preflight_workbook_plan_google_sheet_export(
+    workbook_plan: Mapping[str, object],
+    *,
+    tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
+    allow_draft_rows: bool = False,
+) -> None:
+    """Validate a workbook plan without creating clients or mutating Sheets."""
+
+    issue_id = str(workbook_plan.get("issueId") or "").strip()
+    raw_rows = workbook_plan.get("rows")
+    if not issue_id:
+        raise GoogleAccessError("workbook plan is missing issueId")
+    if not isinstance(raw_rows, list):
+        raise GoogleAccessError("workbook plan is missing rows list")
+    _issue_tab_title(issue_id)
+    if not allow_draft_rows:
+        _require_family_export_approval_audit(workbook_plan, raw_rows)
+
+    specs_by_title = {spec.title: spec for spec in tab_specs}
+    if "Aktuell" not in specs_by_title:
+        raise GoogleAccessError("workbook export tab specs are missing Aktuell")
+    if not allow_draft_rows:
+        _require_no_unresolved_family_rows(raw_rows, specs_by_title=specs_by_title)
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            continue
+        if not allow_draft_rows and not _is_approved_export_row(raw_row):
+            continue
+        tab = str(raw_row.get("tab") or "").strip()
+        spec = specs_by_title.get(tab)
+        values = raw_row.get("values")
+        if spec is None or spec.parser_status == "layout_only" or not isinstance(values, list):
+            continue
+        aktuell_derivative_row = tab == "Aktuell" and "derivative" in str(
+            raw_row.get("rowKind") or ""
+        )
+        row_width = (
+            len(AKTUELL_DERIVATIVE_HEADERS)
+            if aktuell_derivative_row
+            else len(spec.headers)
+        )
+        if not (
+            aktuell_derivative_row
+            and len(values) == len(spec.headers)
+            and len(values) != row_width
+        ):
+            _validate_sheet_row_width(tab, values, width=row_width)
+
+
 def write_workbook_plan_to_google_sheet(
     config: GoogleAccessConfig,
     workbook_plan: Mapping[str, object],
@@ -1170,17 +1649,17 @@ def write_workbook_plan_to_google_sheet(
     rows require an explicit reviewer-workbook opt-in.
     """
 
+    preflight_workbook_plan_google_sheet_export(
+        workbook_plan,
+        tab_specs=tab_specs,
+        allow_draft_rows=allow_draft_rows,
+    )
     if sheets_service_factory is None:
         _drive_service_factory, sheets_service_factory = _google_service_factories(config)
 
     issue_id = str(workbook_plan.get("issueId") or "").strip()
     raw_rows = workbook_plan.get("rows")
-    if not issue_id:
-        raise GoogleAccessError("workbook plan is missing issueId")
-    if not isinstance(raw_rows, list):
-        raise GoogleAccessError("workbook plan is missing rows list")
-    if not allow_draft_rows:
-        _require_family_export_approval_audit(workbook_plan, raw_rows)
+    assert isinstance(raw_rows, list)  # established by the pure preflight above
 
     specs_by_title = {spec.title: spec for spec in tab_specs}
     rows_by_tab: dict[str, list[list[str]]] = {}
@@ -1381,7 +1860,7 @@ def write_workbook_plan_to_google_sheet(
                 range=range_name,
                 body={},
             ).execute()
-        export_phase = "refreshing issue-only search"
+        export_phase = "refreshing issue and insider search"
         search_indexed_row_count = _refresh_issue_search_sheet(
             sheets,
             spreadsheet_id=config.sheets_spreadsheet_id,
@@ -1740,34 +2219,172 @@ def _require_family_export_approval_audit(
             "family-visible workbook export requires workbook-approval-audit provenance"
         )
 
+    required_boolean_fields = (
+        "externalServicesEnabled",
+        "networkAccess",
+        "staleApprovalDetected",
+    )
+    required_counter_fields = (
+        "rowCount",
+        "approvalRowsImported",
+        "matchedApprovalRows",
+        "unmatchedApprovalRows",
+        "approvedRows",
+        "rejectedRows",
+        "needsReviewRows",
+        "hashMismatchRows",
+        "invalidEvidenceRows",
+    )
+    required_fields = (
+        *required_boolean_fields,
+        "approvalSource",
+        *required_counter_fields,
+        "approvedRowsFingerprint",
+    )
+    if set(approval_audit) != set(required_fields):
+        unexpected = sorted(set(approval_audit) - set(required_fields))
+        if unexpected:
+            raise GoogleAccessError(
+                "family-visible workbook export approval audit contains unsupported fields: "
+                + ", ".join(unexpected)
+            )
+    for field in required_fields:
+        if field not in approval_audit:
+            raise GoogleAccessError(
+                f"family-visible workbook export approval audit is missing required field {field}"
+            )
+    for field in required_boolean_fields:
+        if not isinstance(approval_audit[field], bool):
+            raise GoogleAccessError(
+                f"family-visible workbook export approval audit field {field} must be boolean"
+            )
+    for field in required_counter_fields:
+        value = approval_audit[field]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise GoogleAccessError(
+                f"family-visible workbook export approval audit field {field} "
+                "must be a non-negative integer"
+            )
+    approved_rows_fingerprint = approval_audit["approvedRowsFingerprint"]
+    if not isinstance(approved_rows_fingerprint, str) or re.fullmatch(
+        r"[0-9a-f]{64}", approved_rows_fingerprint
+    ) is None:
+        raise GoogleAccessError(
+            "family-visible workbook export approval audit field "
+            "approvedRowsFingerprint must be a SHA-256 hex digest"
+        )
+
     if approval_audit.get("approvalSource") != "private_reviewer_csv":
         raise GoogleAccessError(
             "family-visible workbook export requires private reviewer CSV approval provenance"
         )
-    if approval_audit.get("staleApprovalDetected") is not False:
+    if approval_audit["externalServicesEnabled"] is not False:
+        raise GoogleAccessError(
+            "family-visible workbook export approval audit must be local-only"
+        )
+    if approval_audit["networkAccess"] is not False:
+        raise GoogleAccessError(
+            "family-visible workbook export approval audit cannot use network access"
+        )
+    if approval_audit["staleApprovalDetected"] is not False:
         raise GoogleAccessError(
             "family-visible workbook export cannot use stale or unchecked approval hashes"
         )
-    if approval_audit.get("hashMismatchRows") not in (0, None):
+    if approval_audit["hashMismatchRows"] != 0:
         raise GoogleAccessError(
             "family-visible workbook export cannot include approval hash mismatches"
         )
-    if approval_audit.get("invalidEvidenceRows") not in (0, None):
+    if approval_audit["invalidEvidenceRows"] != 0:
         raise GoogleAccessError(
             "family-visible workbook export cannot include invalid approval evidence"
         )
-    if approval_audit.get("rowCount") != len(raw_rows):
+    if approval_audit["unmatchedApprovalRows"] != 0:
+        raise GoogleAccessError(
+            "family-visible workbook export cannot include unmatched approval rows"
+        )
+    if approval_audit["rowCount"] != len(raw_rows):
         raise GoogleAccessError(
             "family-visible workbook export approval audit row count does not match rows"
+        )
+    if approval_audit["approvalRowsImported"] != (
+        approval_audit["matchedApprovalRows"]
+        + approval_audit["unmatchedApprovalRows"]
+    ):
+        raise GoogleAccessError(
+            "family-visible workbook export imported approval count is inconsistent"
+        )
+    if approval_audit["matchedApprovalRows"] > approval_audit["rowCount"]:
+        raise GoogleAccessError(
+            "family-visible workbook export matched approval count exceeds rows"
+        )
+    if (
+        approval_audit["approvedRows"]
+        + approval_audit["rejectedRows"]
+        + approval_audit["needsReviewRows"]
+        != approval_audit["rowCount"]
+    ):
+        raise GoogleAccessError(
+            "family-visible workbook export approval disposition counts are inconsistent"
+        )
+    if approval_audit["matchedApprovalRows"] < (
+        approval_audit["approvedRows"] + approval_audit["rejectedRows"]
+    ):
+        raise GoogleAccessError(
+            "family-visible workbook export final approval count exceeds matched approvals"
         )
 
     approved_row_count = sum(
         1 for row in raw_rows if isinstance(row, Mapping) and _is_approved_export_row(row)
     )
-    if approval_audit.get("approvedRows") != approved_row_count:
+    if approval_audit["approvedRows"] != approved_row_count:
         raise GoogleAccessError(
             "family-visible workbook export approved row count does not match approval audit"
         )
+    try:
+        current_fingerprint = approved_workbook_rows_fingerprint(raw_rows)
+    except ReviewApprovalError as error:
+        raise GoogleAccessError(
+            "family-visible workbook export approved rows are structurally invalid"
+        ) from error
+    if approved_rows_fingerprint != current_fingerprint:
+        raise GoogleAccessError(
+            "family-visible workbook export approved row fingerprint does not match current rows"
+        )
+
+
+def _require_no_unresolved_family_rows(
+    raw_rows: Sequence[object],
+    *,
+    specs_by_title: Mapping[str, GoogleSheetTabSpec],
+) -> None:
+    audit_spec = specs_by_title.get("Extraction Audit")
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            continue
+        tab = str(raw_row.get("tab") or "").strip()
+        review_status = str(raw_row.get("reviewStatus") or "").strip()
+        if tab == "Aktuell" and review_status == "needs_review":
+            raise GoogleAccessError(
+                "family-visible workbook export cannot include actionable Aktuell needs_review rows"
+            )
+        if tab != "Extraction Audit" or review_status == "approved":
+            continue
+        values = raw_row.get("values")
+        if (
+            audit_spec is None
+            or not isinstance(values, list)
+            or len(values) != len(audit_spec.headers)
+        ):
+            raise GoogleAccessError(
+                "family-visible workbook export contains an unresolved malformed Extraction Audit row"
+            )
+        lookup = dict(zip(audit_spec.headers, values))
+        actionable = bool(str(lookup.get("Action") or "").strip())
+        blocker = str(lookup.get("Severity") or "").strip().casefold() == "blocker"
+        if actionable or blocker:
+            raise GoogleAccessError(
+                "family-visible workbook export contains an unresolved actionable Extraction Audit blocker"
+            )
 
 
 def _has_valid_reviewed_at(value: object) -> bool:
@@ -2011,7 +2628,7 @@ def _auto_resize_issue_review_tab_columns(
     """Size every generated recommendation column to its current content."""
 
     tab_titles = ["Aktuell", *_issue_tab_titles_newest_first(sheet_ids_by_title)]
-    requests = [
+    resize_requests = [
         {
             "autoResizeDimensions": {
                 "dimensions": {
@@ -2025,6 +2642,24 @@ def _auto_resize_issue_review_tab_columns(
         for title in tab_titles
         if title in sheet_ids_by_title
     ]
+    width_requests = [
+        {
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_ids_by_title[title],
+                    "dimension": "COLUMNS",
+                    "startIndex": column_index,
+                    "endIndex": column_index + 1,
+                },
+                "properties": {"pixelSize": pixel_size},
+                "fields": "pixelSize",
+            }
+        }
+        for title in tab_titles
+        if title in sheet_ids_by_title
+        for column_index, pixel_size in enumerate(REVIEWER_COLUMN_WIDTHS)
+    ]
+    requests = [*resize_requests, *width_requests]
     if not requests:
         return []
     sheets.spreadsheets().batchUpdate(
@@ -2225,13 +2860,14 @@ def _issue_recommendation_table_clear_ranges(
     layout: tuple[int, int, int, int, int],
 ) -> tuple[str, ...]:
     (
-        _stock_header_row,
+        stock_header_row,
         stock_data_end_row,
         derivative_label_row,
         _derivative_header_row,
         derivative_data_end_row,
     ) = layout
     return (
+        f"{_quote_sheet_title(tab_title)}!Q{stock_header_row}:Q{stock_data_end_row}",
         f"{_quote_sheet_title(tab_title)}!A{stock_data_end_row + 1}:Q{derivative_label_row - 1}",
         f"{_quote_sheet_title(tab_title)}!A{derivative_data_end_row + 1}:AI",
         f"{_quote_sheet_title(tab_title)}!S1:AI",
@@ -2243,7 +2879,7 @@ SEARCH_INDEX_HEADERS = (
     "Issue sort key",
     "Source page sort",
     "Search key",
-    *tuple(f"Value {index}" for index in range(1, REVIEWER_DERIVATIVE_COLUMN_COUNT + 1)),
+    *tuple(f"Value {index}" for index in range(1, 20)),
 )
 
 
@@ -2251,6 +2887,7 @@ def _build_issue_search_index_rows(
     *,
     issue_tab_values_by_title: Mapping[str, Sequence[Sequence[object]]],
     sheet_ids_by_title: Mapping[str, int],
+    insider_activity_values: Sequence[Sequence[object]] = (),
 ) -> list[list[object]]:
     """Preserve full issue rows for Search without indexing Aktuell twice."""
 
@@ -2315,9 +2952,7 @@ def _build_issue_search_index_rows(
                 else REVIEWER_DERIVATIVE_COLUMN_COUNT
             )
             row_values = _normalize_sheet_row_values(row, width=row_width)
-            row_values.extend(
-                [""] * (REVIEWER_DERIVATIVE_COLUMN_COUNT - len(row_values))
-            )
+            row_values.extend([""] * (19 - len(row_values)))
             index_rows.append(
                 [
                     row_kind,
@@ -2327,6 +2962,43 @@ def _build_issue_search_index_rows(
                     *row_values,
                 ]
             )
+    insider_spec = next(
+        spec for spec in DEFAULT_SHEET_TABS if spec.title == "Insider Activity"
+    )
+    insider_headers: dict[str, int] = {}
+    for raw_row in insider_activity_values:
+        row = [str(value or "") for value in raw_row]
+        if tuple(row[: len(insider_spec.headers)]) == insider_spec.headers:
+            insider_headers = {header: index for index, header in enumerate(row)}
+            continue
+        if not insider_headers or not any(value.strip() for value in row):
+            continue
+
+        def insider_value(header: str) -> str:
+            index = insider_headers.get(header)
+            return row[index].strip() if index is not None and index < len(row) else ""
+
+        company = insider_value("Company")
+        wkn = insider_value("WKN")
+        ticker = insider_value("Ticker")
+        insider = insider_value("Insider")
+        if not any((company, wkn, ticker, insider)):
+            continue
+        transaction_date = insider_value("Transaction date")
+        try:
+            sort_key = int(transaction_date.replace("-", ""))
+        except ValueError:
+            sort_key = 0
+        row_values = _normalize_sheet_row_values(row, width=19)
+        index_rows.append(
+            [
+                "Insider",
+                sort_key,
+                0,
+                f"{wkn} {company} {ticker} {insider}".strip().casefold(),
+                *row_values,
+            ]
+        )
     return index_rows
 
 
@@ -2336,9 +3008,17 @@ def _build_issue_search_results_formula() -> str:
 
     stock_source_headers = [
         *next(spec.headers for spec in DEFAULT_SHEET_TABS if spec.title == "Aktuell"),
-        "",
+        "", "", "",
     ]
-    derivative_source_headers = list(AKTUELL_DERIVATIVE_HEADERS)
+    derivative_source_headers = [*AKTUELL_DERIVATIVE_HEADERS, "", ""]
+    insider_source_headers = list(
+        next(
+            spec.headers
+            for spec in DEFAULT_SHEET_TABS
+            if spec.title == "Insider Activity"
+        )
+    )
+    insider_source_headers.extend([""] * (19 - len(insider_source_headers)))
 
     def source_first_headers(
         headers: Sequence[str],
@@ -2369,6 +3049,7 @@ def _build_issue_search_results_formula() -> str:
         derivative_source_headers,
         source_header="Issue:Page",
     )
+    insider_headers = insider_source_headers
     stock_columns = source_first_columns(
         stock_source_headers,
         source_header="Source",
@@ -2377,28 +3058,37 @@ def _build_issue_search_results_formula() -> str:
         derivative_source_headers,
         source_header="Issue:Page",
     )
-    blank_row = array_row([""] * REVIEWER_DERIVATIVE_COLUMN_COUNT)
+    insider_columns = ",".join(str(column) for column in range(3, 22))
+    blank_row = array_row([""] * 19)
     stock_no_match = array_row(
-        ["", "", "", "No stock matches", *([""] * 15)]
+        ["", "", "", "No stock matches", *([""] * 17)]
     )
     derivative_no_match = array_row(
-        ["", "", "", "No derivative matches", *([""] * 15)]
+        ["", "", "", "No derivative matches", *([""] * 17)]
+    )
+    insider_no_match = array_row(
+        ["", "", "", "No insider matches", *([""] * 17)]
     )
     return (
         '=IF(LEN(TRIM($C$1))=0,"Enter a company or WKN above",'
         "LET("
         "q,LOWER(TRIM($C$1)),"
-        "matches,ARRAYFORMULA(ISNUMBER(SEARCH(q,LOWER($V$2:$V)))),"
-        "stockSorted,IFERROR(SORT(FILTER({$T$2:$U,$W$2:$AM},"
-        f'$S$2:$S="Stock",matches),1,FALSE,2,TRUE),{stock_no_match}),'
-        "derivativeSorted,IFERROR(SORT(FILTER({$T$2:$U,$W$2:$AM},"
-        f'$S$2:$S="Derivative",matches),1,FALSE,2,TRUE),{derivative_no_match}),'
+        "matches,ARRAYFORMULA(ISNUMBER(SEARCH(q,LOWER($X$2:$X)))),"
+        "stockSorted,IFERROR(SORT(FILTER({$V$2:$W,$Y$2:$AQ},"
+        f'$U$2:$U="Stock",matches),1,FALSE,2,TRUE),{stock_no_match}),'
+        "derivativeSorted,IFERROR(SORT(FILTER({$V$2:$W,$Y$2:$AQ},"
+        f'$U$2:$U="Derivative",matches),1,FALSE,2,TRUE),{derivative_no_match}),'
+        "insiderSorted,IFERROR(SORT(FILTER({$V$2:$W,$Y$2:$AQ},"
+        f'$U$2:$U="Insider",matches),1,FALSE,2,TRUE),{insider_no_match}),'
         f"stocks,CHOOSECOLS(stockSorted,{stock_columns}),"
         f"derivatives,CHOOSECOLS(derivativeSorted,{derivative_columns}),"
-        f'VSTACK({array_row(["Stocks", *([""] * 16)])},'
+        f"insiders,CHOOSECOLS(insiderSorted,{insider_columns}),"
+        f'VSTACK({array_row(["Stocks", *([""] * 18)])},'
         f"{array_row(stock_headers)},stocks,{blank_row},"
-        f'{array_row(["Derivatives", *([""] * 16)])},'
-        f"{array_row(derivative_headers)},derivatives)))"
+        f'{array_row(["Derivatives", *([""] * 18)])},'
+        f"{array_row(derivative_headers)},derivatives,{blank_row},"
+        f'{array_row(["Insider Activity", *([""] * 18)])},'
+        f"{array_row(insider_headers)},insiders)))"
     )
 
 
@@ -2411,7 +3101,7 @@ def _build_search_format_requests(
         "sheetId": sheet_id,
         "startRowIndex": 3,
         "startColumnIndex": 0,
-        "endColumnIndex": REVIEWER_DERIVATIVE_COLUMN_COUNT,
+        "endColumnIndex": 19,
     }
     requests: list[dict[str, object]] = [
         {
@@ -2466,7 +3156,7 @@ def _build_search_format_requests(
     requests.extend(
         (
             add_rule(
-                '=OR($A4="Stocks",$A4="Derivatives")',
+                '=OR($A4="Stocks",$A4="Derivatives",$A4="Insider Activity")',
                 {
                     "backgroundColor": {"red": 0.15, "green": 0.16, "blue": 0.42},
                     "textFormat": {
@@ -2565,9 +3255,16 @@ def _refresh_issue_search_sheet(
     if current_issue_title is not None:
         issue_values_by_title[current_issue_title] = current_issue_values
 
+    insider_activity_values = _sheet_values_get(
+        sheets,
+        spreadsheet_id=spreadsheet_id,
+        range_name="'Insider Activity'!A:L",
+    ) if "Insider Activity" in sheet_ids_by_title else []
+
     index_rows = _build_issue_search_index_rows(
         issue_tab_values_by_title=issue_values_by_title,
         sheet_ids_by_title=sheet_ids_by_title,
+        insider_activity_values=insider_activity_values,
     )
     search_properties = next(
         (
@@ -2591,7 +3288,7 @@ def _refresh_issue_search_sheet(
                             "sheetId": search_sheet_id,
                             "gridProperties": {
                                 "frozenRowCount": SEARCH_SHEET_TAB.frozen_rows,
-                                "columnCount": 39,
+                                "columnCount": 43,
                                 "rowCount": max(100, len(index_rows) + 10),
                             },
                         },
@@ -2608,7 +3305,7 @@ def _refresh_issue_search_sheet(
                             "sheetId": search_sheet_id,
                             "dimension": "COLUMNS",
                             "startIndex": 0,
-                            "endIndex": REVIEWER_DERIVATIVE_COLUMN_COUNT,
+                            "endIndex": 19,
                         },
                         "properties": {"hiddenByUser": False},
                         "fields": "hiddenByUser",
@@ -2619,8 +3316,8 @@ def _refresh_issue_search_sheet(
                         "range": {
                             "sheetId": search_sheet_id,
                             "dimension": "COLUMNS",
-                            "startIndex": REVIEWER_DERIVATIVE_COLUMN_COUNT,
-                            "endIndex": 39,
+                            "startIndex": 19,
+                            "endIndex": 43,
                         },
                         "properties": {"hiddenByUser": True},
                         "fields": "hiddenByUser",
@@ -2728,6 +3425,9 @@ def _refresh_issue_search_sheet(
                             120,
                             180,
                             180,
+                            140,
+                            160,
+                            160,
                         )
                     )
                 ],
@@ -2736,7 +3436,12 @@ def _refresh_issue_search_sheet(
     ).execute()
     sheets.spreadsheets().values().clear(
         spreadsheetId=spreadsheet_id,
-        range="'Search'!J:Q",
+        range="'Search'!J:S",
+        body={},
+    ).execute()
+    sheets.spreadsheets().values().clear(
+        spreadsheetId=spreadsheet_id,
+        range="'Search'!T:AQ",
         body={},
     ).execute()
     sheets.spreadsheets().values().clear(
@@ -2762,14 +3467,14 @@ def _refresh_issue_search_sheet(
     ).execute()
     index_write_ranges: list[dict[str, object]] = [
         {
-            "range": "'Search'!S1:AM1",
+            "range": "'Search'!U1:AQ1",
             "values": [list(SEARCH_INDEX_HEADERS)],
         },
     ]
     if index_rows:
         index_write_ranges.append(
             {
-                "range": f"'Search'!S2:AM{len(index_rows) + 1}",
+                "range": f"'Search'!U2:AQ{len(index_rows) + 1}",
                 "values": index_rows,
             }
         )
@@ -2779,7 +3484,7 @@ def _refresh_issue_search_sheet(
     ).execute()
     sheets.spreadsheets().values().clear(
         spreadsheetId=spreadsheet_id,
-        range=f"'Search'!S{len(index_rows) + 2}:AM",
+        range=f"'Search'!U{len(index_rows) + 2}:AQ",
         body={},
     ).execute()
     sheets.spreadsheets().batchUpdate(
@@ -2947,6 +3652,57 @@ def _build_conditional_format_requests(
     }
     requests: list[dict[str, object]] = []
     for spec in tab_specs:
+        if spec.title == "Insider Activity":
+            sheet_id = sheet_ids_by_title.get(spec.title)
+            if sheet_id is None:
+                continue
+            existing_rules = properties_by_title.get(spec.title, {}).get(
+                "conditionalFormats", []
+            )
+            requests.extend(
+                {
+                    "deleteConditionalFormatRule": {
+                        "sheetId": sheet_id,
+                        "index": index,
+                    }
+                }
+                for index in range(len(existing_rules) - 1, -1, -1)
+                if _is_owned_insider_direction_format_rule(
+                    existing_rules[index], sheet_id=sheet_id
+                )
+            )
+            direction_column = _column_letter(spec.headers.index("Direction") + 1)
+            data_range = {
+                "sheetId": sheet_id,
+                "startRowIndex": 1,
+                "startColumnIndex": 0,
+                "endColumnIndex": len(spec.headers),
+            }
+            requests.extend(
+                {
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [data_range],
+                            "booleanRule": {
+                                "condition": {
+                                    "type": "CUSTOM_FORMULA",
+                                    "values": [
+                                        {
+                                            "userEnteredValue": (
+                                                f'=${direction_column}2="{direction}"'
+                                            )
+                                        }
+                                    ],
+                                },
+                                "format": {"backgroundColor": color},
+                            },
+                        },
+                        "index": 0,
+                    }
+                }
+                for direction, color in INSIDER_DIRECTION_FORMATS
+            )
+            continue
         if spec.title not in {"AKTIONAER Depot", "Depot Transactions"}:
             continue
         sheet_id = sheet_ids_by_title.get(spec.title)
@@ -2986,6 +3742,37 @@ def _build_conditional_format_requests(
             )
         )
     return tuple(requests)
+
+
+def _is_owned_insider_direction_format_rule(
+    rule: object,
+    *,
+    sheet_id: int,
+) -> bool:
+    if not isinstance(rule, Mapping):
+        return False
+    ranges = rule.get("ranges")
+    boolean_rule = rule.get("booleanRule")
+    if not isinstance(ranges, list) or len(ranges) != 1 or not isinstance(boolean_rule, Mapping):
+        return False
+    expected_range = {
+        "sheetId": sheet_id,
+        "startRowIndex": 1,
+        "startColumnIndex": 0,
+        "endColumnIndex": 12,
+    }
+    if ranges[0] != expected_range:
+        return False
+    condition = boolean_rule.get("condition")
+    if not isinstance(condition, Mapping):
+        return False
+    values = condition.get("values")
+    if not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], Mapping):
+        return False
+    return values[0].get("userEnteredValue") in {
+        '=$I2="Acquired"',
+        '=$I2="Disposed"',
+    }
 
 
 def _build_reviewer_action_format_requests(
@@ -3162,11 +3949,15 @@ def _sheet_values_get(
     *,
     spreadsheet_id: str,
     range_name: str,
+    value_render_option: str | None = None,
 ) -> list[list[object]]:
+    request = {"spreadsheetId": spreadsheet_id, "range": range_name}
+    if value_render_option is not None:
+        request["valueRenderOption"] = value_render_option
     response = (
         sheets.spreadsheets()
         .values()
-        .get(spreadsheetId=spreadsheet_id, range=range_name)
+        .get(**request)
         .execute()
     )
     values = response.get("values", [])
@@ -3227,7 +4018,8 @@ def _apply_managed_sheet_protections(
             spreadsheetId=spreadsheet_id,
             fields=(
                 "sheets(properties(sheetId,title),"
-                "protectedRanges(protectedRangeId,description))"
+                "protectedRanges(protectedRangeId,description,warningOnly,editors,"
+                "range,unprotectedRanges))"
             ),
         )
         .execute()
@@ -3248,32 +4040,71 @@ def _apply_managed_sheet_protections(
     ]
 
     requests: list[dict[str, object]] = []
-    for sheet in sheet_states:
-        protected_ranges = sheet.get("protectedRanges", [])
-        if not isinstance(protected_ranges, list):
-            continue
-        for protected_range in protected_ranges:
-            if not isinstance(protected_range, Mapping):
-                continue
-            description = str(protected_range.get("description") or "")
-            protected_range_id = protected_range.get("protectedRangeId")
-            if (
-                description.startswith(MANAGED_PROTECTION_DESCRIPTION_PREFIX)
-                and protected_range_id is not None
-            ):
-                requests.append(
-                    {
-                        "deleteProtectedRange": {
-                            "protectedRangeId": int(protected_range_id)
-                        }
-                    }
-                )
-
     protected_tab_titles: list[str] = []
     for sheet in managed_tabs:
         properties = sheet["properties"]
         sheet_id = int(properties["sheetId"])
         title = str(properties["title"])
+        protected_ranges = sheet.get("protectedRanges", [])
+        existing_ranges = protected_ranges if isinstance(protected_ranges, list) else []
+        managed_ranges = [
+            protected_range
+            for protected_range in existing_ranges
+            if isinstance(protected_range, Mapping)
+            and str(protected_range.get("description") or "").startswith(
+                MANAGED_PROTECTION_DESCRIPTION_PREFIX
+            )
+        ]
+        current_managed = next(
+            (
+                protected_range
+                for protected_range in existing_ranges
+                if isinstance(protected_range, Mapping)
+                if _managed_protection_is_current(
+                    protected_range,
+                    sheet_id=sheet_id,
+                    title=title,
+                    editor_email=normalized_editor_email,
+                )
+            ),
+            None,
+        )
+        protected_tab_titles.append(title)
+        incompatible_manual_sheet_protection = next(
+            (
+                protected_range
+                for protected_range in existing_ranges
+                if isinstance(protected_range, Mapping)
+                and protected_range.get("range") == {"sheetId": sheet_id}
+                and protected_range not in managed_ranges
+                and not _managed_protection_is_current(
+                    protected_range,
+                    sheet_id=sheet_id,
+                    title=title,
+                    editor_email=normalized_editor_email,
+                )
+            ),
+            None,
+        )
+        if incompatible_manual_sheet_protection is not None:
+            raise GoogleAccessError(
+                f"{title} has an incompatible manual whole-sheet protection; "
+                "preserving it instead of replacing it"
+            )
+        for protected_range in managed_ranges:
+            if protected_range is current_managed:
+                continue
+            protected_range_id = protected_range.get("protectedRangeId")
+            if isinstance(protected_range_id, int):
+                requests.append(
+                    {
+                        "deleteProtectedRange": {
+                            "protectedRangeId": protected_range_id,
+                        }
+                    }
+                )
+        if current_managed is not None:
+            continue
         protected_range: dict[str, object] = {
             "range": {"sheetId": sheet_id},
             "description": f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} {title}",
@@ -3296,7 +4127,6 @@ def _apply_managed_sheet_protections(
         requests.append(
             {"addProtectedRange": {"protectedRange": protected_range}}
         )
-        protected_tab_titles.append(title)
 
     if requests:
         sheets.spreadsheets().batchUpdate(
@@ -3306,9 +4136,45 @@ def _apply_managed_sheet_protections(
     return protected_tab_titles
 
 
+def _managed_protection_is_current(
+    protected_range: Mapping[str, object],
+    *,
+    sheet_id: int,
+    title: str,
+    editor_email: str,
+) -> bool:
+    if protected_range.get("range") != {"sheetId": sheet_id}:
+        return False
+    if protected_range.get("warningOnly") is True:
+        return False
+    editors = protected_range.get("editors")
+    if not isinstance(editors, Mapping):
+        return False
+    users = editors.get("users")
+    if not isinstance(users, list) or editor_email not in users:
+        return False
+    if editors.get("domainUsersCanEdit") is True:
+        return False
+    expected_unprotected = (
+        [
+            {
+                "sheetId": sheet_id,
+                "startRowIndex": 0,
+                "endRowIndex": 1,
+                "startColumnIndex": 2,
+                "endColumnIndex": 5,
+            }
+        ]
+        if title == "Search"
+        else []
+    )
+    actual_unprotected = protected_range.get("unprotectedRanges") or []
+    return actual_unprotected == expected_unprotected
+
+
 def _is_managed_protection_tab(title: str) -> bool:
     return (
-        title in {"Search", "Aktuell"}
+        title in {"Search", "Aktuell", "Insider Activity"}
         or ISSUE_TAB_TITLE_RE.fullmatch(title) is not None
     )
 

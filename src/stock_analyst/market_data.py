@@ -274,13 +274,13 @@ PROVIDER_METADATA: dict[str, ProviderMetadata] = {
     "sec_edgar_form4": ProviderMetadata(
         provider_id="sec_edgar_form4",
         display_name="SEC EDGAR Form 4",
-        status="metadata_only",
+        status="live_cached",
         credentials_required=False,
-        network_access=False,
+        network_access=True,
         user_agent_env_var="SEC_USER_AGENT",
         purpose="Planned official insider-activity enrichment for US-listed stocks already present in Stocks rows.",
         safety_notes=(
-            "Adapter is not implemented.",
+            "Live access is limited to the cached weekly Form 4 importer.",
             "Only magazine-backed Stocks rows may become candidates.",
             "Non-US issuers and unresolved ticker-to-CIK mappings must be marked not covered or needs_review.",
             "Insider activity is external context and cannot change magazine recommendation, target, stop, WKN, or printed price fields.",
@@ -1086,6 +1086,14 @@ def load_market_data_config(env: Mapping[str, str] | None = None) -> MarketDataC
             reason=f"missing user-agent environment variable: {provider.user_agent_env_var}",
         )
 
+    if provider.status == "live_cached":
+        return MarketDataConfig(
+            requested_provider=requested_provider,
+            provider=provider,
+            enabled=True,
+            reason="cached live provider adapter is available",
+        )
+
     return MarketDataConfig(
         requested_provider=requested_provider,
         provider=provider,
@@ -1254,7 +1262,42 @@ def build_market_data_symbol_map_template_csv(
             )
         )
 
+    for existing_row in _existing_symbol_template_rows(existing_csv_text):
+        dedupe_key = (
+            _wkn_lookup_key(existing_row.wkn)
+            or _name_lookup_key(existing_row.name)
+            or _source_id_lookup_key(existing_row.source_id)
+        )
+        if not dedupe_key or dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        rows.append(existing_row)
+
     return _symbol_map_template_rows_to_csv(rows)
+
+
+def market_data_candidates_from_symbol_map_template_csv(
+    csv_text: str,
+) -> tuple[MarketDataWorkbookCandidate, ...]:
+    """Return the persistent magazine-backed stock universe from its private CSV."""
+
+    result: list[MarketDataWorkbookCandidate] = []
+    for row in _existing_symbol_template_rows(csv_text):
+        if row.tab != "Stocks" or not row.name:
+            continue
+        result.append(
+            MarketDataWorkbookCandidate(
+                source_id=row.source_id,
+                tab=row.tab,
+                row_kind=row.row_kind,
+                name=row.name,
+                wkn=row.wkn,
+                symbol=row.symbol or None,
+                status="ready" if row.symbol else "needs_symbol_mapping",
+                reason="persistent magazine-backed symbol-map candidate",
+            )
+        )
+    return tuple(result)
 
 
 def market_data_candidates_from_workbook_plan(
@@ -1746,6 +1789,39 @@ def _existing_symbol_map_from_template_text(csv_text: str) -> dict[str, str]:
             if key:
                 symbol_map[key] = _normalize_unique_symbols((symbol,))[0]
     return symbol_map
+
+
+def _existing_symbol_template_rows(
+    csv_text: str,
+) -> tuple[MarketDataSymbolMapTemplateRow, ...]:
+    if not csv_text.strip():
+        return ()
+    reader = csv.DictReader(StringIO(csv_text))
+    if reader.fieldnames is None:
+        return ()
+    result: list[MarketDataSymbolMapTemplateRow] = []
+    for raw_row in reader:
+        row = {
+            (key or "").strip().lower(): (value or "").strip()
+            for key, value in raw_row.items()
+        }
+        if not any(row.get(key, "") for key in ("source_id", "wkn", "name")):
+            continue
+        result.append(
+            MarketDataSymbolMapTemplateRow(
+                source_id=row.get("source_id", ""),
+                wkn=row.get("wkn", ""),
+                name=row.get("name", ""),
+                symbol=row.get("symbol", ""),
+                status=row.get("status", ""),
+                tab=row.get("tab", ""),
+                row_kind=row.get("row_kind", ""),
+                issue=row.get("issue", ""),
+                page=row.get("page", ""),
+                notes=row.get("notes", ""),
+            )
+        )
+    return tuple(result)
 
 
 def _candidate_by_source_id(

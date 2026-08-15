@@ -27,6 +27,20 @@ from stock_analyst.workbook_export import (
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "workbook_export"
+DERIVATIVE_BASE_LINES = (
+    "Basiswert", "WKN", "Emittent", "Typ", "Ratio", "Strike /", "Cap",
+    "Laufzeit", "Hebel /", "Omega", "Synthetic Index", "INDEX1",
+    "Synthetic Issuer", "Mini-Long", "0,01", "6.500 Pkte.", "open end",
+    "3,2", "Derivate-Tipps im Rückblick",
+)
+DERIVATIVE_METRICS_HEADER = (
+    "Heft", "Empf.", "kurs", "Aktueller", "Kurs", "Performance", "seit Empf.",
+    "Ziel", "Stopp", "Chance", "Risiko", "Empfehlung",
+)
+DERIVATIVE_METRICS_ROW = (
+    "49/25", "26.11.25", "1,03 €", "1,94 €", "+88,3 %", "3,00 €",
+    "1,40 €", "•••••", "•••••", "Dabei-", "bleiben",
+)
 
 
 def headers_for(tab: str) -> tuple[str, ...]:
@@ -375,6 +389,73 @@ class WorkbookExportPlanTest(unittest.TestCase):
             "paired_action_table_candidate_exception=paired_table_name_mismatch",
             exception_row["warnings"],
         )
+
+    def test_pdf_plan_surfaces_derivative_count_mismatch_in_extraction_audit(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(page_number=62, text="\n".join(DERIVATIVE_BASE_LINES)),
+                    RawPageText(
+                        page_number=63,
+                        text="\n".join(
+                            DERIVATIVE_METRICS_HEADER
+                            + DERIVATIVE_METRICS_ROW
+                            + DERIVATIVE_METRICS_ROW
+                        ),
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_40.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        exception_rows = [
+            row for row in plan.to_dict()["rows"]
+            if row["rowKind"] == "derivative_overview_pairing_exception"
+        ]
+        self.assertEqual(len(exception_rows), 1)
+        exception = exception_rows[0]
+        self.assertEqual(exception["tab"], "Extraction Audit")
+        self.assertEqual(exception["values"][1], "2026-W40:62 | 2026-W40:63")
+        self.assertIn("adjacent_row_count_mismatch", exception["values"][4])
+        self.assertIn("base_rows=1", exception["values"][4])
+        self.assertIn("metrics_rows=2", exception["values"][4])
+
+    def test_pdf_plan_pairs_forward_derivatives_and_audits_preceding_orphan(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                metrics = "\n".join(DERIVATIVE_METRICS_HEADER + DERIVATIVE_METRICS_ROW)
+                return (
+                    RawPageText(page_number=61, text=metrics),
+                    RawPageText(page_number=62, text="\n".join(DERIVATIVE_BASE_LINES)),
+                    RawPageText(page_number=63, text=metrics),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_40.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        exception_rows = [
+            row for row in plan.to_dict()["rows"]
+            if row["rowKind"] == "derivative_overview_pairing_exception"
+        ]
+        self.assertEqual(len(exception_rows), 1)
+        exception = exception_rows[0]
+        self.assertEqual(exception["values"][1], "2026-W40:61")
+        self.assertIn("missing_adjacent_base_table", exception["values"][4])
+        self.assertIn("metrics_pages=61", exception["values"][4])
+        derivative_rows = [
+            row for row in plan.to_dict()["rows"]
+            if row["rowKind"] == "derivative_overview"
+        ]
+        self.assertEqual(len(derivative_rows), 1)
+        self.assertIn("2026-W40:62 | 2026-W40:63", derivative_rows[0]["values"])
 
     def test_pdf_plan_can_still_use_strict_statistics_cutoff_policy(self) -> None:
         class StubExtractor:
@@ -952,6 +1033,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
                 DerivativeOverviewRow(
                     issue_id="2026-W03",
                     page=62,
+                    metrics_page=63,
                     underlying="Bayer",
                     product="Bayer",
                     direction="Discount-Call",
@@ -999,10 +1081,15 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(rows["Derivative Tips"]["values"][0], "Bayer")
         self.assertEqual(rows["Derivative Tips"]["values"][2], "Discount-Call")
         self.assertEqual(rows["Derivative Tips"]["values"][12], "+88,3 %")
+        self.assertEqual(rows["Derivative Tips"]["values"][17], "2026-W03:62 | 2026-W03:63")
         self.assertEqual(len(rows["Derivative Tips"]["values"]), len(headers_for("Derivative Tips")))
         self.assertEqual(rows["Aktuell"]["values"][2], "Sell")
         self.assertEqual(rows["Aktuell"]["values"][12], "")
         self.assertEqual(rows["Aktuell"]["values"][16], "Tauschen")
+        self.assertEqual(
+            rows["Aktuell"]["values"][AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")],
+            "2026-W03:62 | 2026-W03:63",
+        )
         self.assertEqual(rows["AKTIONAER Depot"]["rowKind"], "aktionaer_depot_position")
         self.assertEqual(rows["AKTIONAER Depot"]["values"][0], "Amazon")
         self.assertEqual(len(rows["AKTIONAER Depot"]["values"]), len(headers_for("AKTIONAER Depot")))
@@ -1061,6 +1148,107 @@ class WorkbookExportPlanTest(unittest.TestCase):
                 for row in aktuell_rows
             ],
             ["Dabei- bleiben", "Ausgestoppt"],
+        )
+
+    def test_routes_derivative_follow_up_actions_and_skips_card_duplicate(self) -> None:
+        def derivative_row(wkn: str, recommendation: str) -> DerivativeOverviewRow:
+            return DerivativeOverviewRow(
+                issue_id="2026-W40",
+                page=62,
+                metrics_page=63,
+                underlying=f"Synthetic {wkn}",
+                product=f"Synthetic {wkn}",
+                direction="Call",
+                wkn=wkn,
+                issuer="Synthetic Issuer",
+                ratio="1,00",
+                strike_cap="10,00 EUR",
+                omega_hebel="2,0",
+                runtime="31.12.26",
+                entry_price="1,00 EUR",
+                current_price="1,20 EUR",
+                performance_since_recommendation="+20,0 %",
+                target="1,50 EUR",
+                stop="0,80 EUR",
+                recommendation=recommendation,
+            )
+
+        duplicate_card = RecommendationCard(
+            issue_id="2026-W40",
+            page=12,
+            instrument_name="Synthetic duplicate",
+            instrument_type=InstrumentType.DERIVATIVE,
+            recommendation_status="neu",
+            wkn="DUP001",
+            current_price=None,
+            target=None,
+            stop=None,
+            chance=None,
+            risk=None,
+        )
+        recommendations = (
+            ("FOLLOW1", "Stopp nachziehen"),
+            ("FOLLOW2", "Ziel/Stopp nachziehen"),
+            ("FOLLOW3", "Ziel anpassen"),
+            ("FOLLOW4", "Stopp beachten"),
+            ("DUP001", "Stopp nachziehen"),
+        )
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2026_40.pdf"),
+            issue_id="2026-W40",
+            recommendation_cards=(duplicate_card,),
+            derivative_overview=tuple(
+                derivative_row(wkn, recommendation)
+                for wkn, recommendation in recommendations
+            ),
+            stock_update_date="2026-09-30",
+        )
+
+        aktuell_rows = [
+            row for row in plan.to_dict()["rows"] if row["tab"] == "Aktuell"
+        ]
+        self.assertEqual(len(aktuell_rows), 5)
+        self.assertEqual(
+            [
+                row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Action")]
+                for row in aktuell_rows
+            ],
+            ["Hold", "Hold", "Hold", "Hold", "Hold"],
+        )
+        rows_by_wkn = {
+            row["values"][AKTUELL_DERIVATIVE_HEADERS.index("WKN")]: row
+            for row in aktuell_rows
+        }
+        duplicate = rows_by_wkn["DUP001"]
+        self.assertEqual(
+            duplicate["values"][AKTUELL_DERIVATIVE_HEADERS.index("Derivative")],
+            "Synthetic duplicate",
+        )
+        self.assertEqual(
+            duplicate["values"][AKTUELL_DERIVATIVE_HEADERS.index("Reviewer note")],
+            "Stopp nachziehen",
+        )
+        self.assertEqual(
+            duplicate["values"][AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")],
+            "2026-W40:12 | 2026-W40:62 | 2026-W40:63",
+        )
+        self.assertEqual(
+            duplicate["sourceBlock"],
+            "manual_review_pending; source_pages:12,62,63",
+        )
+        self.assertEqual(
+            [
+                row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Reviewer note")]
+                for row in aktuell_rows[1:]
+            ],
+            [recommendation for _, recommendation in recommendations[:4]],
+        )
+        self.assertTrue(
+            all(
+                row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")]
+                == "2026-W40:62 | 2026-W40:63"
+                for row in aktuell_rows[1:]
+            )
         )
 
     def test_routes_dividend_rows_to_dividend_focus(self) -> None:

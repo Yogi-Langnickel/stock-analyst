@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import json
 import tempfile
 import unittest
@@ -6,6 +7,7 @@ from io import StringIO
 from pathlib import Path
 
 from stock_analyst.review_approvals import (
+    approved_workbook_rows_fingerprint,
     apply_workbook_approvals,
     approval_template_csv_from_workbook_plan,
     load_workbook_approvals_csv,
@@ -66,6 +68,54 @@ def workbook_plan() -> dict[str, object]:
 
 
 class ReviewApprovalTest(unittest.TestCase):
+    def test_row_values_hash_preserves_json_value_types(self) -> None:
+        self.assertNotEqual(
+            workbook_row_values_sha256(["2"]),
+            workbook_row_values_sha256([2]),
+        )
+        self.assertNotEqual(
+            workbook_row_values_sha256([None]),
+            workbook_row_values_sha256([""]),
+        )
+
+    def test_approved_rows_fingerprint_uses_documented_canonical_payload(self) -> None:
+        rows = [
+            {
+                "sourceId": "row-z",
+                "reviewStatus": "approved",
+                "values": ["Zürich", None, 2],
+            },
+            {
+                "sourceId": "row-a",
+                "reviewStatus": "approved",
+                "values": ["Alpha", 1],
+            },
+            {
+                "sourceId": "ignored",
+                "reviewStatus": "needs_review",
+                "values": ["not fingerprinted"],
+            },
+        ]
+        canonical = json.dumps(
+            [
+                {
+                    "sourceId": "row-a",
+                    "rowValuesSha256": workbook_row_values_sha256(["Alpha", 1]),
+                },
+                {
+                    "sourceId": "row-z",
+                    "rowValuesSha256": workbook_row_values_sha256(["Zürich", None, 2]),
+                },
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        self.assertEqual(
+            approved_workbook_rows_fingerprint(rows),
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        )
+
     def test_approval_template_includes_exact_row_hashes_without_approving_rows(self) -> None:
         plan = workbook_plan()
 
@@ -124,6 +174,9 @@ class ReviewApprovalTest(unittest.TestCase):
                 "hashMismatchRows": 0,
                 "invalidEvidenceRows": 0,
                 "staleApprovalDetected": False,
+                "approvedRowsFingerprint": approved_workbook_rows_fingerprint(
+                    reviewed["rows"]
+                ),
             },
         )
 
