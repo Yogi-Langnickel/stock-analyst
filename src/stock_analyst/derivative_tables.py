@@ -86,12 +86,41 @@ class DerivativeOverviewRow:
 
 
 @dataclass(frozen=True)
+class DerivativeOverviewPairingException:
+    issue_id: str
+    page: int
+    reason: str
+    base_page: int | None
+    metrics_pages: tuple[int, ...]
+    base_row_count: int
+    metrics_row_counts: tuple[int, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "issueId": self.issue_id,
+            "page": self.page,
+            "reason": self.reason,
+            "basePage": self.base_page,
+            "metricsPages": list(self.metrics_pages),
+            "baseRowCount": self.base_row_count,
+            "metricsRowCounts": list(self.metrics_row_counts),
+        }
+
+
+@dataclass(frozen=True)
+class DerivativeOverviewPairingResult:
+    rows: tuple[DerivativeOverviewRow, ...]
+    exceptions: tuple[DerivativeOverviewPairingException, ...]
+
+
+@dataclass(frozen=True)
 class DerivativeOverviewExtraction:
     issue_id: str
     pdf_path: Path
     page_count: int
     external_services_enabled: bool
     rows: tuple[DerivativeOverviewRow, ...]
+    pairing_exceptions: tuple[DerivativeOverviewPairingException, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -100,6 +129,9 @@ class DerivativeOverviewExtraction:
             "pageCount": self.page_count,
             "externalServicesEnabled": self.external_services_enabled,
             "rows": [row.to_dict() for row in self.rows],
+            "pairingExceptions": [
+                exception.to_dict() for exception in self.pairing_exceptions
+            ],
         }
 
 
@@ -116,7 +148,7 @@ def build_derivative_overview_from_pdf(
         min_embedded_chars=min_embedded_chars,
     )
     resolved_issue_id = issue_id or _issue_id_from_filename(pdf_path)
-    rows = extract_derivative_overview_rows_from_page_lines(
+    pairing_result = extract_derivative_overview_result_from_page_lines(
         tuple((page.page_number, page.text.splitlines()) for page in extraction.pages),
         issue_id=resolved_issue_id,
     )
@@ -125,7 +157,8 @@ def build_derivative_overview_from_pdf(
         pdf_path=pdf_path,
         page_count=extraction.page_count,
         external_services_enabled=False,
-        rows=rows,
+        rows=pairing_result.rows,
+        pairing_exceptions=pairing_result.exceptions,
     )
 
 
@@ -134,6 +167,17 @@ def extract_derivative_overview_rows_from_page_lines(
     *,
     issue_id: str,
 ) -> tuple[DerivativeOverviewRow, ...]:
+    return extract_derivative_overview_result_from_page_lines(
+        pages,
+        issue_id=issue_id,
+    ).rows
+
+
+def extract_derivative_overview_result_from_page_lines(
+    pages: Sequence[tuple[int, Sequence[str]]],
+    *,
+    issue_id: str,
+) -> DerivativeOverviewPairingResult:
     base_tables: list[tuple[int, tuple[DerivativeOverviewRow, ...]]] = []
     metrics_tables: list[tuple[int, tuple[_DerivativeMetrics, ...]]] = []
     for page_number, lines in pages:
@@ -154,6 +198,14 @@ def extract_derivative_overview_rows_from_page_lines(
                 (page_number, _extract_metrics_rows(normalized))
             )
 
+    adjacent_metrics_by_base = {
+        base_index: tuple(
+            metrics_index
+            for metrics_index, (metrics_page, _) in enumerate(metrics_tables)
+            if abs(metrics_page - base_page) == 1
+        )
+        for base_index, (base_page, _) in enumerate(base_tables)
+    }
     base_candidates = {
         base_index: tuple(
             metrics_index
@@ -163,19 +215,82 @@ def extract_derivative_overview_rows_from_page_lines(
         )
         for base_index, (base_page, base_rows) in enumerate(base_tables)
     }
-    metrics_candidates = {
+    adjacent_base_indexes = {
         metrics_index: tuple(
             base_index
-            for base_index, metrics_indexes in base_candidates.items()
-            if metrics_index in metrics_indexes
+            for base_index, (base_page, _) in enumerate(base_tables)
+            if abs(base_page - metrics_page) == 1
         )
-        for metrics_index in range(len(metrics_tables))
+        for metrics_index, (metrics_page, _) in enumerate(metrics_tables)
     }
 
     extracted: list[DerivativeOverviewRow] = []
-    for base_index, (_, base_rows) in enumerate(base_tables):
+    exceptions: list[DerivativeOverviewPairingException] = []
+    for base_index, (base_page, base_rows) in enumerate(base_tables):
+        adjacent_indexes = adjacent_metrics_by_base[base_index]
         candidates = base_candidates[base_index]
-        if len(candidates) != 1 or len(metrics_candidates[candidates[0]]) != 1:
+        if not base_rows:
+            exceptions.append(
+                _pairing_exception(
+                    issue_id=issue_id,
+                    base_page=base_page,
+                    base_row_count=0,
+                    metrics_tables=metrics_tables,
+                    metrics_indexes=adjacent_indexes,
+                    reason="base_row_parse_failed",
+                )
+            )
+            continue
+        if not adjacent_indexes:
+            exceptions.append(
+                _pairing_exception(
+                    issue_id=issue_id,
+                    base_page=base_page,
+                    base_row_count=len(base_rows),
+                    metrics_tables=metrics_tables,
+                    metrics_indexes=(),
+                    reason="missing_adjacent_metrics_table",
+                )
+            )
+            extracted.extend(base_rows)
+            continue
+        if len(adjacent_indexes) > 1:
+            exceptions.append(
+                _pairing_exception(
+                    issue_id=issue_id,
+                    base_page=base_page,
+                    base_row_count=len(base_rows),
+                    metrics_tables=metrics_tables,
+                    metrics_indexes=adjacent_indexes,
+                    reason="ambiguous_adjacent_metrics_table",
+                )
+            )
+            extracted.extend(base_rows)
+            continue
+        if not candidates:
+            exceptions.append(
+                _pairing_exception(
+                    issue_id=issue_id,
+                    base_page=base_page,
+                    base_row_count=len(base_rows),
+                    metrics_tables=metrics_tables,
+                    metrics_indexes=adjacent_indexes,
+                    reason="adjacent_row_count_mismatch",
+                )
+            )
+            extracted.extend(base_rows)
+            continue
+        if len(candidates) != 1 or len(adjacent_base_indexes[candidates[0]]) != 1:
+            exceptions.append(
+                _pairing_exception(
+                    issue_id=issue_id,
+                    base_page=base_page,
+                    base_row_count=len(base_rows),
+                    metrics_tables=metrics_tables,
+                    metrics_indexes=adjacent_indexes,
+                    reason="ambiguous_adjacent_metrics_table",
+                )
+            )
             extracted.extend(base_rows)
             continue
         metrics_page, metrics_rows = metrics_tables[candidates[0]]
@@ -183,7 +298,47 @@ def extract_derivative_overview_rows_from_page_lines(
             _apply_metrics(row, row_metrics, metrics_page=metrics_page)
             for row, row_metrics in zip(base_rows, metrics_rows)
         )
-    return tuple(extracted)
+    for metrics_index, (metrics_page, metrics_rows) in enumerate(metrics_tables):
+        if adjacent_base_indexes[metrics_index]:
+            continue
+        exceptions.append(
+            DerivativeOverviewPairingException(
+                issue_id=issue_id,
+                page=metrics_page,
+                reason="missing_adjacent_base_table",
+                base_page=None,
+                metrics_pages=(metrics_page,),
+                base_row_count=0,
+                metrics_row_counts=(len(metrics_rows),),
+            )
+        )
+    return DerivativeOverviewPairingResult(
+        rows=tuple(extracted),
+        exceptions=tuple(exceptions),
+    )
+
+
+def _pairing_exception(
+    *,
+    issue_id: str,
+    base_page: int,
+    base_row_count: int,
+    metrics_tables: Sequence[tuple[int, tuple[_DerivativeMetrics, ...]]],
+    metrics_indexes: Sequence[int],
+    reason: str,
+) -> DerivativeOverviewPairingException:
+    metrics_pages = tuple(metrics_tables[index][0] for index in metrics_indexes)
+    return DerivativeOverviewPairingException(
+        issue_id=issue_id,
+        page=base_page,
+        reason=reason,
+        base_page=base_page,
+        metrics_pages=metrics_pages,
+        base_row_count=base_row_count,
+        metrics_row_counts=tuple(
+            len(metrics_tables[index][1]) for index in metrics_indexes
+        ),
+    )
 
 
 @dataclass(frozen=True)

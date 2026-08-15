@@ -76,12 +76,12 @@ licensed or explicitly permitted feed may be reconsidered.
 | Sweden — [Finansinspektionen PDMR register](https://www.fi.se/en/our-registers/pdmr-transactions/) and [public search](https://marknadssok.fi.se/publiceringsklient/en-GB) | `manager_transaction` | Official public register exposes person, issuer, instrument, date, volume, price, currency, and status | **Pilot.** Confirm a supported export or retrieval contract; do not bind to undocumented page internals. |
 | France — [AMF managers' declarations](https://www.amf-france.org/fr/formulaires-et-declarations/societes-cotees-et-operations-financieres/declarations-des-dirigeants-formulaires-et-declarations) and [BDIF search](https://bdif.amf-france.org/fr?typesInformation=DD) | `manager_transaction` | Official declarations and downloadable records are available | **Pilot.** Start with a bounded fixture and revision study; retain the original declaration link and French transaction wording. |
 | Germany — [BaFin Directors' Dealings](https://www.bafin.de/DE/Aufsicht/BoersenMaerkte/Transparenz/InformationspflichtenEmittenten/DirectorsDealings/directorsdealings_artikel.html) | `manager_transaction` | BaFin states that its database contains reported and published directors' dealings | **Bounded pilot only after terms review.** Do not schedule until the supported query/export method and reuse terms are recorded. |
-| Brazil — [CVM Valores Mobiliarios Negociados e Detidos](https://dados.cvm.gov.br/dataset/cia_aberta-doc-vlmo) | `role_aggregate`, with holdings as supplied | Official weekly open-data ZIPs cover the last five years and may be republished with corrections | **Pilot.** Never manufacture a named person: the source can aggregate by governing-body role. Model re-presentations as revisions. |
+| Brazil — [CVM Valores Mobiliarios Negociados e Detidos](https://dados.cvm.gov.br/dataset/cia_aberta-doc-vlmo) | `role_aggregate`, with holdings as supplied | Official weekly open-data ZIPs cover the last five years, may be republished with corrections, and are marked ODbL | **Pilot only after the ODbL gate is implemented.** Never manufacture a named person. Preserve revisions and record attribution, licence notice, share-alike, and derivative-database access obligations before enabling retrieval. |
 | Korea — [DART disclosure system](https://dart.fss.or.kr/) and [OpenDART developer portal](https://opendart.fss.or.kr/) | `ownership_change` for executives/major shareholders; separate `large_holder_report` filings also exist | Official API-key service and filing system | **Pilot in Ownership Changes.** It is not a Form 4 clone. Preserve report type and reason; do not reduce every change to buy/sell. |
 | Japan — [EDINET search and API guidance](https://disclosure2.edinet-fsa.go.jp/week0020.aspx) | `large_holder_report` | Official API v2 requires registration/key; the source exposes reports of possession of large volume | **Pilot only as Large Holder Reports.** Do not place EDINET large-volume filings in manager transactions. |
-| United Kingdom — [FCA National Storage Mechanism FAQ, January 2026](https://www.fca.org.uk/publication/primary-market/fca-nsm-help-and-faqs.pdf) | PDMR documents can represent `manager_transaction`; NSM also contains `large_holder_report` and other filings | The NSM supports interactive search/CSV, but the specialist terms review found programmatic access prohibited | **Reject direct automation.** Hold until the FCA supplies a documented API, bulk feed, or written permission. Manual links may be recorded without copying content. |
+| United Kingdom — [FCA Publishing Hub FAQ, version 2.0, July 2026](https://data.fca.org.uk/artefacts/PUBLISHING_HUB_FAQs_v0.1.pdf) | PDMR documents can represent `manager_transaction`; NSM also contains `large_holder_report` and other filings | Reviewed 2026-08-15: FAQ 5 says direct access to NSM or the other Publishing Hub datasets is not permitted and data is viewable only through the website UI; the stated API exception is UK FIRDS/FITRS, not NSM | **Reject direct NSM automation.** Hold until the FCA documents an NSM API/bulk feed or grants written permission. Manual links may be recorded without copying content. |
 | United Kingdom — [Companies House Persons with Significant Control API](https://developer-specs.company-information.service.gov.uk/companies-house-public-data-api/reference/persons-with-significant-control) and [daily PSC snapshot](https://download.companieshouse.gov.uk/en_pscdata.html) | `holding_or_interest` / beneficial-control context | Official API and daily JSON snapshot | **Pilot as ownership context only.** A PSC notification is not a director trade. Minimize personal fields and never export addresses or birth details. |
-| Canada — [SEDAR+ terms of use](https://sedarplus.ca/onlinehelp/terms-of-use/) / SEDI insider reports | `manager_transaction`; closest Canadian analogue to Form 4 | Public reports exist, but the terms prohibit robots, automated searches, scraping, and automated copying without permission | **Reject direct automation; hold for a feed agreement.** Do not scrape SEDI/SEDAR+. |
+| Canada — [SEDI Public Terms of Use, current as of 1 June 2023](https://www.sedi.ca/sedi/disclaimer_en.html) | `manager_transaction`; closest Canadian analogue to Form 4 | Reviewed 2026-08-15: the SEDI public terms separately prohibit robots, spiders, other automatic devices/software, and manual processes used to monitor, copy, or interfere with pages; they note a separate written agreement/feed path for data resellers | **Reject direct SEDI automation; hold for a written feed agreement.** These are SEDI-specific findings; [SEDAR+ terms](https://sedarplus.ca/onlinehelp/terms-of-use/) are tracked separately and are not the evidence for SEDI access. |
 | Chile — [CMF Article 12 transaction tool](https://www.cmfchile.cl/portal/estadisticas/626/w4-propertyvalue-45866.html) | `manager_transaction`; Article 20 must remain a distinct reporting basis where applicable | Official interactive query, but no verified bulk/API retrieval contract | **Hold automation.** Use a small manual sample to validate semantics and request permission or a supported feed before adapter work. |
 | Norway — [Finanstilsynet MAR/PDMR guidance](https://www.finanstilsynet.no/en/topics/market-abuse-regulation-mar-in-norway/) | `manager_transaction` notifications | Official page explains submission through Altinn and issuer publication, but no regulator retrieval feed was verified | **Hold.** Do not infer that a submission portal is a public collection API. Issuer announcements are not a regulator feed. |
 | Ireland — [Central Bank manager-transaction notifications](https://www.centralbank.ie/regulation/industry-market-sectors/securities-markets/market-abuse-regulation/notification-of-managers-transactions) | `manager_transaction` notifications | Official page documents portal submission and issuer publication, not a public retrieval feed | **Hold.** Seek a supported public feed; do not automate the submission portal. |
@@ -136,6 +136,19 @@ CAPTCHA, or response-schema drift automatically disables the adapter. There is
 no paywall bypass, CAPTCHA bypass, session imitation, proxy rotation, or stealth
 scraping. A manual or held source stays manual/held until the gate is reopened;
 its existence in this plan is not permission to automate it.
+
+Current evidence reviewed 2026-08-15:
+
+- FCA Publishing Hub FAQ version 2.0 (July 2026), FAQ 5: no direct NSM
+  programmatic access; UK FIRDS/FITRS APIs do not authorize NSM automation.
+- SEDI Public Terms of Use (current as of 1 June 2023): SEDI's public terms are
+  the governing evidence for SEDI and must not be conflated with SEDAR+ terms.
+- The CVM VLMO dataset is marked Open Data Commons ODbL. Before its pilot,
+  record the ODbL notice/attribution path and determine whether the proposed
+  store is a derivative or collective database. If a derivative database or a
+  produced work from it is used publicly, satisfy the applicable share-alike
+  and machine-readable derivative/alteration-file access requirements. Keep the
+  adapter disabled until this distribution design receives compliance review.
 
 ## Canonical Schemas
 
@@ -275,7 +288,8 @@ when the source documentation supports it.
 1. Build one `SourceAdapter` interface: `discover(since)`, `fetch(document)`,
    `parse(payload)`, `normalize(records)`, and `checkpoint()`.
 2. Start transaction pilots with AFM, then FI and AMF. Start non-transaction
-   pilots with CVM VLMO, OpenDART ownership changes, EDINET large-holder reports,
+   pilots with CVM VLMO only after its ODbL distribution gate is approved, then
+   OpenDART ownership changes, EDINET large-holder reports,
    Companies House PSC, UK Commons interests, HATVP, and TSE assets.
 3. Pilot US House PTR and Storting transactions in their own public-official
    schema. Preserve reported amount ranges and source-specific roles.

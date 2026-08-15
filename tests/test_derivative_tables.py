@@ -2,6 +2,7 @@ import unittest
 
 from stock_analyst.derivative_tables import (
     DerivativeOverviewRow,
+    extract_derivative_overview_result_from_page_lines,
     extract_derivative_overview_rows_from_page_lines,
 )
 
@@ -114,16 +115,18 @@ class DerivativeOverviewTablesTest(unittest.TestCase):
             (63, METRICS_HEADER_LINES + BAYER_METRICS_LINES),
         )
 
-        rows = extract_derivative_overview_rows_from_page_lines(
+        result = extract_derivative_overview_result_from_page_lines(
             pages,
             issue_id="2026-W34",
         )
+        rows = result.rows
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].direction, "Mini-Long")
         self.assertEqual(rows[0].recommendation, "Dabei- bleiben")
         self.assertEqual(rows[0].metrics_page, 63)
         self.assertEqual(rows[0].source_pages, (62, 63))
+        self.assertEqual(result.exceptions, ())
 
     def test_extracts_mini_short_base_row(self) -> None:
         mini_short_base_lines = (
@@ -219,16 +222,24 @@ class DerivativeOverviewTablesTest(unittest.TestCase):
         self.assertEqual(rows[1].recommendation, "Ausgestoppt")
 
     def test_leaves_metrics_blank_when_retrospective_row_is_missing(self) -> None:
-        rows = extract_derivative_overview_rows_from_page_lines(
+        result = extract_derivative_overview_result_from_page_lines(
             self._pages(BAYER_METRICS_LINES),
             issue_id="2026-W03",
         )
+        rows = result.rows
 
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0].underlying, "Bayer")
         self.assertEqual(rows[1].underlying, "Caterpillar")
         self._assert_metrics_blank(rows[0])
         self._assert_metrics_blank(rows[1])
+        self.assertEqual(len(result.exceptions), 1)
+        exception = result.exceptions[0]
+        self.assertEqual(exception.reason, "adjacent_row_count_mismatch")
+        self.assertEqual(exception.base_page, 62)
+        self.assertEqual(exception.metrics_pages, (63,))
+        self.assertEqual(exception.base_row_count, 2)
+        self.assertEqual(exception.metrics_row_counts, (1,))
 
     def test_leaves_metrics_blank_when_retrospective_row_is_extra(self) -> None:
         rows = extract_derivative_overview_rows_from_page_lines(
@@ -245,6 +256,32 @@ class DerivativeOverviewTablesTest(unittest.TestCase):
         self.assertEqual(rows[1].underlying, "Caterpillar")
         self._assert_metrics_blank(rows[0])
         self._assert_metrics_blank(rows[1])
+
+    def test_reports_ambiguous_adjacent_metrics_tables_without_applying_either(self) -> None:
+        metrics_page = (
+            METRICS_HEADER_LINES
+            + BAYER_METRICS_LINES
+            + CATERPILLAR_METRICS_LINES
+        )
+
+        result = extract_derivative_overview_result_from_page_lines(
+            (
+                (61, metrics_page),
+                (62, BASE_PAGE_LINES),
+                (63, metrics_page),
+            ),
+            issue_id="2026-W03",
+        )
+
+        self.assertEqual(len(result.rows), 2)
+        self.assertTrue(all(row.metrics_page is None for row in result.rows))
+        self.assertEqual(len(result.exceptions), 1)
+        exception = result.exceptions[0]
+        self.assertEqual(exception.reason, "ambiguous_adjacent_metrics_table")
+        self.assertEqual(exception.base_page, 62)
+        self.assertEqual(exception.metrics_pages, (61, 63))
+        self.assertEqual(exception.base_row_count, 2)
+        self.assertEqual(exception.metrics_row_counts, (2, 2))
 
     def _pages(
         self,

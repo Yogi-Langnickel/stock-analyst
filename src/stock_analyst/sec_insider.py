@@ -10,7 +10,7 @@ import unicodedata
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -21,6 +21,7 @@ import certifi
 
 SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
 SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+SEC_SUBMISSIONS_ARCHIVE_URL = "https://data.sec.gov/submissions/{name}"
 SEC_ARCHIVES_URL = (
     "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{document}"
 )
@@ -31,6 +32,10 @@ DEFAULT_CACHE_DIR = Path("data/market-cache/sec-edgar")
 
 class SecInsiderError(RuntimeError):
     """Raised when safe SEC insider enrichment cannot continue."""
+
+
+class _SecPayloadValidationError(SecInsiderError):
+    """Raised when fetched SEC bytes fail their content contract."""
 
 
 @dataclass(frozen=True)
@@ -86,14 +91,22 @@ class SecInsiderTransaction:
     review_status: str
     source_ref: str
     date_updated: str
+    form_type: str = "4"
+    filing_accession: str = ""
+    original_submission_date: str = ""
+    period_of_report: str = ""
+    correction_status: str = "original"
 
     def to_sheet_row(self) -> list[str]:
+        relationship = self.relationship
+        if self.correction_status == "effective_correction":
+            relationship = _join_unique((relationship, "Form 4/A correction"))
         return [
             self.company,
             self.wkn,
             self.ticker,
             self.insider,
-            self.relationship,
+            relationship,
             self.shares_owned_after,
             self.transaction_date,
             _simplified_transaction(self.transaction_code),
@@ -116,9 +129,21 @@ class SecInsiderEnrichmentResult:
     network_request_count: int
     cache_hit_count: int
     request_budget_exhausted: bool
+    transaction_revisions: tuple[SecInsiderTransaction, ...] = ()
+    archive_file_count: int = 0
+    archive_coverage_partial: bool = False
+
+
+@dataclass(frozen=True)
+class _SecForm4Filing:
+    accession: str
+    document: str
+    filing_date: str
+    form_type: str
 
 
 FetchBytes = Callable[[str, str], bytes]
+ValidateBytes = Callable[[bytes], None]
 
 
 class _CachedSecClient:
@@ -137,14 +162,28 @@ class _CachedSecClient:
         self.request_budget_exhausted = False
         self._last_request_at: float | None = None
 
-    def get(self, url: str, cache_path: Path, *, ttl: timedelta | None) -> bytes:
+    def get(
+        self,
+        url: str,
+        cache_path: Path,
+        *,
+        ttl: timedelta | None,
+        validator: ValidateBytes | None = None,
+    ) -> bytes:
         full_path = self.config.cache_dir / cache_path
         if full_path.exists() and (
             ttl is None
             or self.now.timestamp() - full_path.stat().st_mtime <= ttl.total_seconds()
         ):
-            self.cache_hit_count += 1
-            return full_path.read_bytes()
+            cached_payload = full_path.read_bytes()
+            try:
+                if validator is not None:
+                    validator(cached_payload)
+            except SecInsiderError:
+                _quarantine_cache_file(full_path)
+            else:
+                self.cache_hit_count += 1
+                return cached_payload
         if self.network_request_count >= self.config.max_requests:
             self.request_budget_exhausted = True
             raise SecInsiderError("SEC request budget exhausted")
@@ -158,6 +197,8 @@ class _CachedSecClient:
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as error:
             raise SecInsiderError("SEC request failed") from error
         self._last_request_at = time.monotonic()
+        if validator is not None:
+            validator(payload)
         full_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = full_path.with_suffix(f"{full_path.suffix}.tmp")
         temporary.write_bytes(payload)
@@ -208,6 +249,7 @@ def enrich_sec_form4(
         SEC_TICKER_MAP_URL,
         Path("company-tickers.json"),
         ttl=timedelta(days=7),
+        validator=_validate_ticker_json,
     )
     records = parse_sec_ticker_records(ticker_payload)
     resolved, unresolved_count = resolve_sec_issuers(candidates, records)
@@ -217,35 +259,73 @@ def enrich_sec_form4(
     failed_issuer_count = 0
     failed_filing_count = 0
 
-    pending_filings: list[tuple[str, SecResolvedIssuer, str, str]] = []
+    pending_filings: list[tuple[SecResolvedIssuer, _SecForm4Filing]] = []
+    archive_file_count = 0
+    archive_coverage_partial = False
     for issuer in resolved:
         try:
             submission_payload = client.get(
                 SEC_SUBMISSIONS_URL.format(cik=issuer.cik),
                 Path("submissions") / f"CIK{issuer.cik}.json",
                 ttl=timedelta(hours=24),
+                validator=_validate_submissions_json,
             )
         except SecInsiderError:
             failed_issuer_count += 1
             if client.request_budget_exhausted:
                 break
             continue
-        filings = recent_form4_filings(submission_payload, cutoff=cutoff)
-        pending_filings.extend(
-            (filing_date, issuer, accession, document)
-            for accession, document, filing_date in filings
+        issuer_filings = list(
+            _recent_form4_filing_records(submission_payload, cutoff=cutoff)
         )
+        archive_names, archive_metadata_complete = _required_submission_archive_names(
+            submission_payload,
+            cutoff=cutoff,
+        )
+        issuer_archive_failed = not archive_metadata_complete
+        for archive_name in archive_names:
+            try:
+                archive_payload = client.get(
+                    SEC_SUBMISSIONS_ARCHIVE_URL.format(name=archive_name),
+                    Path("submissions") / "archives" / archive_name,
+                    ttl=timedelta(hours=24),
+                    validator=_validate_submission_archive_json,
+                )
+            except SecInsiderError:
+                issuer_archive_failed = True
+                if client.request_budget_exhausted:
+                    break
+                continue
+            archive_file_count += 1
+            issuer_filings.extend(
+                _recent_form4_filing_records(
+                    archive_payload,
+                    cutoff=cutoff,
+                    archived=True,
+                )
+            )
+        if issuer_archive_failed:
+            archive_coverage_partial = True
+            failed_issuer_count += 1
+        pending_filings.extend(
+            (issuer, filing)
+            for filing in {
+                (item.accession, item.document): item for item in issuer_filings
+            }.values()
+        )
+        if client.request_budget_exhausted:
+            break
 
-    for filing_date, issuer, accession, document in sorted(
+    for issuer, filing in sorted(
         pending_filings,
-        key=lambda item: item[0],
+        key=lambda item: item[1].filing_date,
         reverse=True,
     ):
-        accession_compact = accession.replace("-", "")
+        accession_compact = filing.accession.replace("-", "")
         filing_url = SEC_ARCHIVES_URL.format(
             cik=int(issuer.cik),
             accession=accession_compact,
-            document=document,
+            document=filing.document,
         )
         try:
             xml_payload = client.get(
@@ -254,7 +334,12 @@ def enrich_sec_form4(
                 / str(int(issuer.cik))
                 / f"{accession_compact}-raw.xml",
                 ttl=None,
+                validator=_validate_xml,
             )
+        except _SecPayloadValidationError:
+            filing_count += 1
+            failed_filing_count += 1
+            continue
         except SecInsiderError:
             failed_filing_count += 1
             if client.request_budget_exhausted:
@@ -266,15 +351,20 @@ def enrich_sec_form4(
                 parse_form4_transactions(
                     xml_payload,
                     issuer=issuer,
-                    filing_date=filing_date,
+                    filing_date=filing.filing_date,
                     filing_url=filing_url,
                     date_updated=effective_now.date().isoformat(),
+                    form_type=filing.form_type,
+                    filing_accession=filing.accession,
                 )
             )
         except SecInsiderError:
             failed_filing_count += 1
 
-    unique = {transaction.filing_url: transaction for transaction in transactions}
+    revisions, effective_transactions = _project_effective_transactions(transactions)
+    unique = {
+        transaction.filing_url: transaction for transaction in effective_transactions
+    }
     ordered = tuple(
         sorted(
             unique.values(),
@@ -298,6 +388,9 @@ def enrich_sec_form4(
         network_request_count=client.network_request_count,
         cache_hit_count=client.cache_hit_count,
         request_budget_exhausted=client.request_budget_exhausted,
+        transaction_revisions=revisions,
+        archive_file_count=archive_file_count,
+        archive_coverage_partial=archive_coverage_partial,
     )
 
 
@@ -364,15 +457,33 @@ def recent_form4_filings(
     *,
     cutoff: date,
 ) -> tuple[tuple[str, str, str], ...]:
+    return tuple(
+        (filing.accession, filing.document, filing.filing_date)
+        for filing in _recent_form4_filing_records(payload, cutoff=cutoff)
+    )
+
+
+def _recent_form4_filing_records(
+    payload: bytes,
+    *,
+    cutoff: date,
+    archived: bool = False,
+) -> tuple[_SecForm4Filing, ...]:
     data = json.loads(payload.decode("utf-8"))
-    recent = data.get("filings", {}).get("recent", {}) if isinstance(data, Mapping) else {}
+    recent = (
+        data
+        if archived and isinstance(data, Mapping)
+        else data.get("filings", {}).get("recent", {})
+        if isinstance(data, Mapping)
+        else {}
+    )
     if not isinstance(recent, Mapping):
         return ()
     forms = recent.get("form", [])
     accessions = recent.get("accessionNumber", [])
     documents = recent.get("primaryDocument", [])
     filing_dates = recent.get("filingDate", [])
-    result: list[tuple[str, str, str]] = []
+    result: list[_SecForm4Filing] = []
     for form, accession, document, filing_date in zip(
         forms, accessions, documents, filing_dates
     ):
@@ -389,8 +500,47 @@ def recent_form4_filings(
                 str(document),
                 flags=re.IGNORECASE,
             )
-            result.append((str(accession), raw_document, parsed_date.isoformat()))
+            result.append(
+                _SecForm4Filing(
+                    accession=str(accession),
+                    document=raw_document,
+                    filing_date=parsed_date.isoformat(),
+                    form_type=str(form),
+                )
+            )
     return tuple(result)
+
+
+def _required_submission_archive_names(
+    payload: bytes,
+    *,
+    cutoff: date,
+) -> tuple[tuple[str, ...], bool]:
+    data = json.loads(payload.decode("utf-8"))
+    filings = data.get("filings", {}) if isinstance(data, Mapping) else {}
+    raw_files = filings.get("files", []) if isinstance(filings, Mapping) else []
+    if not isinstance(raw_files, list):
+        return (), False
+    names: list[str] = []
+    complete = True
+    for raw in raw_files:
+        if not isinstance(raw, Mapping):
+            complete = False
+            continue
+        name = str(raw.get("name") or "").strip()
+        filing_to_text = str(raw.get("filingTo") or "").strip()
+        try:
+            filing_to = date.fromisoformat(filing_to_text)
+        except ValueError:
+            filing_to = None
+            complete = False
+        if filing_to is not None and filing_to < cutoff:
+            continue
+        if not name or Path(name).name != name or not name.endswith(".json"):
+            complete = False
+            continue
+        names.append(name)
+    return tuple(dict.fromkeys(names)), complete
 
 
 def parse_form4_transactions(
@@ -400,6 +550,8 @@ def parse_form4_transactions(
     filing_date: str,
     filing_url: str,
     date_updated: str,
+    form_type: str = "4",
+    filing_accession: str = "",
 ) -> tuple[SecInsiderTransaction, ...]:
     try:
         root = ET.fromstring(payload)
@@ -409,6 +561,10 @@ def parse_form4_transactions(
     insider = _join_unique(owner[0] for owner in owners)
     relationship = _join_unique(owner[1] for owner in owners)
     ticker = _first_descendant_text(root, "issuerTradingSymbol") or issuer.ticker
+    original_submission_date = _first_descendant_text(
+        root, "dateOfOriginalSubmission"
+    )
+    period_of_report = _first_descendant_text(root, "periodOfReport")
     nodes = [
         node
         for node in root.iter()
@@ -461,9 +617,92 @@ def parse_form4_transactions(
                 review_status="needs_review",
                 source_ref=issuer.source_ref,
                 date_updated=date_updated,
+                form_type=form_type,
+                filing_accession=filing_accession,
+                original_submission_date=original_submission_date,
+                period_of_report=period_of_report,
             )
         )
     return tuple(transactions)
+
+
+def _project_effective_transactions(
+    transactions: Sequence[SecInsiderTransaction],
+) -> tuple[tuple[SecInsiderTransaction, ...], tuple[SecInsiderTransaction, ...]]:
+    """Retain filing revisions while projecting only effective Form 4 activity."""
+
+    by_filing: dict[str, list[SecInsiderTransaction]] = {}
+    for transaction in transactions:
+        filing_identity = transaction.filing_url.split("#", 1)[0]
+        by_filing.setdefault(filing_identity, []).append(transaction)
+
+    amendment_groups: dict[tuple[str, str, str, str], list[str]] = {}
+    for filing_identity, filing_rows in by_filing.items():
+        first = filing_rows[0]
+        if first.form_type.upper() != "4/A":
+            continue
+        if first.original_submission_date or first.period_of_report:
+            key = (
+                first.cik,
+                first.insider.casefold(),
+                first.original_submission_date,
+                first.period_of_report,
+            )
+        else:
+            # Without amendment linkage metadata, do not guess that unrelated
+            # Form 4/A filings supersede one another.
+            key = (first.cik, first.insider.casefold(), filing_identity, "")
+        amendment_groups.setdefault(key, []).append(filing_identity)
+
+    effective_amendments: set[str] = set()
+    superseded_amendments: set[str] = set()
+    for filing_identities in amendment_groups.values():
+        ordered = sorted(
+            filing_identities,
+            key=lambda identity: (
+                by_filing[identity][0].filing_date,
+                by_filing[identity][0].filing_accession,
+                identity,
+            ),
+        )
+        effective_amendments.add(ordered[-1])
+        superseded_amendments.update(ordered[:-1])
+
+    superseded_originals: set[str] = set()
+    for amendment_identity in effective_amendments:
+        amendment = by_filing[amendment_identity][0]
+        if not amendment.original_submission_date:
+            continue
+        for filing_identity, filing_rows in by_filing.items():
+            original = filing_rows[0]
+            if original.form_type.upper() == "4/A":
+                continue
+            if (
+                original.cik == amendment.cik
+                and original.insider.casefold() == amendment.insider.casefold()
+                and original.filing_date == amendment.original_submission_date
+            ):
+                superseded_originals.add(filing_identity)
+
+    revisions: list[SecInsiderTransaction] = []
+    effective: list[SecInsiderTransaction] = []
+    for filing_identity, filing_rows in by_filing.items():
+        if filing_identity in superseded_originals:
+            status = "superseded"
+        elif filing_identity in superseded_amendments:
+            status = "superseded_correction"
+        elif filing_identity in effective_amendments:
+            status = "effective_correction"
+        else:
+            status = "original"
+        projected_rows = [
+            replace(transaction, correction_status=status)
+            for transaction in filing_rows
+        ]
+        revisions.extend(projected_rows)
+        if status in {"original", "effective_correction"}:
+            effective.extend(projected_rows)
+    return tuple(revisions), tuple(effective)
 
 
 def _fetch_sec_bytes(url: str, user_agent: str) -> bytes:
@@ -481,6 +720,59 @@ def _fetch_sec_bytes(url: str, user_agent: str) -> bytes:
         context=tls_context,
     ) as response:
         return response.read()
+
+
+def _validated_json_object(payload: bytes) -> Mapping[str, object]:
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise _SecPayloadValidationError("SEC response is not valid JSON") from error
+    if not isinstance(value, Mapping):
+        raise _SecPayloadValidationError("SEC JSON response is not an object")
+    return value
+
+
+def _validate_ticker_json(payload: bytes) -> None:
+    value = _validated_json_object(payload)
+    if not value or not any(isinstance(record, Mapping) for record in value.values()):
+        raise _SecPayloadValidationError("SEC ticker response has no records")
+
+
+def _validate_submissions_json(payload: bytes) -> None:
+    value = _validated_json_object(payload)
+    filings = value.get("filings")
+    if not isinstance(filings, Mapping) or not isinstance(
+        filings.get("recent"), Mapping
+    ):
+        raise _SecPayloadValidationError("SEC submissions response is malformed")
+    if "files" in filings and not isinstance(filings.get("files"), list):
+        raise _SecPayloadValidationError("SEC submissions archive list is malformed")
+
+
+def _validate_submission_archive_json(payload: bytes) -> None:
+    value = _validated_json_object(payload)
+    required_arrays = ("form", "accessionNumber", "primaryDocument", "filingDate")
+    if any(not isinstance(value.get(name), list) for name in required_arrays):
+        raise _SecPayloadValidationError("SEC submissions archive is malformed")
+
+
+def _validate_xml(payload: bytes) -> None:
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as error:
+        raise _SecPayloadValidationError("SEC Form 4 document is not valid XML") from error
+    if _local_name(root.tag) != "ownershipDocument":
+        raise _SecPayloadValidationError("SEC Form 4 document has an unexpected root")
+
+
+def _quarantine_cache_file(path: Path) -> Path:
+    candidate = path.with_suffix(f"{path.suffix}.corrupt")
+    suffix = 1
+    while candidate.exists():
+        candidate = path.with_suffix(f"{path.suffix}.corrupt.{suffix}")
+        suffix += 1
+    path.replace(candidate)
+    return candidate
 
 
 def _company_key(value: str) -> str:

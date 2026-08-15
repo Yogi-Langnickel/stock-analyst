@@ -27,6 +27,20 @@ from stock_analyst.workbook_export import (
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "workbook_export"
+DERIVATIVE_BASE_LINES = (
+    "Basiswert", "WKN", "Emittent", "Typ", "Ratio", "Strike /", "Cap",
+    "Laufzeit", "Hebel /", "Omega", "Synthetic Index", "INDEX1",
+    "Synthetic Issuer", "Mini-Long", "0,01", "6.500 Pkte.", "open end",
+    "3,2", "Derivate-Tipps im Rückblick",
+)
+DERIVATIVE_METRICS_HEADER = (
+    "Heft", "Empf.", "kurs", "Aktueller", "Kurs", "Performance", "seit Empf.",
+    "Ziel", "Stopp", "Chance", "Risiko", "Empfehlung",
+)
+DERIVATIVE_METRICS_ROW = (
+    "49/25", "26.11.25", "1,03 €", "1,94 €", "+88,3 %", "3,00 €",
+    "1,40 €", "•••••", "•••••", "Dabei-", "bleiben",
+)
 
 
 def headers_for(tab: str) -> tuple[str, ...]:
@@ -375,6 +389,70 @@ class WorkbookExportPlanTest(unittest.TestCase):
             "paired_action_table_candidate_exception=paired_table_name_mismatch",
             exception_row["warnings"],
         )
+
+    def test_pdf_plan_surfaces_derivative_count_mismatch_in_extraction_audit(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(page_number=62, text="\n".join(DERIVATIVE_BASE_LINES)),
+                    RawPageText(
+                        page_number=63,
+                        text="\n".join(
+                            DERIVATIVE_METRICS_HEADER
+                            + DERIVATIVE_METRICS_ROW
+                            + DERIVATIVE_METRICS_ROW
+                        ),
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_40.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        exception_rows = [
+            row for row in plan.to_dict()["rows"]
+            if row["rowKind"] == "derivative_overview_pairing_exception"
+        ]
+        self.assertEqual(len(exception_rows), 1)
+        exception = exception_rows[0]
+        self.assertEqual(exception["tab"], "Extraction Audit")
+        self.assertEqual(exception["values"][1], "2026-W40:62 | 2026-W40:63")
+        self.assertIn("adjacent_row_count_mismatch", exception["values"][4])
+        self.assertIn("base_rows=1", exception["values"][4])
+        self.assertIn("metrics_rows=2", exception["values"][4])
+
+    def test_pdf_plan_surfaces_ambiguous_derivative_adjacency_in_extraction_audit(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                metrics = "\n".join(DERIVATIVE_METRICS_HEADER + DERIVATIVE_METRICS_ROW)
+                return (
+                    RawPageText(page_number=61, text=metrics),
+                    RawPageText(page_number=62, text="\n".join(DERIVATIVE_BASE_LINES)),
+                    RawPageText(page_number=63, text=metrics),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_40.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        exception_rows = [
+            row for row in plan.to_dict()["rows"]
+            if row["rowKind"] == "derivative_overview_pairing_exception"
+        ]
+        self.assertEqual(len(exception_rows), 1)
+        exception = exception_rows[0]
+        self.assertEqual(
+            exception["values"][1],
+            "2026-W40:62 | 2026-W40:61 | 2026-W40:63",
+        )
+        self.assertIn("ambiguous_adjacent_metrics_table", exception["values"][4])
+        self.assertIn("metrics_rows=1,1", exception["values"][4])
 
     def test_pdf_plan_can_still_use_strict_statistics_cutoff_policy(self) -> None:
         class StubExtractor:

@@ -2,7 +2,7 @@
 
 Status: active plan
 Created: 2026-05-15
-Last checked: 2026-06-06
+Last checked: 2026-08-15
 
 Market data is enrichment only. It can help reviewers validate context, stale
 prices, symbols, and broad market moves, but it must not overwrite magazine
@@ -197,6 +197,27 @@ explicit provider selection such as `STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp`.
   before enabling live access. Sources:
   <https://www.bundesbank.de/en/statistics/time-series-databases/help-for-sdmx-web-service/web-service-interface-data>
   and <https://statistiken.bundesbank.de/content/991208>.
+
+## Global Official-Source Compliance Checkpoints
+
+- FCA: the [Publishing Hub FAQ version 2.0, July 2026](https://data.fca.org.uk/artefacts/PUBLISHING_HUB_FAQs_v0.1.pdf),
+  reviewed 2026-08-15, says direct access to NSM and the other Publishing Hub
+  datasets is not permitted and limits data access to the website UI. Its API
+  exception names UK FIRDS and UK FITRS, not NSM. Keep direct NSM automation
+  disabled.
+- Canada: use the [SEDI Public Terms of Use](https://www.sedi.ca/sedi/disclaimer_en.html),
+  current as of 1 June 2023 and reviewed 2026-08-15, as the SEDI-specific
+  evidence. They prohibit robots, spiders, other automatic devices/software,
+  and manual processes used to monitor, copy, or interfere with pages. Track
+  [SEDAR+ terms](https://sedarplus.ca/onlinehelp/terms-of-use/) separately; do
+  not cite SEDAR+ as the basis for a SEDI automation decision.
+- Brazil: the [CVM VLMO dataset](https://dados.cvm.gov.br/dataset/cia_aberta-doc-vlmo)
+  is marked Open Data Commons ODbL. Before a pilot, implement the notice and
+  attribution required for public use and review whether the output creates a
+  derivative database. Public use of a derivative database triggers the
+  [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/) share-alike and
+  machine-readable derivative/alteration-file access conditions. Keep network
+  access disabled until that distribution design is approved.
 
 ## Implementation Plan
 

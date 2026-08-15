@@ -653,13 +653,13 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Price in USD",
             "Transaction value",
         ),
-        "SEC Form 4 insider activity context for reviewed stock rows.",
+        "SEC Form 4 insider activity context for magazine-backed stock candidates.",
         frozen_columns=3,
         layout_notes=(
             "Cumulative SEC EDGAR Form 4 enrichment ledger refreshed on issue import.",
             "Company cells retain direct SEC filing hyperlinks for source provenance.",
             "Filing-transaction identity prevents duplicate rows across weekly imports.",
-            "Stock-level Insider Activity indicators should summarize only reviewed rows from this tab.",
+            "Rows remain private reviewer context until separately approved; Search does not imply review.",
         ),
         parser_status="parser_backed",
     ),
@@ -1235,10 +1235,9 @@ def write_insider_activity_rows_to_google_sheet(
         if spec.title in existing_sheet_ids
         else []
     )
+    existing_schema = _insider_header_schema(existing_raw, spec=spec)
     existing = _insider_records_from_sheet_values(existing_raw, spec=spec)
-    legacy_existing = bool(existing_raw) and tuple(
-        str(value or "").strip() for value in existing_raw[0]
-    )[: len(LEGACY_INSIDER_ACTIVITY_HEADERS)] == LEGACY_INSIDER_ACTIVITY_HEADERS
+    legacy_existing = existing_schema == "legacy"
     bootstrap_specs = (
         tuple(candidate for candidate in ACTIVE_GOOGLE_SHEET_TABS if candidate.title != spec.title)
         if legacy_existing
@@ -1274,14 +1273,18 @@ def write_insider_activity_rows_to_google_sheet(
             continue
         current = merged[key]
         current_values = list(current["values"])
+        incoming_values = list(row)
         merged_wkn = _join_unique_sheet_values(
             (current_values[wkn_index], row[wkn_index]), separator=" | "
         )
-        current_values[wkn_index] = merged_wkn
-        current["values"] = current_values
-        if not current.get("source_url") and source_url:
-            current["source_url"] = source_url
-        merged[key] = current
+        incoming_values[wkn_index] = merged_wkn
+        merged[key] = {
+            # The freshly generated SEC projection is authoritative. This also
+            # repairs an interrupted prior write whose row was only partially
+            # populated, while retaining identity aliases and provenance.
+            "values": incoming_values,
+            "source_url": str(source_url or current.get("source_url") or "").strip(),
+        }
         updated_count += 1
 
     transaction_date_index = spec.headers.index("Transaction date")
@@ -1449,15 +1452,13 @@ def _insider_records_from_sheet_values(
     *,
     spec: GoogleSheetTabSpec,
 ) -> list[dict[str, object]]:
-    if not raw_values:
+    schema = _insider_header_schema(raw_values, spec=spec)
+    if schema == "empty":
         return []
-    headers = tuple(str(value or "").strip() for value in raw_values[0])
-    if headers[: len(LEGACY_INSIDER_ACTIVITY_HEADERS)] == LEGACY_INSIDER_ACTIVITY_HEADERS:
+    if schema == "legacy":
         source_headers = LEGACY_INSIDER_ACTIVITY_HEADERS
-    elif headers[: len(spec.headers)] == spec.headers:
-        source_headers = spec.headers
     else:
-        return []
+        source_headers = spec.headers
     header_indexes = {header: index for index, header in enumerate(source_headers)}
     result: list[dict[str, object]] = []
     for raw_row in raw_values[1:]:
@@ -1493,6 +1494,30 @@ def _insider_records_from_sheet_values(
             }
         )
     return result
+
+
+def _insider_header_schema(
+    raw_values: Sequence[Sequence[object]],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> str:
+    """Classify the ledger header without accepting partial or drifted schemas."""
+
+    if not raw_values:
+        return "empty"
+    normalized = [str(value or "").strip() for value in raw_values[0]]
+    while normalized and not normalized[-1]:
+        normalized.pop()
+    headers = tuple(normalized)
+    if not headers:
+        return "empty"
+    if headers == LEGACY_INSIDER_ACTIVITY_HEADERS:
+        return "legacy"
+    if headers == spec.headers:
+        return "current"
+    raise GoogleAccessError(
+        "Insider Activity header does not match the current or recognized legacy schema"
+    )
 
 
 def _insider_record_identity(
@@ -1554,6 +1579,53 @@ def _parse_insider_company_formula(value: str) -> tuple[str, str]:
     )
 
 
+def preflight_workbook_plan_google_sheet_export(
+    workbook_plan: Mapping[str, object],
+    *,
+    tab_specs: tuple[GoogleSheetTabSpec, ...] = DEFAULT_SHEET_TABS,
+    allow_draft_rows: bool = False,
+) -> None:
+    """Validate a workbook plan without creating clients or mutating Sheets."""
+
+    issue_id = str(workbook_plan.get("issueId") or "").strip()
+    raw_rows = workbook_plan.get("rows")
+    if not issue_id:
+        raise GoogleAccessError("workbook plan is missing issueId")
+    if not isinstance(raw_rows, list):
+        raise GoogleAccessError("workbook plan is missing rows list")
+    _issue_tab_title(issue_id)
+    if not allow_draft_rows:
+        _require_family_export_approval_audit(workbook_plan, raw_rows)
+
+    specs_by_title = {spec.title: spec for spec in tab_specs}
+    if "Aktuell" not in specs_by_title:
+        raise GoogleAccessError("workbook export tab specs are missing Aktuell")
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            continue
+        if not allow_draft_rows and not _is_approved_export_row(raw_row):
+            continue
+        tab = str(raw_row.get("tab") or "").strip()
+        spec = specs_by_title.get(tab)
+        values = raw_row.get("values")
+        if spec is None or spec.parser_status == "layout_only" or not isinstance(values, list):
+            continue
+        aktuell_derivative_row = tab == "Aktuell" and "derivative" in str(
+            raw_row.get("rowKind") or ""
+        )
+        row_width = (
+            len(AKTUELL_DERIVATIVE_HEADERS)
+            if aktuell_derivative_row
+            else len(spec.headers)
+        )
+        if not (
+            aktuell_derivative_row
+            and len(values) == len(spec.headers)
+            and len(values) != row_width
+        ):
+            _validate_sheet_row_width(tab, values, width=row_width)
+
+
 def write_workbook_plan_to_google_sheet(
     config: GoogleAccessConfig,
     workbook_plan: Mapping[str, object],
@@ -1570,17 +1642,17 @@ def write_workbook_plan_to_google_sheet(
     rows require an explicit reviewer-workbook opt-in.
     """
 
+    preflight_workbook_plan_google_sheet_export(
+        workbook_plan,
+        tab_specs=tab_specs,
+        allow_draft_rows=allow_draft_rows,
+    )
     if sheets_service_factory is None:
         _drive_service_factory, sheets_service_factory = _google_service_factories(config)
 
     issue_id = str(workbook_plan.get("issueId") or "").strip()
     raw_rows = workbook_plan.get("rows")
-    if not issue_id:
-        raise GoogleAccessError("workbook plan is missing issueId")
-    if not isinstance(raw_rows, list):
-        raise GoogleAccessError("workbook plan is missing rows list")
-    if not allow_draft_rows:
-        _require_family_export_approval_audit(workbook_plan, raw_rows)
+    assert isinstance(raw_rows, list)  # established by the pure preflight above
 
     specs_by_title = {spec.title: spec for spec in tab_specs}
     rows_by_tab: dict[str, list[list[str]]] = {}

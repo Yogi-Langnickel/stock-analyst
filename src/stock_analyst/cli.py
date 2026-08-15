@@ -20,6 +20,7 @@ from stock_analyst.google_access import (
     clear_google_sheet_data_rows,
     load_env_file,
     load_google_access_config,
+    preflight_workbook_plan_google_sheet_export,
     redact_google_identifier,
     refresh_google_sheet_search,
     run_google_access_smoke,
@@ -1198,6 +1199,15 @@ def run_google_sheets_refresh_search_command(
     return refresh_google_sheet_search(config)
 
 
+def _mark_insider_review_required(sheet_result: dict[str, object]) -> None:
+    """Downgrade a combined Sheet result that exposes unapproved insider context."""
+
+    sheet_result["exportMode"] = "private_draft_review_export"
+    sheet_result["familyVisibleSafe"] = False
+    sheet_result["privateDraftReviewOnly"] = True
+    sheet_result["insiderReviewRequired"] = True
+
+
 def run_google_sheets_export_plan_command(
     workbook_plan_file: Path,
     *,
@@ -1205,14 +1215,65 @@ def run_google_sheets_export_plan_command(
     replace_issue: bool = True,
     allow_draft_rows: bool = False,
 ) -> dict[str, object]:
-    config = load_google_access_config(env_file=env_file)
     payload = json.loads(workbook_plan_file.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"workbook plan file is not a JSON object: {workbook_plan_file}")
+    preflight_workbook_plan_google_sheet_export(
+        payload,
+        allow_draft_rows=allow_draft_rows,
+    )
+    config = load_google_access_config(env_file=env_file)
     env_values = dict(os.environ)
     if env_file is not None:
         env_values.update(load_env_file(env_file))
     sec_config = load_sec_insider_config(env_values)
+
+    symbol_map_path: Path | None = None
+    refreshed_csv = ""
+    sec_candidates: tuple[SecStockCandidate, ...] = ()
+    if sec_config is not None:
+        # Complete every deterministic/local preparation before the first
+        # Google mutation so a malformed private map or plan fails closed.
+        symbol_map_path = Path(
+            env_values.get("STOCK_ANALYST_SYMBOL_MAP_FILE")
+            or "data/private/market-symbol-map.csv"
+        ).expanduser()
+        existing_csv_text = (
+            symbol_map_path.read_text(encoding="utf-8")
+            if symbol_map_path.exists()
+            else ""
+        )
+        refreshed_csv = build_market_data_symbol_map_template_csv(
+            payload,
+            existing_csv_text=existing_csv_text,
+        )
+        workbook_candidates = market_data_candidates_from_symbol_map_template_csv(
+            refreshed_csv
+        )
+        source_refs_by_id = {
+            str(row.get("sourceId") or ""): (
+                f"{str(row.get('issueId') or payload.get('issueId') or '').strip()}:"
+                f"{str(row.get('page') or '').strip()}"
+            ).rstrip(":")
+            for row in payload.get("rows", [])
+            if isinstance(row, dict)
+        }
+        sec_candidates = tuple(
+            SecStockCandidate(
+                company=candidate.name,
+                wkn=candidate.wkn,
+                symbol=candidate.symbol,
+                source_ref=source_refs_by_id.get(candidate.source_id, ""),
+            )
+            for candidate in workbook_candidates
+        )
+        symbol_map_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_symbol_map = symbol_map_path.with_suffix(
+            f"{symbol_map_path.suffix}.tmp"
+        )
+        temporary_symbol_map.write_text(refreshed_csv, encoding="utf-8")
+        temporary_symbol_map.replace(symbol_map_path)
+
     insider_schema_migration = write_insider_activity_rows_to_google_sheet(
         config,
         (),
@@ -1230,54 +1291,28 @@ def run_google_sheets_export_plan_command(
             "reason": "SEC_USER_AGENT is not configured",
             "networkAccess": False,
         }
+        if int(insider_schema_migration.get("rowsRetained") or 0) > 0:
+            _mark_insider_review_required(sheet_result)
         return sheet_result
     sheet_result["insiderSchemaMigration"] = insider_schema_migration
-
-    symbol_map_path = Path(
-        env_values.get("STOCK_ANALYST_SYMBOL_MAP_FILE")
-        or "data/private/market-symbol-map.csv"
-    ).expanduser()
-    existing_csv_text = (
-        symbol_map_path.read_text(encoding="utf-8")
-        if symbol_map_path.exists()
-        else ""
-    )
-    refreshed_csv = build_market_data_symbol_map_template_csv(
-        payload,
-        existing_csv_text=existing_csv_text,
-    )
-    symbol_map_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_symbol_map = symbol_map_path.with_suffix(
-        f"{symbol_map_path.suffix}.tmp"
-    )
-    temporary_symbol_map.write_text(refreshed_csv, encoding="utf-8")
-    temporary_symbol_map.replace(symbol_map_path)
-    workbook_candidates = market_data_candidates_from_symbol_map_template_csv(
-        refreshed_csv
-    )
-    source_refs_by_id = {
-        str(row.get("sourceId") or ""): (
-            f"{str(row.get('issueId') or payload.get('issueId') or '').strip()}:"
-            f"{str(row.get('page') or '').strip()}"
-        ).rstrip(":")
-        for row in payload.get("rows", [])
-        if isinstance(row, dict)
-    }
-    sec_candidates = tuple(
-        SecStockCandidate(
-            company=candidate.name,
-            wkn=candidate.wkn,
-            symbol=candidate.symbol,
-            source_ref=source_refs_by_id.get(candidate.source_id, ""),
+    try:
+        enrichment = enrich_sec_form4(sec_candidates, sec_config)
+        insider_sheet_result = write_insider_activity_rows_to_google_sheet(
+            config,
+            [transaction.to_sheet_row() for transaction in enrichment.transactions],
+            source_urls=[transaction.filing_url for transaction in enrichment.transactions],
         )
-        for candidate in workbook_candidates
-    )
-    enrichment = enrich_sec_form4(sec_candidates, sec_config)
-    insider_sheet_result = write_insider_activity_rows_to_google_sheet(
-        config,
-        [transaction.to_sheet_row() for transaction in enrichment.transactions],
-        source_urls=[transaction.filing_url for transaction in enrichment.transactions],
-    )
+    except Exception as error:
+        sheet_result["insiderEnrichment"] = {
+            "status": "failed",
+            "complete": False,
+            "phase": "sec_refresh_or_sheet_merge",
+            "errorType": type(error).__name__,
+            "networkAccess": None,
+        }
+        if int(insider_schema_migration.get("rowsRetained") or 0) > 0:
+            _mark_insider_review_required(sheet_result)
+        return sheet_result
     enrichment_complete = (
         not enrichment.request_budget_exhausted
         and enrichment.failed_issuer_count == 0
@@ -1299,6 +1334,15 @@ def run_google_sheets_export_plan_command(
         "requestBudgetExhausted": enrichment.request_budget_exhausted,
         "sheet": insider_sheet_result,
     }
+    if (
+        enrichment.transactions
+        or int(insider_sheet_result.get("rowsRetained") or 0) > 0
+        or int(insider_schema_migration.get("rowsRetained") or 0) > 0
+    ):
+        # The exact 12-column ledger intentionally has no review-status field.
+        # New parsed rows are therefore reviewer-only until a separate,
+        # source-linked approval mechanism exists.
+        _mark_insider_review_required(sheet_result)
     return sheet_result
 
 
