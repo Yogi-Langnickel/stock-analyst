@@ -202,7 +202,7 @@ def extract_derivative_overview_result_from_page_lines(
         base_index: tuple(
             metrics_index
             for metrics_index, (metrics_page, _) in enumerate(metrics_tables)
-            if abs(metrics_page - base_page) == 1
+            if metrics_page == base_page + 1
         )
         for base_index, (base_page, _) in enumerate(base_tables)
     }
@@ -210,7 +210,7 @@ def extract_derivative_overview_result_from_page_lines(
         base_index: tuple(
             metrics_index
             for metrics_index, (metrics_page, metrics_rows) in enumerate(metrics_tables)
-            if abs(metrics_page - base_page) == 1
+            if metrics_page == base_page + 1
             and len(metrics_rows) == len(base_rows)
         )
         for base_index, (base_page, base_rows) in enumerate(base_tables)
@@ -219,7 +219,7 @@ def extract_derivative_overview_result_from_page_lines(
         metrics_index: tuple(
             base_index
             for base_index, (base_page, _) in enumerate(base_tables)
-            if abs(base_page - metrics_page) == 1
+            if metrics_page == base_page + 1
         )
         for metrics_index, (metrics_page, _) in enumerate(metrics_tables)
     }

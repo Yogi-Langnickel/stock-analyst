@@ -257,7 +257,7 @@ class DerivativeOverviewTablesTest(unittest.TestCase):
         self._assert_metrics_blank(rows[0])
         self._assert_metrics_blank(rows[1])
 
-    def test_reports_ambiguous_adjacent_metrics_tables_without_applying_either(self) -> None:
+    def test_pairs_only_following_metrics_and_reports_preceding_metrics_orphan(self) -> None:
         metrics_page = (
             METRICS_HEADER_LINES
             + BAYER_METRICS_LINES
@@ -274,14 +274,39 @@ class DerivativeOverviewTablesTest(unittest.TestCase):
         )
 
         self.assertEqual(len(result.rows), 2)
-        self.assertTrue(all(row.metrics_page is None for row in result.rows))
+        self.assertTrue(all(row.metrics_page == 63 for row in result.rows))
         self.assertEqual(len(result.exceptions), 1)
         exception = result.exceptions[0]
-        self.assertEqual(exception.reason, "ambiguous_adjacent_metrics_table")
-        self.assertEqual(exception.base_page, 62)
-        self.assertEqual(exception.metrics_pages, (61, 63))
-        self.assertEqual(exception.base_row_count, 2)
-        self.assertEqual(exception.metrics_row_counts, (2, 2))
+        self.assertEqual(exception.reason, "missing_adjacent_base_table")
+        self.assertIsNone(exception.base_page)
+        self.assertEqual(exception.metrics_pages, (61,))
+        self.assertEqual(exception.base_row_count, 0)
+        self.assertEqual(exception.metrics_row_counts, (2,))
+
+    def test_lone_preceding_metrics_reports_missing_forward_pair_and_orphan(self) -> None:
+        metrics_page = (
+            METRICS_HEADER_LINES
+            + BAYER_METRICS_LINES
+            + CATERPILLAR_METRICS_LINES
+        )
+
+        result = extract_derivative_overview_result_from_page_lines(
+            (
+                (61, metrics_page),
+                (62, BASE_PAGE_LINES),
+            ),
+            issue_id="2026-W03",
+        )
+
+        self.assertEqual(len(result.rows), 2)
+        self.assertTrue(all(row.metrics_page is None for row in result.rows))
+        self.assertEqual(
+            [(exception.reason, exception.page) for exception in result.exceptions],
+            [
+                ("missing_adjacent_metrics_table", 62),
+                ("missing_adjacent_base_table", 61),
+            ],
+        )
 
     def _pages(
         self,

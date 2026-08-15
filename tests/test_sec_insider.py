@@ -173,6 +173,103 @@ class SecInsiderTests(unittest.TestCase):
         self.assertEqual(len(result.transactions), 2)
         self.assertEqual(result.network_request_count, 3)
 
+    def test_mismatched_cached_recent_arrays_are_quarantined_and_refetched(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        malformed = json.dumps(
+            {
+                "filings": {
+                    "recent": {
+                        "form": ["4", "4"],
+                        "accessionNumber": ["one"],
+                        "primaryDocument": ["one.xml", "two.xml"],
+                        "filingDate": ["2026-08-01", "2026-08-02"],
+                    },
+                    "files": [],
+                }
+            }
+        ).encode()
+        valid = self._submissions_payload(
+            forms=[], accessions=[], documents=[], filing_dates=[]
+        )
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            return ticker_payload if url == SEC_TICKER_MAP_URL else valid
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            submission_cache = cache_dir / "submissions" / "CIK0000001234.json"
+            submission_cache.parent.mkdir(parents=True)
+            submission_cache.write_bytes(malformed)
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", None, "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", cache_dir),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+            self.assertTrue(submission_cache.with_suffix(".json.corrupt").exists())
+            self.assertEqual(submission_cache.read_bytes(), valid)
+
+        self.assertEqual(result.failed_issuer_count, 0)
+        self.assertFalse(result.archive_coverage_partial)
+
+    def test_mismatched_cached_archive_arrays_are_quarantined_and_refetched(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        archive_name = "CIK0000001234-submissions-001.json"
+        submissions_payload = json.dumps(
+            {
+                "filings": {
+                    "recent": {
+                        "form": [], "accessionNumber": [],
+                        "primaryDocument": [], "filingDate": [],
+                    },
+                    "files": [{"name": archive_name, "filingTo": "2026-08-01"}],
+                }
+            }
+        ).encode()
+        malformed = json.dumps(
+            {
+                "form": ["4", "4"],
+                "accessionNumber": ["one"],
+                "primaryDocument": ["one.xml", "two.xml"],
+                "filingDate": ["2026-08-01", "2026-08-02"],
+            }
+        ).encode()
+        valid = self._submissions_payload(
+            forms=[], accessions=[], documents=[], filing_dates=[],
+            recent_wrapper=False,
+        )
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            if url == SEC_TICKER_MAP_URL:
+                return ticker_payload
+            if url == SEC_SUBMISSIONS_URL.format(cik="0000001234"):
+                return submissions_payload
+            return valid
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            archive_cache = cache_dir / "submissions" / "archives" / archive_name
+            archive_cache.parent.mkdir(parents=True)
+            archive_cache.write_bytes(malformed)
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", None, "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", cache_dir),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+            self.assertTrue(archive_cache.with_suffix(".json.corrupt").exists())
+            self.assertEqual(archive_cache.read_bytes(), valid)
+
+        self.assertEqual(result.failed_issuer_count, 0)
+        self.assertEqual(result.archive_file_count, 1)
+        self.assertFalse(result.archive_coverage_partial)
+
     def test_form4_amendment_supersedes_original_in_active_projection(self) -> None:
         ticker_payload = json.dumps(
             {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
@@ -189,7 +286,14 @@ class SecInsiderTests(unittest.TestCase):
                 return ticker_payload
             if url == SEC_SUBMISSIONS_URL.format(cik="0000001234"):
                 return submissions_payload
-            return AMENDED_FORM4_XML if url.endswith("amended.xml") else FORM4_XML
+            return (
+                AMENDED_FORM4_XML
+                if url.endswith("amended.xml")
+                else FORM4_XML.replace(
+                    b"<ownershipDocument>",
+                    b"<ownershipDocument><periodOfReport>2026-07-31</periodOfReport>",
+                )
+            )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             result = enrich_sec_form4(
@@ -219,6 +323,101 @@ class SecInsiderTests(unittest.TestCase):
             {row.correction_status for row in result.transaction_revisions},
             {"superseded", "effective_correction"},
         )
+
+    def test_amendment_matches_unique_original_by_period(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        submissions_payload = self._submissions_payload(
+            forms=["4/A", "4", "4"],
+            accessions=[
+                "0000001234-26-000003",
+                "0000001234-26-000002",
+                "0000001234-26-000001",
+            ],
+            documents=["amended.xml", "other-period.xml", "matching-period.xml"],
+            filing_dates=["2026-08-02", "2026-08-01", "2026-08-01"],
+        )
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            if url == SEC_TICKER_MAP_URL:
+                return ticker_payload
+            if url == SEC_SUBMISSIONS_URL.format(cik="0000001234"):
+                return submissions_payload
+            if url.endswith("amended.xml"):
+                return AMENDED_FORM4_XML
+            period = b"2026-07-30" if url.endswith("other-period.xml") else b"2026-07-31"
+            return FORM4_XML.replace(
+                b"<ownershipDocument>",
+                b"<ownershipDocument><periodOfReport>" + period + b"</periodOfReport>",
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", None, "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", Path(temp_dir)),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(len(result.transactions), 4)
+        self.assertEqual(
+            [row.correction_status for row in result.transaction_revisions].count("superseded"),
+            2,
+        )
+        self.assertEqual(
+            {row.correction_status for row in result.transactions},
+            {"original", "effective_correction"},
+        )
+
+    def test_amendment_retains_ambiguous_same_period_originals(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        submissions_payload = self._submissions_payload(
+            forms=["4/A", "4", "4"],
+            accessions=[
+                "0000001234-26-000003",
+                "0000001234-26-000002",
+                "0000001234-26-000001",
+            ],
+            documents=["amended.xml", "original-b.xml", "original-a.xml"],
+            filing_dates=["2026-08-02", "2026-08-01", "2026-08-01"],
+        )
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            if url == SEC_TICKER_MAP_URL:
+                return ticker_payload
+            if url == SEC_SUBMISSIONS_URL.format(cik="0000001234"):
+                return submissions_payload
+            if url.endswith("amended.xml"):
+                return AMENDED_FORM4_XML
+            return FORM4_XML.replace(
+                b"<ownershipDocument>",
+                b"<ownershipDocument><periodOfReport>2026-07-31</periodOfReport>",
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", None, "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", Path(temp_dir)),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(len(result.transactions), 6)
+        self.assertNotIn("superseded", {
+            row.correction_status for row in result.transaction_revisions
+        })
+        ambiguous = [
+            row for row in result.transactions
+            if row.correction_status == "ambiguous_correction"
+        ]
+        self.assertEqual(len(ambiguous), 2)
+        self.assertTrue(
+            all("original ambiguous" in row.to_sheet_row()[4] for row in ambiguous)
+        )
+        self.assertTrue(all(len(row.to_sheet_row()) == 12 for row in result.transactions))
 
     def test_fetches_archive_file_with_in_window_form4_and_replays_from_cache(self) -> None:
         ticker_payload = json.dumps(
@@ -332,6 +531,119 @@ class SecInsiderTests(unittest.TestCase):
         self.assertEqual(result.network_request_count, 2)
         self.assertEqual(result.transactions, ())
 
+    def test_recent_mismatched_arrays_are_partial_and_not_cached(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        malformed = json.dumps(
+            {
+                "filings": {
+                    "recent": {
+                        "form": ["4", "4"],
+                        "accessionNumber": ["0000001234-26-000001"],
+                        "primaryDocument": ["one.xml", "two.xml"],
+                        "filingDate": ["2026-08-01", "2026-08-02"],
+                    },
+                    "files": [],
+                }
+            }
+        ).encode()
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            return ticker_payload if url == SEC_TICKER_MAP_URL else malformed
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", None, "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", cache_dir),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+            self.assertFalse((cache_dir / "submissions" / "CIK0000001234.json").exists())
+
+        self.assertEqual(result.failed_issuer_count, 1)
+        self.assertTrue(result.archive_coverage_partial)
+        self.assertFalse(result.request_budget_exhausted)
+
+    def test_archive_mismatched_arrays_are_partial_and_not_cached(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        archive_name = "CIK0000001234-submissions-001.json"
+        submissions_payload = json.dumps(
+            {
+                "filings": {
+                    "recent": {
+                        "form": [], "accessionNumber": [],
+                        "primaryDocument": [], "filingDate": [],
+                    },
+                    "files": [{"name": archive_name, "filingTo": "2026-08-01"}],
+                }
+            }
+        ).encode()
+        malformed_archive = json.dumps(
+            {
+                "form": ["4", "4"],
+                "accessionNumber": ["0000001234-26-000001"],
+                "primaryDocument": ["one.xml", "two.xml"],
+                "filingDate": ["2026-08-01", "2026-08-02"],
+            }
+        ).encode()
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            if url == SEC_TICKER_MAP_URL:
+                return ticker_payload
+            if url == SEC_SUBMISSIONS_URL.format(cik="0000001234"):
+                return submissions_payload
+            return malformed_archive
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", None, "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", cache_dir),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+            self.assertFalse(
+                (cache_dir / "submissions" / "archives" / archive_name).exists()
+            )
+
+        self.assertEqual(result.failed_issuer_count, 1)
+        self.assertTrue(result.archive_coverage_partial)
+        self.assertEqual(result.archive_file_count, 0)
+
+    def test_missing_archive_file_metadata_is_partial(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        missing_files = json.dumps(
+            {
+                "filings": {
+                    "recent": {
+                        "form": [], "accessionNumber": [],
+                        "primaryDocument": [], "filingDate": [],
+                    }
+                }
+            }
+        ).encode()
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            return ticker_payload if url == SEC_TICKER_MAP_URL else missing_files
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", None, "2026-W34:10"),),
+                SecInsiderConfig("Stock Analyst owner@example.com", Path(temp_dir)),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(result.failed_issuer_count, 1)
+        self.assertTrue(result.archive_coverage_partial)
+        self.assertFalse(result.request_budget_exhausted)
+
     def test_plain_contact_email_gets_application_prefix(self) -> None:
         config = load_sec_insider_config({"SEC_USER_AGENT": "owner@example.com"})
         self.assertIsNotNone(config)
@@ -373,7 +685,8 @@ class SecInsiderTests(unittest.TestCase):
                             "d.xml",
                         ],
                         "filingDate": ["2026-07-30", "2026-07-29", "2026-07-28", "2025-01-01"],
-                    }
+                    },
+                    "files": [],
                 }
             }
         ).encode()
@@ -463,7 +776,8 @@ class SecInsiderTests(unittest.TestCase):
                         "accessionNumber": ["0000001234-26-000001"],
                         "primaryDocument": ["form4.xml"],
                         "filingDate": ["2026-08-01"],
-                    }
+                    },
+                    "files": [],
                 }
             }
         ).encode()
@@ -509,7 +823,8 @@ class SecInsiderTests(unittest.TestCase):
                         ],
                         "primaryDocument": ["broken.xml", "valid.xml"],
                         "filingDate": ["2026-08-02", "2026-08-01"],
-                    }
+                    },
+                    "files": [],
                 }
             }
         ).encode()
@@ -548,7 +863,7 @@ class SecInsiderTests(unittest.TestCase):
             "primaryDocument": documents,
             "filingDate": filing_dates,
         }
-        payload = {"filings": {"recent": rows}} if recent_wrapper else rows
+        payload = {"filings": {"recent": rows, "files": []}} if recent_wrapper else rows
         return json.dumps(payload).encode()
 
 

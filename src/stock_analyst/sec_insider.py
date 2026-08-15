@@ -101,6 +101,10 @@ class SecInsiderTransaction:
         relationship = self.relationship
         if self.correction_status == "effective_correction":
             relationship = _join_unique((relationship, "Form 4/A correction"))
+        elif self.correction_status == "ambiguous_correction":
+            relationship = _join_unique(
+                (relationship, "Form 4/A correction - original ambiguous")
+            )
         return [
             self.company,
             self.wkn,
@@ -272,6 +276,7 @@ def enrich_sec_form4(
             )
         except SecInsiderError:
             failed_issuer_count += 1
+            archive_coverage_partial = True
             if client.request_budget_exhausted:
                 break
             continue
@@ -669,10 +674,13 @@ def _project_effective_transactions(
         superseded_amendments.update(ordered[:-1])
 
     superseded_originals: set[str] = set()
+    ambiguous_amendments: set[str] = set()
     for amendment_identity in effective_amendments:
         amendment = by_filing[amendment_identity][0]
-        if not amendment.original_submission_date:
+        if not amendment.original_submission_date or not amendment.period_of_report:
+            ambiguous_amendments.add(amendment_identity)
             continue
+        matching_originals: list[str] = []
         for filing_identity, filing_rows in by_filing.items():
             original = filing_rows[0]
             if original.form_type.upper() == "4/A":
@@ -681,8 +689,16 @@ def _project_effective_transactions(
                 original.cik == amendment.cik
                 and original.insider.casefold() == amendment.insider.casefold()
                 and original.filing_date == amendment.original_submission_date
+                and original.period_of_report == amendment.period_of_report
             ):
-                superseded_originals.add(filing_identity)
+                matching_originals.append(filing_identity)
+        if len(matching_originals) == 1:
+            superseded_originals.add(matching_originals[0])
+        else:
+            # Form 4/A exposes an original-submission date, not a stable original
+            # accession. Retain all originals unless the issuer/owner/date/period
+            # tuple resolves exactly one filing; omission is worse than duplication.
+            ambiguous_amendments.add(amendment_identity)
 
     revisions: list[SecInsiderTransaction] = []
     effective: list[SecInsiderTransaction] = []
@@ -691,6 +707,8 @@ def _project_effective_transactions(
             status = "superseded"
         elif filing_identity in superseded_amendments:
             status = "superseded_correction"
+        elif filing_identity in ambiguous_amendments:
+            status = "ambiguous_correction"
         elif filing_identity in effective_amendments:
             status = "effective_correction"
         else:
@@ -700,7 +718,7 @@ def _project_effective_transactions(
             for transaction in filing_rows
         ]
         revisions.extend(projected_rows)
-        if status in {"original", "effective_correction"}:
+        if status in {"original", "effective_correction", "ambiguous_correction"}:
             effective.extend(projected_rows)
     return tuple(revisions), tuple(effective)
 
@@ -741,19 +759,34 @@ def _validate_ticker_json(payload: bytes) -> None:
 def _validate_submissions_json(payload: bytes) -> None:
     value = _validated_json_object(payload)
     filings = value.get("filings")
-    if not isinstance(filings, Mapping) or not isinstance(
-        filings.get("recent"), Mapping
-    ):
+    if not isinstance(filings, Mapping):
         raise _SecPayloadValidationError("SEC submissions response is malformed")
-    if "files" in filings and not isinstance(filings.get("files"), list):
+    recent = filings.get("recent")
+    if not isinstance(recent, Mapping):
+        raise _SecPayloadValidationError("SEC submissions response is malformed")
+    _validate_filing_arrays(recent, payload_name="SEC submissions response")
+    if not isinstance(filings.get("files"), list):
         raise _SecPayloadValidationError("SEC submissions archive list is malformed")
 
 
 def _validate_submission_archive_json(payload: bytes) -> None:
     value = _validated_json_object(payload)
+    _validate_filing_arrays(value, payload_name="SEC submissions archive")
+
+
+def _validate_filing_arrays(
+    value: Mapping[str, object],
+    *,
+    payload_name: str,
+) -> None:
     required_arrays = ("form", "accessionNumber", "primaryDocument", "filingDate")
     if any(not isinstance(value.get(name), list) for name in required_arrays):
-        raise _SecPayloadValidationError("SEC submissions archive is malformed")
+        raise _SecPayloadValidationError(f"{payload_name} is malformed")
+    lengths = {len(value[name]) for name in required_arrays}
+    if len(lengths) != 1:
+        raise _SecPayloadValidationError(
+            f"{payload_name} filing arrays have mismatched lengths"
+        )
 
 
 def _validate_xml(payload: bytes) -> None:

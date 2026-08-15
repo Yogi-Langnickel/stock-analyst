@@ -424,7 +424,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertIn("base_rows=1", exception["values"][4])
         self.assertIn("metrics_rows=2", exception["values"][4])
 
-    def test_pdf_plan_surfaces_ambiguous_derivative_adjacency_in_extraction_audit(self) -> None:
+    def test_pdf_plan_pairs_forward_derivatives_and_audits_preceding_orphan(self) -> None:
         class StubExtractor:
             extractor_name = "stub"
 
@@ -447,12 +447,15 @@ class WorkbookExportPlanTest(unittest.TestCase):
         ]
         self.assertEqual(len(exception_rows), 1)
         exception = exception_rows[0]
-        self.assertEqual(
-            exception["values"][1],
-            "2026-W40:62 | 2026-W40:61 | 2026-W40:63",
-        )
-        self.assertIn("ambiguous_adjacent_metrics_table", exception["values"][4])
-        self.assertIn("metrics_rows=1,1", exception["values"][4])
+        self.assertEqual(exception["values"][1], "2026-W40:61")
+        self.assertIn("missing_adjacent_base_table", exception["values"][4])
+        self.assertIn("metrics_pages=61", exception["values"][4])
+        derivative_rows = [
+            row for row in plan.to_dict()["rows"]
+            if row["rowKind"] == "derivative_overview"
+        ]
+        self.assertEqual(len(derivative_rows), 1)
+        self.assertIn("2026-W40:62 | 2026-W40:63", derivative_rows[0]["values"])
 
     def test_pdf_plan_can_still_use_strict_statistics_cutoff_policy(self) -> None:
         class StubExtractor:

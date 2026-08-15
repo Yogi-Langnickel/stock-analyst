@@ -2212,31 +2212,108 @@ def _require_family_export_approval_audit(
             "family-visible workbook export requires workbook-approval-audit provenance"
         )
 
+    required_boolean_fields = (
+        "externalServicesEnabled",
+        "networkAccess",
+        "staleApprovalDetected",
+    )
+    required_counter_fields = (
+        "rowCount",
+        "approvalRowsImported",
+        "matchedApprovalRows",
+        "unmatchedApprovalRows",
+        "approvedRows",
+        "rejectedRows",
+        "needsReviewRows",
+        "hashMismatchRows",
+        "invalidEvidenceRows",
+    )
+    required_fields = (
+        *required_boolean_fields,
+        "approvalSource",
+        *required_counter_fields,
+    )
+    for field in required_fields:
+        if field not in approval_audit:
+            raise GoogleAccessError(
+                f"family-visible workbook export approval audit is missing required field {field}"
+            )
+    for field in required_boolean_fields:
+        if not isinstance(approval_audit[field], bool):
+            raise GoogleAccessError(
+                f"family-visible workbook export approval audit field {field} must be boolean"
+            )
+    for field in required_counter_fields:
+        value = approval_audit[field]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise GoogleAccessError(
+                f"family-visible workbook export approval audit field {field} "
+                "must be a non-negative integer"
+            )
+
     if approval_audit.get("approvalSource") != "private_reviewer_csv":
         raise GoogleAccessError(
             "family-visible workbook export requires private reviewer CSV approval provenance"
         )
-    if approval_audit.get("staleApprovalDetected") is not False:
+    if approval_audit["externalServicesEnabled"] is not False:
+        raise GoogleAccessError(
+            "family-visible workbook export approval audit must be local-only"
+        )
+    if approval_audit["networkAccess"] is not False:
+        raise GoogleAccessError(
+            "family-visible workbook export approval audit cannot use network access"
+        )
+    if approval_audit["staleApprovalDetected"] is not False:
         raise GoogleAccessError(
             "family-visible workbook export cannot use stale or unchecked approval hashes"
         )
-    if approval_audit.get("hashMismatchRows") not in (0, None):
+    if approval_audit["hashMismatchRows"] != 0:
         raise GoogleAccessError(
             "family-visible workbook export cannot include approval hash mismatches"
         )
-    if approval_audit.get("invalidEvidenceRows") not in (0, None):
+    if approval_audit["invalidEvidenceRows"] != 0:
         raise GoogleAccessError(
             "family-visible workbook export cannot include invalid approval evidence"
         )
-    if approval_audit.get("rowCount") != len(raw_rows):
+    if approval_audit["unmatchedApprovalRows"] != 0:
+        raise GoogleAccessError(
+            "family-visible workbook export cannot include unmatched approval rows"
+        )
+    if approval_audit["rowCount"] != len(raw_rows):
         raise GoogleAccessError(
             "family-visible workbook export approval audit row count does not match rows"
+        )
+    if approval_audit["approvalRowsImported"] != (
+        approval_audit["matchedApprovalRows"]
+        + approval_audit["unmatchedApprovalRows"]
+    ):
+        raise GoogleAccessError(
+            "family-visible workbook export imported approval count is inconsistent"
+        )
+    if approval_audit["matchedApprovalRows"] > approval_audit["rowCount"]:
+        raise GoogleAccessError(
+            "family-visible workbook export matched approval count exceeds rows"
+        )
+    if (
+        approval_audit["approvedRows"]
+        + approval_audit["rejectedRows"]
+        + approval_audit["needsReviewRows"]
+        != approval_audit["rowCount"]
+    ):
+        raise GoogleAccessError(
+            "family-visible workbook export approval disposition counts are inconsistent"
+        )
+    if approval_audit["matchedApprovalRows"] < (
+        approval_audit["approvedRows"] + approval_audit["rejectedRows"]
+    ):
+        raise GoogleAccessError(
+            "family-visible workbook export final approval count exceeds matched approvals"
         )
 
     approved_row_count = sum(
         1 for row in raw_rows if isinstance(row, Mapping) and _is_approved_export_row(row)
     )
-    if approval_audit.get("approvedRows") != approved_row_count:
+    if approval_audit["approvedRows"] != approved_row_count:
         raise GoogleAccessError(
             "family-visible workbook export approved row count does not match approval audit"
         )
@@ -3932,15 +4009,16 @@ def _apply_managed_sheet_protections(
                 if isinstance(protected_range, Mapping)
                 and protected_range.get("range") == {"sheetId": sheet_id}
                 and protected_range not in managed_ranges
-                and protected_range is not current_managed
+                and not _managed_protection_is_current(
+                    protected_range,
+                    sheet_id=sheet_id,
+                    title=title,
+                    editor_email=normalized_editor_email,
+                )
             ),
             None,
         )
-        if (
-            current_managed is None
-            and not managed_ranges
-            and incompatible_manual_sheet_protection is not None
-        ):
+        if incompatible_manual_sheet_protection is not None:
             raise GoogleAccessError(
                 f"{title} has an incompatible manual whole-sheet protection; "
                 "preserving it instead of replacing it"

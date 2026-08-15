@@ -1317,6 +1317,7 @@ def run_google_sheets_export_plan_command(
         not enrichment.request_budget_exhausted
         and enrichment.failed_issuer_count == 0
         and enrichment.failed_filing_count == 0
+        and not getattr(enrichment, "archive_coverage_partial", False)
     )
     sheet_result["insiderEnrichment"] = {
         "status": "completed" if enrichment_complete else "partial",
@@ -1332,6 +1333,25 @@ def run_google_sheets_export_plan_command(
         "networkRequestCount": enrichment.network_request_count,
         "cacheHitCount": enrichment.cache_hit_count,
         "requestBudgetExhausted": enrichment.request_budget_exhausted,
+        "archiveFileCount": getattr(enrichment, "archive_file_count", 0),
+        "archiveCoveragePartial": getattr(
+            enrichment, "archive_coverage_partial", False
+        ),
+        "transactionRevisionCount": len(
+            getattr(enrichment, "transaction_revisions", ())
+        ),
+        "effectiveCorrectionCount": sum(
+            1
+            for transaction in enrichment.transactions
+            if getattr(transaction, "correction_status", "original")
+            == "effective_correction"
+        ),
+        "ambiguousCorrectionCount": sum(
+            1
+            for transaction in enrichment.transactions
+            if getattr(transaction, "correction_status", "original")
+            == "ambiguous_correction"
+        ),
         "sheet": insider_sheet_result,
     }
     if (

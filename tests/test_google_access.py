@@ -48,11 +48,27 @@ TEST_SERVICE_ACCOUNT_CREDENTIALS = (
 )
 
 
-APPROVED_EMPTY_WORKBOOK_PLAN = (
-    '{"issueId":"2026-W32","approvalAudit":'
-    '{"approvalSource":"private_reviewer_csv","staleApprovalDetected":false,'
-    '"hashMismatchRows":0,"invalidEvidenceRows":0,"rowCount":0,"approvedRows":0},'
-    '"rows":[]}'
+COMPLETE_EMPTY_APPROVAL_AUDIT = {
+    "externalServicesEnabled": False,
+    "networkAccess": False,
+    "approvalSource": "private_reviewer_csv",
+    "rowCount": 0,
+    "approvalRowsImported": 0,
+    "matchedApprovalRows": 0,
+    "unmatchedApprovalRows": 0,
+    "approvedRows": 0,
+    "rejectedRows": 0,
+    "needsReviewRows": 0,
+    "hashMismatchRows": 0,
+    "invalidEvidenceRows": 0,
+    "staleApprovalDetected": False,
+}
+APPROVED_EMPTY_WORKBOOK_PLAN = json.dumps(
+    {
+        "issueId": "2026-W32",
+        "approvalAudit": COMPLETE_EMPTY_APPROVAL_AUDIT,
+        "rows": [],
+    }
 )
 
 
@@ -199,6 +215,48 @@ class _FakeSheets:
 
 
 class GoogleAccessTest(unittest.TestCase):
+    @staticmethod
+    def _search_whole_sheet_protection(
+        *,
+        protection_id: int,
+        description: str,
+        editor_email: str = "stock-analyst@example.iam.gserviceaccount.com",
+        domain_users_can_edit: bool = False,
+    ) -> dict[str, object]:
+        return {
+            "protectedRangeId": protection_id,
+            "description": description,
+            "range": {"sheetId": 10},
+            "warningOnly": False,
+            "editors": {
+                "users": [editor_email],
+                "domainUsersCanEdit": domain_users_can_edit,
+            },
+            "unprotectedRanges": [
+                {
+                    "sheetId": 10,
+                    "startRowIndex": 0,
+                    "endRowIndex": 1,
+                    "startColumnIndex": 2,
+                    "endColumnIndex": 5,
+                }
+            ],
+        }
+
+    @staticmethod
+    def _sheets_with_search_protections(*protected_ranges: object) -> _FakeSheets:
+        return _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 10, "title": "Search"},
+                        "protectedRanges": list(protected_ranges),
+                    }
+                ],
+            }
+        )
+
     def test_google_sheet_export_rejects_unapproved_plan_before_any_writer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             plan_path = Path(temp_dir) / "plan.json"
@@ -229,6 +287,43 @@ class GoogleAccessTest(unittest.TestCase):
         preflight_workbook_plan_google_sheet_export(
             json.loads(APPROVED_EMPTY_WORKBOOK_PLAN)
         )
+
+    def test_workbook_export_preflight_rejects_each_missing_approval_audit_field(self) -> None:
+        for missing_field in COMPLETE_EMPTY_APPROVAL_AUDIT:
+            with self.subTest(missing_field=missing_field):
+                audit = dict(COMPLETE_EMPTY_APPROVAL_AUDIT)
+                del audit[missing_field]
+                with self.assertRaisesRegex(
+                    GoogleAccessError,
+                    f"missing required field {missing_field}",
+                ):
+                    preflight_workbook_plan_google_sheet_export(
+                        {
+                            "issueId": "2026-W32",
+                            "approvalAudit": audit,
+                            "rows": [],
+                        }
+                    )
+
+    def test_workbook_export_preflight_rejects_wrong_approval_audit_types(self) -> None:
+        invalid_values = {
+            "externalServicesEnabled": 0,
+            "networkAccess": "false",
+            "rowCount": False,
+            "approvalRowsImported": "0",
+        }
+        for field, invalid_value in invalid_values.items():
+            with self.subTest(field=field):
+                audit = dict(COMPLETE_EMPTY_APPROVAL_AUDIT)
+                audit[field] = invalid_value
+                with self.assertRaisesRegex(GoogleAccessError, f"field {field} must"):
+                    preflight_workbook_plan_google_sheet_export(
+                        {
+                            "issueId": "2026-W32",
+                            "approvalAudit": audit,
+                            "rows": [],
+                        }
+                    )
 
     def test_google_sheet_export_reads_sec_identity_from_process_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -293,6 +388,9 @@ class GoogleAccessTest(unittest.TestCase):
                 network_request_count=0,
                 cache_hit_count=1,
                 request_budget_exhausted=False,
+                archive_file_count=0,
+                archive_coverage_partial=False,
+                transaction_revisions=(),
             )
             with (
                 patch.dict(
@@ -328,12 +426,25 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(events, ["insiders", "issue", "insiders"])
         self.assertEqual(result["insiderEnrichment"]["status"], "completed")
 
-    def test_google_sheet_export_marks_failed_or_exhausted_sec_run_partial(self) -> None:
+    def test_google_sheet_export_surfaces_sec_counts_and_marks_archive_partial(self) -> None:
+        effective_correction = SimpleNamespace(
+            filing_url="https://www.sec.gov/example#transaction-1",
+            correction_status="effective_correction",
+            to_sheet_row=lambda: [],
+        )
+        ambiguous_correction = SimpleNamespace(
+            filing_url="https://www.sec.gov/example#transaction-2",
+            correction_status="ambiguous_correction",
+            to_sheet_row=lambda: [],
+        )
         enrichment = SimpleNamespace(
-            transactions=(), candidate_count=1, resolved_issuer_count=1,
-            unresolved_candidate_count=0, filing_count=0, failed_issuer_count=1,
+            transactions=(effective_correction, ambiguous_correction),
+            candidate_count=1, resolved_issuer_count=1,
+            unresolved_candidate_count=0, filing_count=0, failed_issuer_count=0,
             failed_filing_count=0, network_request_count=1, cache_hit_count=0,
-            request_budget_exhausted=True,
+            request_budget_exhausted=False,
+            archive_file_count=2, archive_coverage_partial=True,
+            transaction_revisions=(object(), object(), object()),
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             plan_path = Path(temp_dir) / "plan.json"
@@ -358,6 +469,11 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertEqual(result["insiderEnrichment"]["status"], "partial")
         self.assertFalse(result["insiderEnrichment"]["complete"])
+        self.assertEqual(result["insiderEnrichment"]["archiveFileCount"], 2)
+        self.assertTrue(result["insiderEnrichment"]["archiveCoveragePartial"])
+        self.assertEqual(result["insiderEnrichment"]["transactionRevisionCount"], 3)
+        self.assertEqual(result["insiderEnrichment"]["effectiveCorrectionCount"], 1)
+        self.assertEqual(result["insiderEnrichment"]["ambiguousCorrectionCount"], 1)
 
     def test_google_sheet_export_reports_enrichment_exception_after_issue_write(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -439,6 +555,7 @@ class GoogleAccessTest(unittest.TestCase):
     def test_google_sheet_export_downgrades_new_insider_rows_to_private_review(self) -> None:
         transaction = SimpleNamespace(
             filing_url="https://www.sec.gov/example#transaction-1",
+            correction_status="original",
             to_sheet_row=lambda: [
                 "Example", "A0TEST", "EXM", "Jane Doe", "Director", "110",
                 "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
@@ -449,6 +566,8 @@ class GoogleAccessTest(unittest.TestCase):
             unresolved_candidate_count=0, filing_count=1, failed_issuer_count=0,
             failed_filing_count=0, network_request_count=1, cache_hit_count=0,
             request_budget_exhausted=False,
+            archive_file_count=0, archive_coverage_partial=False,
+            transaction_revisions=(transaction,),
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             plan_path = Path(temp_dir) / "plan.json"
@@ -874,7 +993,11 @@ class GoogleAccessTest(unittest.TestCase):
                             {
                                 "protectedRangeId": 92,
                                 "description": "Family-owned manual protection",
-                                "range": {"sheetId": 10},
+                                "range": {
+                                    "sheetId": 10,
+                                    "startRowIndex": 5,
+                                    "endRowIndex": 8,
+                                },
                             },
                         ],
                     }
@@ -912,6 +1035,84 @@ class GoogleAccessTest(unittest.TestCase):
             replacement["editors"]["users"],
             ["stock-analyst@example.iam.gserviceaccount.com"],
         )
+
+    def test_current_managed_protection_does_not_mask_blocking_manual_rule(self) -> None:
+        current_managed = self._search_whole_sheet_protection(
+            protection_id=91,
+            description=f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} Search",
+        )
+        blocking_manual = self._search_whole_sheet_protection(
+            protection_id=92,
+            description="Family-owned blocking protection",
+            editor_email="family-owner@example.test",
+        )
+        sheets = self._sheets_with_search_protections(
+            current_managed,
+            blocking_manual,
+        )
+
+        with self.assertRaisesRegex(
+            GoogleAccessError,
+            "incompatible manual whole-sheet protection",
+        ):
+            _apply_managed_sheet_protections(
+                sheets,
+                spreadsheet_id="test-spreadsheet",
+                editor_email="stock-analyst@example.iam.gserviceaccount.com",
+            )
+
+        self.assertEqual(sheets.spreadsheets_resource.batch_update_requests, [])
+
+    def test_stale_managed_protection_does_not_mask_blocking_manual_rule(self) -> None:
+        stale_managed = self._search_whole_sheet_protection(
+            protection_id=91,
+            description=f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} Search",
+            domain_users_can_edit=True,
+        )
+        blocking_manual = self._search_whole_sheet_protection(
+            protection_id=92,
+            description="Family-owned blocking protection",
+            editor_email="family-owner@example.test",
+        )
+        sheets = self._sheets_with_search_protections(
+            stale_managed,
+            blocking_manual,
+        )
+
+        with self.assertRaisesRegex(
+            GoogleAccessError,
+            "incompatible manual whole-sheet protection",
+        ):
+            _apply_managed_sheet_protections(
+                sheets,
+                spreadsheet_id="test-spreadsheet",
+                editor_email="stock-analyst@example.iam.gserviceaccount.com",
+            )
+
+        self.assertEqual(sheets.spreadsheets_resource.batch_update_requests, [])
+
+    def test_compatible_manual_whole_sheet_protection_coexists_with_managed_rule(self) -> None:
+        current_managed = self._search_whole_sheet_protection(
+            protection_id=91,
+            description=f"{MANAGED_PROTECTION_DESCRIPTION_PREFIX} Search",
+        )
+        compatible_manual = self._search_whole_sheet_protection(
+            protection_id=92,
+            description="Family-owned compatible protection",
+        )
+        sheets = self._sheets_with_search_protections(
+            current_managed,
+            compatible_manual,
+        )
+
+        protected_tabs = _apply_managed_sheet_protections(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+            editor_email="stock-analyst@example.iam.gserviceaccount.com",
+        )
+
+        self.assertEqual(protected_tabs, ["Search"])
+        self.assertEqual(sheets.spreadsheets_resource.batch_update_requests, [])
 
     def test_active_google_sheet_tabs_include_insider_activity(self) -> None:
         self.assertEqual(
@@ -2799,10 +3000,18 @@ class GoogleAccessTest(unittest.TestCase):
             workbook_plan = {
                 "issueId": "2026-W03",
                 "approvalAudit": {
+                    "externalServicesEnabled": False,
+                    "networkAccess": False,
                     "approvalSource": "private_reviewer_csv",
                     "rowCount": 1,
+                    "approvalRowsImported": 1,
+                    "matchedApprovalRows": 1,
+                    "unmatchedApprovalRows": 0,
                     "approvedRows": 1,
+                    "rejectedRows": 0,
+                    "needsReviewRows": 0,
                     "hashMismatchRows": 0,
+                    "invalidEvidenceRows": 0,
                     "staleApprovalDetected": False,
                 },
                 "rows": [
@@ -2849,9 +3058,16 @@ class GoogleAccessTest(unittest.TestCase):
             workbook_plan = {
                 "issueId": "2026-W03",
                 "approvalAudit": {
+                    "externalServicesEnabled": False,
+                    "networkAccess": False,
                     "approvalSource": "private_reviewer_csv",
                     "rowCount": 1,
+                    "approvalRowsImported": 1,
+                    "matchedApprovalRows": 1,
+                    "unmatchedApprovalRows": 0,
                     "approvedRows": 1,
+                    "rejectedRows": 0,
+                    "needsReviewRows": 0,
                     "hashMismatchRows": 0,
                     "invalidEvidenceRows": 1,
                     "staleApprovalDetected": False,
