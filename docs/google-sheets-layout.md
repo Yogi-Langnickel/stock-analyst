@@ -54,10 +54,19 @@ long/short products, certificates, and derivative overview rows all use
 
 The previous hidden generated tabs (`Navigation Dashboard`, `Stocks`,
 `Derivative Tips`, `Dividend Focus`, `AKTIONAER Depot`, `Extraction Audit`,
-`Depot Transactions`, and `Insider Activity`) are retired from the live Google
+`Depot Transactions`) are retired from the live Google
 Sheet and deleted by bootstrap. Their local workbook-plan schemas remain
 available for extraction and validation, but Google export intentionally omits
 those rows instead of recreating duplicate live tables.
+
+`Insider Activity` is now an active cumulative SEC Form 4 ledger. It is
+refreshed after issue export when `SEC_USER_AGENT` is configured, deduplicates
+by filing transaction, and contributes a third Search result section below
+Derivatives. Its visible schema is limited to 12 reviewer columns: company,
+WKN, ticker, insider, relationship, shares owned after the transaction,
+transaction date, simplified transaction, direction, shares, USD price, and
+transaction value. Company cells link to the source SEC filing, while acquired
+rows are green and disposed rows are red.
 
 ## Tab Layout Matrix
 
@@ -70,14 +79,15 @@ values and formatting have been written:
 - New issue tabs are included automatically during the export that creates them.
 - The configured service account remains an allowed protection editor so later
   refreshes can update generated values. Spreadsheet owners retain owner access.
-- Only protections carrying the Stock Analyst managed description are replaced;
-  unrelated protections created manually are preserved.
+- Existing whole-sheet protections are preserved; protection is added only to
+  managed tabs that do not already have it.
 
 <!-- markdownlint-disable MD013 -->
 | Tab | Parser status | Freeze | Table start | Metadata / top area | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `Search` | `layout_only` | 0 rows, 0 cols | `A1` | Search label in `A1`, merged user input in `C1:E1`, scope note in `A2`, results from `A4` | Searches company/WKN across issue tabs only. Results preserve the full 16-column stock and 17-column derivative values, with `Source` first in both sections. Sorting uses numeric issue year/week descending and source page ascending. Generated index columns `S:AM` are hidden; `Aktuell` is excluded. |
+| `Search` | `layout_only` | 0 rows, 0 cols | `A1` | Search label in `A1`, merged user input in `C1:E1`, scope note in `A2`, results from `A4` | Searches company/WKN across issue tabs and company/WKN/ticker/insider across Insider Activity. Results appear as Stocks, Derivatives, then Insider Activity. Generated index columns `U:AQ` are hidden; `Aktuell` is excluded. |
 | `Aktuell` | `parser_backed` | 1 row, 3 cols | `A1` | Stock headers, then two intentional spacer rows and a separate Derivatives table | Current issue explicit publisher Buy, Sell, Hold, and Wait actions only. The derivative table starts `WKN`, `Derivative`, `Action`; its `Issue:Page` provenance is kept near the review fields at the tail. Stock rows retain source dividend yield, KUV, and KGV; derivative rows use underlying, strike/KO, leverage, and runtime columns. |
+| `Insider Activity` | `parser_backed` | 1 row, 3 cols | `A1` | Cumulative SEC Form 4 transaction ledger | Exactly 12 visible columns in the requested order. Weekly imports merge by stable SEC source identity; company hyperlinks retain source provenance. Acquired rows are green and disposed rows red. |
 | `DA_YYYY_NN` | `parser_backed` | 1 row, 3 cols | `A1` | Same compact stacked tables as `Aktuell` | One source-linked review tab per scanned issue. Uses the PDF stem convention, such as `DA_2026_25`; preserved for archive review while `Aktuell` remains the latest issue. |
 <!-- markdownlint-enable MD013 -->
 
@@ -237,8 +247,9 @@ Google Sheet only when the workbook plan carries `workbook-approval-audit`
 provenance from a private reviewer CSV with exact row-hash matches. It fails
 closed instead of trusting caller-controlled `approved` flags. It writes draft
 rows only when `--allow-draft-rows` is supplied for the private reviewer workbook. It
-bootstraps `Search` and `Aktuell`, writes the issue-specific reviewer tab,
-refreshes the issue-only search index, and makes no enrichment provider calls.
+bootstraps `Search`, `Aktuell`, and `Insider Activity`, writes the issue-specific
+reviewer tab, refreshes issue and insider Search data, and calls SEC Form 4 only
+when `SEC_USER_AGENT` is configured. Other provider calls remain disabled.
 Rows belonging to retired canonical live tabs are reported as omitted rather
 than recreating those tabs. The write result labels this boundary explicitly: default
 writes return `exportMode=approved_family_export`, `familyVisibleSafe=true`,

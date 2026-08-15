@@ -435,6 +435,8 @@ Acceptance:
 
 ### 8a. SEC EDGAR Insider Activity Enrichment
 
+Status: implemented for cached weekly Google Sheets reviewer enrichment.
+
 1. Add a no-key SEC EDGAR provider for stock-only insider activity.
 1. Add required `SEC_USER_AGENT` configuration before any live SEC request.
    The value must identify the app and provide a contact email.
@@ -446,13 +448,13 @@ Acceptance:
    `form == "4"` submissions.
 1. Download and parse the filing XML from the SEC Archives URL built from CIK,
    accession number, and primary document.
-1. Initially classify only transaction code `P` as clean open-market insider
-   buying. Record other transaction codes as ignored or review-only until their
-   semantics are deliberately implemented.
-1. Store individual source-linked rows in a dedicated `Insider Activity` tab:
-   company, ticker, CIK, insider name, relationship, transaction date, code,
-   direction, shares, price, value, shares owned after, filing date, SEC filing
-   URL, signal, and `date updated`.
+1. Simplify supported transaction codes for review: `P` purchase, `S` sale,
+   `M` Conversion, `F` Payment, `G` Gift, `A` Awarded, and `J` Other.
+1. Store individual source-linked rows in a dedicated `Insider Activity` tab
+   using exactly these visible fields: company, WKN, ticker, insider name,
+   relationship, shares owned after, transaction date, simplified transaction,
+   direction, shares, USD price, and transaction value. Retain the SEC filing
+   URL as a hyperlink on the company cell rather than an extra visible column.
 1. Later mirror only a compact reviewer-context summary back into `Stocks`,
    such as latest insider buy date, 90-day buy value, 90-day buy count, and
    insider signal.
@@ -470,6 +472,8 @@ Acceptance:
 - Insider activity is labelled external context and never changes magazine
   recommendation, target, stop, WKN, or printed price fields.
 - Finviz is not used as the automated source of record.
+- Weekly imports preserve a cumulative deduplicated ledger and expose matching
+  insider rows as the third section in Search.
 
 ### 9. Family Access
 

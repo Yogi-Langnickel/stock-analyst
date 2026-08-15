@@ -213,7 +213,12 @@ scripts/stock-analyst google-sheets-export-plan ./data/private/reviewed-workbook
 ```
 
 By default this replaces existing rows for the same issue in the affected tabs,
-preserves rows from other issues, and makes no enrichment provider calls.
+preserves rows from other issues, and makes no general market-data provider
+calls. When `SEC_USER_AGENT` is configured, it additionally refreshes cached
+SEC Form 4 activity, merges new transactions without duplicates into
+`Insider Activity`, and indexes those rows in Search. The ledger exposes the
+12 reviewer columns documented in `docs/google-sheets-layout.md`; company cells
+link to SEC filings and direction colors each full row green or red.
 Unapproved draft rows are skipped unless `--allow-draft-rows` is supplied for
 the private reviewer workbook. The approval CSV and reviewed workbook plan are
 private artifacts; command output returns counts and paths, not row content.

@@ -27,14 +27,16 @@ the provider's ticker format.
 | `openfigi` | Metadata and dry-run planner only | None required for low-rate access; optional OpenFIGI key for higher limits | No | Identifier mapping and ticker/exchange disambiguation |
 | `ecb_fx` | Metadata and dry-run planner only | None | No | EUR FX reference-rate context for derived display conversions |
 | `sec_companyfacts` | Metadata and dry-run planner only | No key; `SEC_USER_AGENT` before live access | No | Optional future US issuer fundamentals and filing metadata |
-| `sec_edgar_form4` | Metadata and dry-run planner only | No key; `SEC_USER_AGENT` before live access | No | Preferred official source for US insider activity from Form 4 filings |
+| `sec_edgar_form4` | Cached live importer plus dry-run planner | No key; identifying `SEC_USER_AGENT` required | No | Preferred official source for US insider activity from Form 4 filings |
 | `gleif_lei` | Metadata and dry-run planner only | None | No | Legal-entity identity, LEI, mapped identifier, and ownership/reference context |
 | `bundesbank_sdmx` | Metadata and dry-run planner only | None | No | Official German macro, rates, and EUR FX context through SDMX |
 
 `STOCK_ANALYST_MARKET_DATA_PROVIDER` defaults to `disabled`. Selecting
 `stooq_csv` only enables parsing caller-supplied CSV text; it does not fetch
-from Stooq. Selecting key-based or SEC providers does not enable live calls
-because adapters, cache policy, throttling, and terms checks are not complete.
+from Stooq. Selecting key-based providers does not enable live calls because
+their adapters, cache policy, throttling, and terms checks are not complete.
+SEC Form 4 is the exception: a configured `SEC_USER_AGENT` enables cached
+weekly enrichment during `google-sheets-export-plan`.
 `market-data-plan` now preserves that default even when manual `--symbol`
 values or endpoint names are supplied; provider dry-run planning requires an
 explicit provider selection such as `STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp`.
@@ -225,6 +227,24 @@ explicit provider selection such as `STOCK_ANALYST_MARKET_DATA_PROVIDER=fmp`.
     cache, 24-hour submissions cache, SEC filing URL evidence, and explicit
     not-covered handling for non-US or unresolved companies.
 
+## SEC Form 4 Weekly Import
+
+- `google-sheets-export-plan` refreshes SEC Form 4 data after the newest issue
+  is written whenever `SEC_USER_AGENT` is configured.
+- The importer uses a one-year lookback by default, a seven-day SEC ticker-map
+  cache, a 24-hour submissions cache, permanent filing-document cache, and a
+  conservative 100-request cap per run.
+- Ticker resolution uses a reviewed private symbol mapping first and otherwise
+  accepts only a unique exact normalized company-name match from the SEC ticker
+  file. Ambiguous or unresolved rows are not guessed.
+- `Insider Activity` is cumulative. Filing-transaction URLs provide stable
+  identities, so later weekly runs merge provenance and do not duplicate trades.
+  The visible sheet uses the requested 12-column reviewer schema; the company
+  cell carries the SEC filing hyperlink, transaction codes use simplified
+  labels, and direction colors the full row green or red.
+- Search includes matching insider rows below Stocks and Derivatives and can
+  match company, WKN, ticker, or insider name.
+
 ## Enrichment Signal Plan
 
 These signals are reviewer context only. They must never overwrite magazine
@@ -279,8 +299,8 @@ recommendations, target prices, stop prices, or WKN/source fields.
 - `source_url_hash` stores a SHA-256 prefix of the source URL so future cache
   records can be audited without retaining raw provider URLs that may include
   sensitive query structure.
-- TTL expiry is computed only from supplied metadata; live providers remain
-  disabled and no network access is added.
+- TTL expiry is computed only from supplied metadata; this historical cache
+  slice added no network access. SEC Form 4 live access was added later.
 
 ## Fifth Slice Implemented
 
@@ -306,8 +326,8 @@ recommendations, target prices, stop prices, or WKN/source fields.
 - ECB descriptors use `baseCurrency=EUR` and `quoteCurrency` so future display
   conversion cannot overwrite printed magazine prices.
 - SEC descriptors carry ticker/CIK prerequisite metadata for companyfacts,
-  submissions, and Form 4 XML planning. They still make no network calls and
-  require fair-access user-agent review before live adapters.
+  submissions, and Form 4 XML planning. Dry-run descriptors make no calls;
+  the separate weekly Form 4 importer requires the fair-access user agent.
 - GLEIF descriptors carry issuer search and ISIN-to-LEI mapping parameters for
   identity confidence only.
 - Bundesbank descriptors carry BBEX3 EUR FX context parameters for derived

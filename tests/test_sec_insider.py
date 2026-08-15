@@ -1,0 +1,264 @@
+import json
+import tempfile
+import unittest
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+from stock_analyst.sec_insider import (
+    SEC_SUBMISSIONS_URL,
+    SEC_TICKER_MAP_URL,
+    SecInsiderConfig,
+    SecResolvedIssuer,
+    SecStockCandidate,
+    enrich_sec_form4,
+    load_sec_insider_config,
+    parse_form4_transactions,
+    parse_sec_ticker_records,
+    recent_form4_filings,
+    resolve_sec_issuers,
+)
+
+
+FORM4_XML = b"""<?xml version="1.0"?>
+<ownershipDocument>
+  <issuer><issuerName>Example Corp</issuerName><issuerTradingSymbol>EXM</issuerTradingSymbol></issuer>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerName>DOE JANE</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship><isDirector>1</isDirector><isOfficer>1</isOfficer><officerTitle>CEO</officerTitle></reportingOwnerRelationship>
+  </reportingOwner>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <transactionDate><value>2026-07-30</value></transactionDate>
+      <transactionCoding><transactionCode>P</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>10</value></transactionShares>
+        <transactionPricePerShare><value>12.50</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>110</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+    </nonDerivativeTransaction>
+    <nonDerivativeTransaction>
+      <transactionDate><value>2026-07-31</value></transactionDate>
+      <transactionCoding><transactionCode>S</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>5</value></transactionShares>
+        <transactionPricePerShare><value>15</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>105</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+    </nonDerivativeTransaction>
+  </nonDerivativeTable>
+</ownershipDocument>
+"""
+
+
+class SecInsiderTests(unittest.TestCase):
+    def test_plain_contact_email_gets_application_prefix(self) -> None:
+        config = load_sec_insider_config({"SEC_USER_AGENT": "owner@example.com"})
+        self.assertIsNotNone(config)
+        self.assertEqual(config.user_agent, "Stock Analyst owner@example.com")
+
+    def test_resolves_reviewed_ticker_or_unique_exact_company_only(self) -> None:
+        records = parse_sec_ticker_records(
+            json.dumps(
+                {
+                    "0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"},
+                    "1": {"cik_str": 5678, "ticker": "OTHER", "title": "OTHER INC"},
+                }
+            ).encode()
+        )
+        resolved, unresolved = resolve_sec_issuers(
+            (
+                SecStockCandidate("Example", "A0ONE", None, "2026-W32:10"),
+                SecStockCandidate("Magazine alias", "A0TWO", "EXM", "2026-W32:12"),
+                SecStockCandidate("Exam", "A0BAD", None, "2026-W32:14"),
+            ),
+            records,
+        )
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0].ticker, "EXM")
+        self.assertEqual(resolved[0].wkn, "A0ONE | A0TWO")
+        self.assertEqual(unresolved, 1)
+
+    def test_filters_recent_form4_and_amendments(self) -> None:
+        payload = json.dumps(
+            {
+                "filings": {
+                    "recent": {
+                        "form": ["4", "4/A", "10-K", "4"],
+                        "accessionNumber": ["a", "b", "c", "d"],
+                        "primaryDocument": [
+                            "xslF345X06/a.xml",
+                            "b.xml",
+                            "c.htm",
+                            "d.xml",
+                        ],
+                        "filingDate": ["2026-07-30", "2026-07-29", "2026-07-28", "2025-01-01"],
+                    }
+                }
+            }
+        ).encode()
+        self.assertEqual(
+            recent_form4_filings(payload, cutoff=date(2026, 1, 1)),
+            (("a", "a.xml", "2026-07-30"), ("b", "b.xml", "2026-07-29")),
+        )
+
+    def test_parses_all_transactions_with_unique_filing_identities(self) -> None:
+        issuer = SecResolvedIssuer(
+            cik="0000001234",
+            ticker="EXM",
+            company="Example",
+            wkn="A0TEST",
+            source_ref="2026-W32:10",
+        )
+        rows = parse_form4_transactions(
+            FORM4_XML,
+            issuer=issuer,
+            filing_date="2026-08-01",
+            filing_url="https://www.sec.gov/filing.xml",
+            date_updated="2026-08-03",
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].transaction_value, "125.00")
+        self.assertEqual(rows[0].signal, "Open-market purchase")
+        self.assertEqual(rows[1].signal, "Open-market sale")
+        self.assertNotEqual(rows[0].filing_url, rows[1].filing_url)
+        self.assertEqual(
+            rows[0].to_sheet_row(),
+            [
+                "Example",
+                "A0TEST",
+                "EXM",
+                "DOE JANE",
+                "Director | Officer | CEO",
+                "110",
+                "2026-07-30",
+                "purchase",
+                "Acquired",
+                "10",
+                "12.50",
+                "125.00",
+            ],
+        )
+
+    def test_simplifies_supported_transaction_codes(self) -> None:
+        expected = {
+            "P": "purchase",
+            "S": "sale",
+            "M": "Conversion",
+            "F": "Payment",
+            "G": "Gift",
+            "A": "Awarded",
+            "J": "Other",
+        }
+        for code, label in expected.items():
+            xml = FORM4_XML.replace(
+                b"<transactionCode>P</transactionCode>",
+                f"<transactionCode>{code}</transactionCode>".encode(),
+                1,
+            )
+            row = parse_form4_transactions(
+                xml,
+                issuer=SecResolvedIssuer(
+                    cik="0000001234",
+                    ticker="EXM",
+                    company="Example",
+                    wkn="A0TEST",
+                    source_ref="2026-W33:10",
+                ),
+                filing_date="2026-08-06",
+                filing_url="https://www.sec.gov/filing.xml",
+                date_updated="2026-08-06",
+            )[0]
+            self.assertEqual(row.to_sheet_row()[7], label)
+
+    def test_enrichment_uses_cache_and_does_not_duplicate_transactions(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        submissions_payload = json.dumps(
+            {
+                "filings": {
+                    "recent": {
+                        "form": ["4"],
+                        "accessionNumber": ["0000001234-26-000001"],
+                        "primaryDocument": ["form4.xml"],
+                        "filingDate": ["2026-08-01"],
+                    }
+                }
+            }
+        ).encode()
+        calls = []
+
+        def fetch(url: str, user_agent: str) -> bytes:
+            calls.append((url, user_agent))
+            if url == SEC_TICKER_MAP_URL:
+                return ticker_payload
+            if url == SEC_SUBMISSIONS_URL.format(cik="0000001234"):
+                return submissions_payload
+            return FORM4_XML
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = SecInsiderConfig(
+                user_agent="Stock Analyst owner@example.com",
+                cache_dir=Path(temp_dir),
+            )
+            candidate = SecStockCandidate("Example", "A0TEST", None, "2026-W32:10")
+            now = datetime(2026, 8, 3, tzinfo=timezone.utc)
+            first = enrich_sec_form4((candidate,), config, fetch_bytes=fetch, now=now)
+            second = enrich_sec_form4((candidate,), config, fetch_bytes=fetch, now=now)
+
+        self.assertEqual(first.network_request_count, 3)
+        self.assertEqual(len(first.transactions), 2)
+        self.assertEqual(second.network_request_count, 0)
+        self.assertEqual(second.cache_hit_count, 3)
+        self.assertEqual(len(second.transactions), 2)
+        self.assertEqual(len(calls), 3)
+
+    def test_malformed_filing_does_not_block_later_valid_filings(self) -> None:
+        ticker_payload = json.dumps(
+            {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}
+        ).encode()
+        submissions_payload = json.dumps(
+            {
+                "filings": {
+                    "recent": {
+                        "form": ["4", "4"],
+                        "accessionNumber": [
+                            "0000001234-26-000002",
+                            "0000001234-26-000001",
+                        ],
+                        "primaryDocument": ["broken.xml", "valid.xml"],
+                        "filingDate": ["2026-08-02", "2026-08-01"],
+                    }
+                }
+            }
+        ).encode()
+
+        def fetch(url: str, _user_agent: str) -> bytes:
+            if url == SEC_TICKER_MAP_URL:
+                return ticker_payload
+            if url == SEC_SUBMISSIONS_URL.format(cik="0000001234"):
+                return submissions_payload
+            if url.endswith("broken.xml"):
+                return b"not XML"
+            return FORM4_XML
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = enrich_sec_form4(
+                (SecStockCandidate("Example", "A0TEST", None, "2026-W32:10"),),
+                SecInsiderConfig(
+                    user_agent="Stock Analyst owner@example.com",
+                    cache_dir=Path(temp_dir),
+                ),
+                fetch_bytes=fetch,
+                now=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(result.filing_count, 2)
+        self.assertEqual(result.failed_filing_count, 1)
+        self.assertEqual(len(result.transactions), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

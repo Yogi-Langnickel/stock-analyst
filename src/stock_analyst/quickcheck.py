@@ -10,8 +10,12 @@ from stock_analyst.schemas import ReviewStatus
 
 
 WKN_RE = re.compile(r"^[A-Z0-9]{6}$")
-MONEY_RE = re.compile(r"^(?:verkauft|[+-]?\d+(?:,\d+)?\s+EUR\*?)(?:\s*!?)?$")
-MONEY_TOKEN_RE = re.compile(r"(?:verkauft|[+-]?\d+(?:,\d+)?\s+EUR\*?\s*!?)")
+MONEY_RE = re.compile(
+    r"^(?:verkauft|[+-]?\d+(?:,\d+)?\s+(?:EUR|USD)\*?)(?:\s*!?)?$"
+)
+MONEY_TOKEN_RE = re.compile(
+    r"(?:verkauft|[+-]?\d+(?:,\d+)?\s+(?:EUR|USD)\*?\s*!?)"
+)
 ISSUE_RE = re.compile(r"^\d{2}/\d{2}$")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 EURO_SUFFIX_RE = re.compile(r"(?<=\d)\s*€")

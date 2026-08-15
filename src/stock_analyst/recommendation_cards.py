@@ -77,7 +77,7 @@ LAYOUT_TABLE_HEADER_RE = re.compile(
 )
 LAYOUT_TABLE_ROW_RE = re.compile(
     r"^\s*"
-    r"(?P<name>.+?)\s{2,}"
+    r"(?P<name>.+?)\s+"
     r"(?P<wkn>[A-Z0-9]{6})\s+"
     rf"(?P<current_price>{EUROPEAN_AMOUNT_RE}\s*(?:€|\$|EUR|USD))\s+"
     r"(?P<market_cap>\d+(?:,\d+)?)\s+"
@@ -395,6 +395,7 @@ def extract_dax_action_table_result_from_pages(
         (page, _extract_dax_value_rows(lines))
         for page, lines in sorted(layouts.items())
         if any(DAX_VALUE_TABLE_HEADER_RE.search(line) for line in lines)
+        and not _is_self_contained_recommendation_table(lines)
     ]
     action_candidates = [
         (page, _extract_dax_action_rows(lines))
@@ -482,6 +483,14 @@ def extract_dax_action_table_result_from_pages(
     return PairedActionTableExtraction(
         cards=tuple(cards),
         exceptions=tuple(exceptions),
+    )
+
+
+def _is_self_contained_recommendation_table(lines: Sequence[str]) -> bool:
+    """Exclude complete same-page tables from adjacent-page pairing."""
+
+    return any(LAYOUT_TABLE_HEADER_RE.search(line) for line in lines) or any(
+        "aktien im quick-check" in line.casefold() for line in lines
     )
 
 

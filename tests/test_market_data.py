@@ -22,6 +22,7 @@ from stock_analyst.market_data import (
     load_market_data_symbol_map_file,
     load_market_data_symbol_file,
     market_data_candidates_from_workbook_plan,
+    market_data_candidates_from_symbol_map_template_csv,
     market_data_disabled,
     plan_ecb_fx_enrichment_requests,
     plan_fmp_enrichment_requests,
@@ -92,7 +93,14 @@ class MarketDataTest(unittest.TestCase):
         self.assertIn("sec_edgar_form4", providers)
         self.assertIn("gleif_lei", providers)
         self.assertIn("bundesbank_sdmx", providers)
-        self.assertFalse(any(provider.network_access for provider in providers.values()))
+        self.assertTrue(providers["sec_edgar_form4"].network_access)
+        self.assertFalse(
+            any(
+                provider.network_access
+                for provider_id, provider in providers.items()
+                if provider_id != "sec_edgar_form4"
+            )
+        )
         self.assertTrue(providers["alpha_vantage"].cache_required_before_live)
         self.assertTrue(providers["alpha_vantage"].rate_limit_notes)
         self.assertEqual(providers["alpha_vantage"].credential_env_var, "ALPHAVANTAGE_API_KEY")
@@ -302,7 +310,7 @@ class MarketDataTest(unittest.TestCase):
         self.assertFalse(bundesbank.provider.network_access)
         self.assertEqual(bundesbank.reason, "live provider adapter is not implemented")
 
-    def test_sec_edgar_form4_requires_user_agent_and_remains_metadata_only(self) -> None:
+    def test_sec_edgar_form4_requires_user_agent_and_enables_cached_adapter(self) -> None:
         missing_user_agent = load_market_data_config({"STOCK_ANALYST_MARKET_DATA_PROVIDER": "sec_edgar_form4"})
         configured = load_market_data_config(
             {
@@ -315,9 +323,9 @@ class MarketDataTest(unittest.TestCase):
         self.assertFalse(missing_user_agent.enabled)
         self.assertEqual(missing_user_agent.reason, "missing user-agent environment variable: SEC_USER_AGENT")
         self.assertEqual(configured.provider.provider_id, "sec_edgar_form4")
-        self.assertFalse(configured.enabled)
-        self.assertFalse(configured.provider.network_access)
-        self.assertEqual(configured.reason, "live provider adapter is not implemented")
+        self.assertTrue(configured.enabled)
+        self.assertTrue(configured.provider.network_access)
+        self.assertEqual(configured.reason, "cached live provider adapter is available")
 
     def test_market_data_planning_config_loads_env_file_without_exposing_secret(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -526,6 +534,37 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(candidates[0].status, "needs_symbol_mapping")
         self.assertIsNone(candidates[0].symbol)
         self.assertEqual(ready_market_data_symbols_from_workbook_candidates(candidates), ())
+
+    def test_symbol_map_template_preserves_prior_issue_candidate_universe(self) -> None:
+        existing = "\n".join(
+            (
+                "source_id,wkn,name,symbol,status,tab,row_kind,issue,page,notes",
+                "stock:older,OLD001,Older Example,OLD,mapped,Stocks,stock_recommendation,2026-W32,10,reviewed mapping",
+            )
+        )
+        payload = {
+            "rows": [
+                {
+                    "tab": "Stocks",
+                    "rowKind": "stock_recommendation",
+                    "sourceId": "stock:newer",
+                    "issueId": "2026-W33",
+                    "page": 12,
+                    "values": stock_values("Newer Example", "NEW001", page="12"),
+                }
+            ]
+        }
+
+        refreshed = build_market_data_symbol_map_template_csv(
+            payload,
+            existing_csv_text=existing,
+        )
+        candidates = market_data_candidates_from_symbol_map_template_csv(refreshed)
+
+        self.assertEqual(
+            {(candidate.wkn, candidate.symbol) for candidate in candidates},
+            {("NEW001", None), ("OLD001", "OLD")},
+        )
 
     def test_workbook_plan_candidates_reject_old_short_stock_rows(self) -> None:
         payload = {

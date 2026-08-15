@@ -56,6 +56,32 @@ class QuickcheckTest(unittest.TestCase):
 
         self.assertEqual(rows, ())
 
+    def test_extracts_usd_denominated_quickcheck_row(self) -> None:
+        rows = extract_quickcheck_rows_from_lines(
+            (
+                "Example Media",
+                "EXM001",
+                "13,02 $",
+                "9,40 $",
+                "11/26",
+                "+38,5 %",
+                "Aktien im Quick-Check",
+                "20,00 $",
+                "12,00 $",
+                "Synthetic source-language review comment.",
+                "Unternehmen",
+                "WKN",
+            ),
+            issue_id="2026-W33",
+            page_number=93,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].current_price, "13,02 USD")
+        self.assertEqual(rows[0].recommendation_price, "9,40 USD")
+        self.assertEqual(rows[0].target, "20,00 USD")
+        self.assertEqual(rows[0].stop, "12,00 USD")
+
 
 if __name__ == "__main__":
     unittest.main()

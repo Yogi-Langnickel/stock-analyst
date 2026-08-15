@@ -154,11 +154,11 @@ Findings:
 
 Revisions applied:
 
-- Normal Google bootstrap owns only `Search` and `Aktuell`, while issue tabs
-  remain generated history.
+- Normal Google bootstrap owns `Search`, `Aktuell`, and cumulative
+  `Insider Activity`, while issue tabs remain generated history.
 - Known retired generated tabs are pruned; unknown/manual tabs are untouched.
-- The search index reads only issue reviewer rows and preserves every displayed
-  reviewer value without adding a second visible schema.
+- The search index reads issue reviewer rows plus deduplicated insider rows and
+  preserves their displayed values in three stacked sections.
 - Local canonical schemas remain available for extraction validation, but their
   rows are reported as omitted from the clean Google Sheet.
 - The result formula now wraps its match expression in `ARRAYFORMULA`; a
@@ -166,6 +166,27 @@ Revisions applied:
   and the input cell was restored afterward.
 - Full-row results are explicitly sorted by issue descending and source-row
   order, with the same stock/derivative headers and action colors as issue tabs.
+
+### 2026-W33 Extraction And Insider Migration Review
+
+Extraction-fidelity review found no remaining issues after synthetic regressions
+recovered single-space recommendation rows and USD Quick-Check rows. The private
+candidate manifest reconciled 84 unique candidates across 28 visually inspected
+pages with zero exceptions.
+
+The Sheets/SEC migration review required four fixes before live use:
+
+- migrate the legacy Insider Activity ledger before the issue bootstrap can
+  rewrite its header or shrink its grid;
+- preserve prior magazine-backed candidates in the private symbol-map universe
+  so incremental SEC refreshes are not limited to the latest issue;
+- report failed or request-budget-exhausted SEC runs as `partial`;
+- replace only stale Stock Analyst-managed protections while preserving manual
+  protections and the editable `Search!C1:E1` exception.
+
+All four findings received focused regressions. SEC hyperlinks remain on company
+cells in the dedicated 12-column Insider Activity ledger; Search mirrors the
+displayed insider values but does not promise a separate source column.
 
 ### Iteration 3: Reviewer Data-Fidelity Review
 

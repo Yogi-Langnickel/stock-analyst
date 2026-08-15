@@ -359,6 +359,7 @@ def _latest_issue_recommendation_rows(
     update_date: str,
 ) -> list[WorkbookDraftRow]:
     rows: list[WorkbookDraftRow] = []
+    emitted_derivative_wkns: set[str] = set()
     for stock_row in stock_rows:
         recommendation = _stock_value(stock_row.values, "Recommendation")
         publisher_action = _latest_issue_stock_action(
@@ -481,13 +482,18 @@ def _latest_issue_recommendation_rows(
                     source_block="manual_review_pending",
                 )
             )
+            if card.instrument_type == InstrumentType.DERIVATIVE and card.wkn:
+                emitted_derivative_wkns.add(card.wkn)
     for derivative_row in derivative_overview_rows:
         publisher_action = _publisher_action(derivative_row.recommendation)
-        if publisher_action is None:
+        if (
+            publisher_action is None
+            or derivative_row.wkn in emitted_derivative_wkns
+        ):
             continue
         values_by_header = {
             "Action": publisher_action,
-            "Issue:Page": _source_ref(derivative_row.issue_id, derivative_row.page),
+            "Issue:Page": _derivative_source_ref(derivative_row),
             "Derivative": _join_non_empty(
                 (derivative_row.underlying, derivative_row.direction)
             ),
@@ -575,7 +581,16 @@ def _publisher_action(recommendation: str | None) -> str | None:
         "ausgestoppt",
     }:
         return "Sell"
-    if normalized in {"hold", "halten", "dabei-bleiben", "dabei bleiben"}:
+    if normalized in {
+        "hold",
+        "halten",
+        "dabei-bleiben",
+        "dabei bleiben",
+        "stopp nachziehen",
+        "ziel/stopp nachziehen",
+        "ziel anpassen",
+        "stopp beachten",
+    }:
         return "Hold"
     return None
 
@@ -1023,7 +1038,7 @@ def _derivative_overview_rows(
                     row.stop,
                     row.recommendation,
                     ReviewStatus.NEEDS_REVIEW.value,
-                    _source_ref(row.issue_id, row.page),
+                    _derivative_source_ref(row),
                     instrument_update_date,
                 ),
             )
@@ -1682,6 +1697,10 @@ def _source_ref(issue_id: str, page: int | str) -> str:
     if issue and page_text:
         return f"{issue}:{page_text}"
     return issue or page_text
+
+
+def _derivative_source_ref(row: DerivativeOverviewRow) -> str:
+    return " | ".join(_source_ref(row.issue_id, page) for page in row.source_pages)
 
 
 def _join_non_empty(values: Sequence[str | None]) -> str:
