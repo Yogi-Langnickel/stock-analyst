@@ -543,6 +543,153 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(ehang.kuv_26e, "8,2")
         self.assertEqual(ehang.kgv_26e, "156")
 
+    def test_extracts_new_recommendations_from_table_without_kuv_column(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Unternehmen",
+                "WKN",
+                "Aktueller Kurs",
+                "Marktkap.",
+                "DR*",
+                "KGV",
+                "2027e",
+                "Perf. seit",
+                "Erstempf.",
+                "Empf.-",
+                "Ausgabe",
+                "Ziel",
+                "Stopp",
+                "Chance",
+                "Risiko",
+                "Alpha Energy",
+                "NRG001",
+                "81,25 EUR",
+                "3,0",
+                "3,5",
+                "12",
+                "Neuempfehlung",
+                "108,00 EUR",
+                "63,00 EUR",
+                "•••••",
+                "•••••",
+                "Beta Energy",
+                "NRG002",
+                "42,50 EUR",
+                "9,5",
+                "0,0",
+                "17",
+                "Neuempfehlung",
+                "55,00 EUR",
+                "33,00 EUR",
+                "•••••",
+                "•••••",
+                "Gamma Energy",
+                "NRG003",
+                "112,00 EUR",
+                "28,0",
+                "3,6",
+                "10",
+                "Neuempfehlung",
+                "136,00 EUR",
+                "93,00 EUR",
+                "•••••",
+                "•••••",
+            ),
+            issue_id="2026-W36",
+            page_number=20,
+        )
+
+        self.assertEqual(len(cards), 3)
+        self.assertEqual(
+            [card.recommendation_status for card in cards],
+            ["new_recommendation"] * 3,
+        )
+        self.assertEqual([card.kuv_26e for card in cards], [None] * 3)
+        self.assertEqual([card.kgv_26e for card in cards], ["12", "17", "10"])
+
+    def test_optional_valuation_cells_do_not_hide_explicit_recommendations(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Unternehmen",
+                "WKN",
+                "Aktueller Kurs",
+                "Marktkap.",
+                "DR*",
+                "KUV",
+                "KGV",
+                "Empf.-",
+                "Ausgabe",
+                "Ziel",
+                "Stopp",
+                "Chance",
+                "Risiko",
+                "Alpha Energy",
+                "NRG001",
+                "81,25 EUR",
+                "3,0",
+                "3,5",
+                "17",
+                "Neuempfehlung",
+                "108,00 EUR",
+                "63,00 EUR",
+                "•••••",
+                "•••••",
+                "Beta Energy",
+                "NRG002",
+                "42,50 EUR",
+                "9,5",
+                "0,0",
+                "Neuempfehlung",
+                "55,00 EUR",
+                "33,00 EUR",
+                "•••••",
+                "•••••",
+                "Gamma Energy",
+                "NRG003",
+                "112,00 EUR",
+                "28,0",
+                "3,6",
+                "n. a.",
+                "10",
+                "Neuempfehlung",
+                "136,00 EUR",
+                "93,00 EUR",
+                "•••••",
+                "•••••",
+                "Delta Energy",
+                "NRG004",
+                "62,00 EUR",
+                "12,0",
+                "1,6",
+                "–",
+                "9",
+                "Neuempfehlung",
+                "76,00 EUR",
+                "51,00 EUR",
+                "•••••",
+                "•••••",
+            ),
+            issue_id="2026-W36",
+            page_number=20,
+        )
+
+        self.assertEqual(len(cards), 4)
+        self.assertEqual(
+            [card.recommendation_status for card in cards],
+            ["new_recommendation"] * 4,
+        )
+        alpha, beta, gamma, delta = cards
+        self.assertIsNone(alpha.kuv_26e)
+        self.assertIsNone(alpha.kgv_26e)
+        self.assertIn("valuation_metrics_ambiguous", alpha.extraction_notes)
+        self.assertIsNone(beta.kuv_26e)
+        self.assertIsNone(beta.kgv_26e)
+        self.assertNotIn("valuation_metrics_ambiguous", beta.extraction_notes)
+        self.assertIsNone(gamma.kuv_26e)
+        self.assertEqual(gamma.kgv_26e, "10")
+        self.assertIsNone(delta.kuv_26e)
+        self.assertEqual(delta.kgv_26e, "9")
+
     def test_extracts_layout_preserved_top_recommendation_rows(self) -> None:
         """Regression for wide, one-line PDF recommendation-table rows."""
 
@@ -576,6 +723,50 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(
             [card.extraction_notes for card in cards],
             [("layout_table_extraction",)] * 3,
+        )
+
+    def test_layout_table_enriches_missing_primary_recommendation_status(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Unternehmen",
+                "WKN",
+                "Aktueller Kurs",
+                "Marktkap.",
+                "DR*",
+                "KUV",
+                "KGV",
+                "Empf.-",
+                "Ausgabe",
+                "Ziel",
+                "Stopp",
+                "Chance",
+                "Risiko",
+                "Alpha Engineering AG",
+                "ENG001",
+                "81,25 EUR",
+                "3,0",
+                "3,5",
+                "0,5",
+                "12",
+                "108,00 EUR",
+                "63,00 EUR",
+                "•••••",
+                "•••••",
+            ),
+            issue_id="2026-W36",
+            page_number=20,
+            layout_lines=(
+                "Unternehmen    WKN    Aktueller Kurs    Marktkap.    DR*    KUV    KGV    Empf.-    Ziel    Stopp    Chance    Risiko",
+                "Alpha Engineering AG    ENG001    81,25 EUR    3,0    3,5    0,5    12    Neuempfehlung    108,00 EUR    63,00 EUR    •••••    •••••",
+            ),
+        )
+
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].recommendation_status, "new_recommendation")
+        self.assertIn("duel_table_extraction", cards[0].extraction_notes)
+        self.assertIn(
+            "layout_table_recommendation_status",
+            cards[0].extraction_notes,
         )
 
     def test_extracts_layout_row_with_single_space_before_wkn(self) -> None:

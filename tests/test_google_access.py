@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,16 +18,24 @@ from stock_analyst.google_access import (
     GoogleAccessConfig,
     GoogleAccessError,
     LEGACY_INSIDER_ACTIVITY_HEADERS,
+    LEGACY_AKTUELL_DERIVATIVE_HEADERS,
+    MANAGED_INSIDER_FILTER_VIEW_TITLES,
     MANAGED_PROTECTION_DESCRIPTION_PREFIX,
+    _apply_managed_insider_filter_views,
+    _apply_insider_instruction_presentation,
     _apply_managed_sheet_protections,
     _auto_resize_issue_review_tab_columns,
     _build_aktuell_table_format_requests,
     _build_issue_search_index_rows,
     _build_issue_search_results_formula,
     _build_reviewer_action_format_requests,
+    _build_sheet_header_ranges,
     _build_search_format_requests,
     _fetch_sheet_ids_by_title,
+    _issue_recommendation_table_clear_ranges,
+    _managed_insider_filter_view_specs,
     _reorder_issue_review_tabs_newest_first,
+    _project_legacy_aktuell_derivative_values,
     _simplify_insider_transaction,
     bootstrap_google_sheet,
     build_drive_pdf_metadata_result,
@@ -145,15 +154,17 @@ class _FakeDrive:
 
 
 class _FakeSpreadsheets:
-    def __init__(self, payload):
+    def __init__(self, payload, *, operation_log=None):
         self.payload = payload
+        self.operation_log = operation_log if operation_log is not None else []
         self.batch_update_requests = []
-        self.values_resource = _FakeValues()
+        self.values_resource = _FakeValues(operation_log=self.operation_log)
 
     def get(self, **_kwargs):
         return _FakeExecute(self.payload)
 
     def batchUpdate(self, **kwargs):
+        self.operation_log.append(("spreadsheets.batchUpdate", kwargs))
         self.batch_update_requests.append(kwargs)
         sheets = self.payload.get("sheets", [])
         for request in kwargs.get("body", {}).get("requests", []):
@@ -193,7 +204,8 @@ class _FakeSpreadsheets:
 
 
 class _FakeValues:
-    def __init__(self):
+    def __init__(self, *, operation_log=None):
+        self.operation_log = operation_log if operation_log is not None else []
         self.batch_update_requests = []
         self.batch_get_requests = []
         self.clear_requests = []
@@ -203,12 +215,14 @@ class _FakeValues:
         self.fail_batch_update_after = 0
 
     def batchUpdate(self, **kwargs):
+        self.operation_log.append(("values.batchUpdate", kwargs))
         self.batch_update_requests.append(kwargs)
         if self.fail_batch_update and len(self.batch_update_requests) > self.fail_batch_update_after:
             raise RuntimeError("simulated batch update failure")
         return _FakeExecute({"updated": True})
 
     def batchGet(self, **kwargs):
+        self.operation_log.append(("values.batchGet", kwargs))
         self.batch_get_requests.append(kwargs)
         return _FakeExecute(
             {
@@ -223,23 +237,145 @@ class _FakeValues:
         )
 
     def clear(self, **kwargs):
+        self.operation_log.append(("values.clear", kwargs))
         self.clear_requests.append(kwargs)
         return _FakeExecute({"clearedRange": kwargs.get("range")})
 
     def get(self, **kwargs):
+        self.operation_log.append(("values.get", kwargs))
         self.get_requests.append(kwargs)
         return _FakeExecute({"values": self.values_by_range.get(kwargs.get("range"), [])})
 
 
 class _FakeSheets:
     def __init__(self, payload):
-        self.spreadsheets_resource = _FakeSpreadsheets(payload)
+        self.operation_log = []
+        self.spreadsheets_resource = _FakeSpreadsheets(
+            payload,
+            operation_log=self.operation_log,
+        )
 
     def spreadsheets(self):
         return self.spreadsheets_resource
 
 
 class GoogleAccessTest(unittest.TestCase):
+    def test_insider_activity_has_bilingual_instructions_above_header(self) -> None:
+        spec = next(
+            spec for spec in DEFAULT_SHEET_TABS if spec.title == "Insider Activity"
+        )
+
+        self.assertEqual(spec.header_row, 3)
+        self.assertEqual(spec.frozen_rows, 3)
+        self.assertEqual(spec.table_starts_at, "A3")
+        self.assertEqual([cell for cell, _value in spec.metadata_cells], ["A1", "A2"])
+        self.assertIn("English", spec.metadata_cells[0][1])
+        self.assertIn("Deutsch", spec.metadata_cells[1][1])
+        ranges = _build_sheet_header_ranges((spec,))
+        self.assertEqual(
+            [item["range"] for item in ranges],
+            ["'Insider Activity'!A1", "'Insider Activity'!A2", "'Insider Activity'!A3:L3"],
+        )
+
+    def test_insider_instruction_presentation_merges_only_owned_banner_rows(self) -> None:
+        first_instruction_merge = {
+            "sheetId": 30,
+            "startRowIndex": 0,
+            "endRowIndex": 1,
+            "startColumnIndex": 0,
+            "endColumnIndex": 3,
+        }
+        custom_merge = {
+            "sheetId": 30,
+            "startRowIndex": 20,
+            "endRowIndex": 21,
+            "startColumnIndex": 0,
+            "endColumnIndex": 2,
+        }
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 30, "title": "Insider Activity"},
+                        "merges": [first_instruction_merge, custom_merge],
+                    }
+                ],
+            }
+        )
+
+        result = _apply_insider_instruction_presentation(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+            sheet_id=30,
+        )
+
+        self.assertEqual(result, {"mergeCount": 2, "mergesAdded": 1})
+        requests = sheets.spreadsheets_resource.batch_update_requests[-1]["body"][
+            "requests"
+        ]
+        merges = [request["mergeCells"]["range"] for request in requests if "mergeCells" in request]
+        self.assertEqual(
+            merges,
+            [
+                {
+                    "sheetId": 30,
+                    "startRowIndex": 1,
+                    "endRowIndex": 2,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 3,
+                }
+            ],
+        )
+        self.assertFalse(any("unmergeCells" in request for request in requests))
+        formatted_ranges = [
+            request["repeatCell"]["range"]
+            for request in requests
+            if "repeatCell" in request
+        ]
+        self.assertIn(
+            {
+                "sheetId": 30,
+                "startRowIndex": 2,
+                "endRowIndex": 3,
+                "startColumnIndex": 0,
+                "endColumnIndex": 12,
+            },
+            formatted_ranges,
+        )
+
+    def test_issue_recommendation_clear_ranges_stay_within_current_grid(self) -> None:
+        self.assertEqual(
+            _issue_recommendation_table_clear_ranges(
+                "DA_2026_30",
+                (1, 5, 8, 9, 10),
+            ),
+            (
+                "'DA_2026_30'!A6:P7",
+                "'DA_2026_30'!P8:P10",
+                "'DA_2026_30'!A11:P",
+            ),
+        )
+
+    def test_legacy_derivative_projection_removes_ratings_and_renames_import_date(self) -> None:
+        legacy_values = [
+            f"value:{header}" for header in LEGACY_AKTUELL_DERIVATIVE_HEADERS
+        ]
+
+        projected = _project_legacy_aktuell_derivative_values(legacy_values)
+
+        self.assertEqual(len(projected), 15)
+        self.assertEqual(
+            projected[AKTUELL_DERIVATIVE_HEADERS.index("Comment")],
+            "value:Comment",
+        )
+        self.assertEqual(
+            projected[AKTUELL_DERIVATIVE_HEADERS.index("Import date")],
+            "value:date updated",
+        )
+        self.assertNotIn("value:Chance", projected)
+        self.assertNotIn("value:Risk", projected)
+
     @staticmethod
     def _search_whole_sheet_protection(
         *,
@@ -645,11 +781,13 @@ class GoogleAccessTest(unittest.TestCase):
         effective_correction = SimpleNamespace(
             filing_url="https://www.sec.gov/example#transaction-1",
             correction_status="effective_correction",
+            is_stock_purchase_or_sale=True,
             to_sheet_row=lambda: [],
         )
         ambiguous_correction = SimpleNamespace(
             filing_url="https://www.sec.gov/example#transaction-2",
             correction_status="ambiguous_correction",
+            is_stock_purchase_or_sale=True,
             to_sheet_row=lambda: [],
         )
         enrichment = SimpleNamespace(
@@ -771,6 +909,7 @@ class GoogleAccessTest(unittest.TestCase):
         transaction = SimpleNamespace(
             filing_url="https://www.sec.gov/example#transaction-1",
             correction_status="original",
+            is_stock_purchase_or_sale=True,
             to_sheet_row=lambda: [
                 "Example", "A0TEST", "EXM", "Jane Doe", "Director", "110",
                 "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
@@ -844,7 +983,20 @@ class GoogleAccessTest(unittest.TestCase):
                     "sheets": [
                         {"properties": {"sheetId": 10, "title": "Search"}},
                         {"properties": {"sheetId": 20, "title": "Aktuell"}},
-                        {"properties": {"sheetId": 30, "title": "Insider Activity"}},
+                        {
+                            "properties": {"sheetId": 30, "title": "Insider Activity"},
+                            "basicFilter": {
+                                "range": {
+                                    "sheetId": 30,
+                                    "startRowIndex": 0,
+                                    "endRowIndex": 2,
+                                    "startColumnIndex": 0,
+                                    "endColumnIndex": 12,
+                                },
+                                "criteria": {"8": {"hiddenValues": ["Disposed"]}},
+                                "sortSpecs": [{"dimensionIndex": 6, "sortOrder": "DESCENDING"}],
+                            },
+                        },
                     ],
                 }
             )
@@ -891,6 +1043,26 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["rowsAdded"], 1)
         self.assertEqual(result["rowsUpdated"], 1)
         self.assertEqual(result["rowsRetained"], 2)
+        self.assertEqual(
+            result["managedFilterViews"],
+            {"added": 3, "updated": 0, "deleted": 0, "count": 3},
+        )
+        stale_banner_clear_index = next(
+            index
+            for index, (operation, request) in enumerate(sheets.operation_log)
+            if operation == "values.clear"
+            and request["range"] == "'Insider Activity'!D1:L2"
+        )
+        insider_header_write_index = next(
+            index
+            for index, (operation, request) in enumerate(sheets.operation_log)
+            if operation == "values.batchUpdate"
+            and any(
+                item["range"] == "'Insider Activity'!A3:L3"
+                for item in request["body"]["data"]
+            )
+        )
+        self.assertGreater(stale_banner_clear_index, insider_header_write_index)
         raw_batches = [
             request["body"]["data"]
             for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
@@ -900,7 +1072,7 @@ class GoogleAccessTest(unittest.TestCase):
             item
             for batch in raw_batches
             for item in batch
-            if item["range"] == "'Insider Activity'!B2:L3"
+            if item["range"] == "'Insider Activity'!B4:L5"
         )
         self.assertTrue(any(row[0] == "A0ONE | A0TWO" for row in insider_write["values"]))
         formula_batches = [
@@ -912,7 +1084,7 @@ class GoogleAccessTest(unittest.TestCase):
             item
             for batch in formula_batches
             for item in batch
-            if item["range"] == "'Insider Activity'!A2:A3"
+            if item["range"] == "'Insider Activity'!A4:A5"
         )
         self.assertTrue(
             all(value[0].startswith('=HYPERLINK("https://sec/') for value in company_write["values"])
@@ -944,6 +1116,190 @@ class GoogleAccessTest(unittest.TestCase):
         ]
         self.assertEqual(column_counts[-1], 12)
         self.assertIn(19, column_counts)
+        filter_request = next(
+            request["setBasicFilter"]["filter"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            for request in batch["body"]["requests"]
+            if "setBasicFilter" in request
+        )
+        self.assertEqual(filter_request["range"], {
+            "sheetId": 30,
+            "startRowIndex": 2,
+            "endRowIndex": 5,
+            "startColumnIndex": 0,
+            "endColumnIndex": 12,
+        })
+        self.assertEqual(filter_request["criteria"], {"8": {"hiddenValues": ["Disposed"]}})
+        self.assertEqual(
+            filter_request["sortSpecs"],
+            [{"dimensionIndex": 6, "sortOrder": "DESCENDING"}],
+        )
+
+    def test_managed_insider_filter_views_preserve_user_views_and_reconcile_range(
+        self,
+    ) -> None:
+        user_view = {
+            "filterViewId": 70,
+            "title": "Family custom view",
+            "range": {
+                "sheetId": 30,
+                "startRowIndex": 0,
+                "endRowIndex": 10,
+                "startColumnIndex": 0,
+                "endColumnIndex": 12,
+            },
+        }
+        stale_managed_view = {
+            "filterViewId": 71,
+            "title": MANAGED_INSIDER_FILTER_VIEW_TITLES[0],
+            "range": {
+                "sheetId": 30,
+                "startRowIndex": 0,
+                "endRowIndex": 10,
+                "startColumnIndex": 0,
+                "endColumnIndex": 12,
+            },
+            "sortSpecs": [{"dimensionIndex": 6, "sortOrder": "ASCENDING"}],
+        }
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 30, "title": "Insider Activity"},
+                        "filterViews": [user_view, stale_managed_view],
+                    }
+                ],
+            }
+        )
+
+        result = _apply_managed_insider_filter_views(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+            sheet_id=30,
+            data_row_count=25,
+        )
+
+        requests = sheets.spreadsheets_resource.batch_update_requests[-1]["body"][
+            "requests"
+        ]
+        self.assertEqual(result["added"], 2)
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["deleted"], 0)
+        self.assertFalse(any("deleteFilterView" in request for request in requests))
+        update = next(
+            request["updateFilterView"]
+            for request in requests
+            if "updateFilterView" in request
+        )
+        self.assertEqual(update["filter"]["filterViewId"], 71)
+        self.assertEqual(update["filter"]["range"]["startRowIndex"], 2)
+        self.assertEqual(update["filter"]["range"]["endRowIndex"], 28)
+        self.assertEqual(
+            update["filter"]["sortSpecs"],
+            [{"dimensionIndex": 6, "sortOrder": "DESCENDING"}],
+        )
+        additions = [
+            request["addFilterView"]["filter"]
+            for request in requests
+            if "addFilterView" in request
+        ]
+        self.assertEqual(
+            {item["title"] for item in additions},
+            set(MANAGED_INSIDER_FILTER_VIEW_TITLES[1:]),
+        )
+        direction_criteria = {
+            item["title"]: item["criteria"]["8"]["condition"]["values"][0][
+                "userEnteredValue"
+            ]
+            for item in additions
+        }
+        self.assertEqual(
+            direction_criteria,
+            {
+                MANAGED_INSIDER_FILTER_VIEW_TITLES[1]: "Acquired",
+                MANAGED_INSIDER_FILTER_VIEW_TITLES[2]: "Disposed",
+            },
+        )
+
+    def test_managed_insider_filter_views_are_idempotent(self) -> None:
+        current_views = [
+            {
+                **view,
+                "filterViewId": 80 + index,
+            }
+            for index, view in enumerate(
+                _managed_insider_filter_view_specs(sheet_id=30, data_row_count=25)
+            )
+        ]
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {
+                        "properties": {"sheetId": 30, "title": "Insider Activity"},
+                        "filterViews": current_views,
+                    }
+                ],
+            }
+        )
+
+        result = _apply_managed_insider_filter_views(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+            sheet_id=30,
+            data_row_count=25,
+        )
+
+        self.assertEqual(
+            result,
+            {"added": 0, "updated": 0, "deleted": 0, "count": 3},
+        )
+        self.assertEqual(sheets.spreadsheets_resource.batch_update_requests, [])
+
+    def test_insider_activity_keeps_only_purchase_and_sale_transactions(self) -> None:
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {"properties": {"sheetId": 10, "title": "Search"}},
+                    {"properties": {"sheetId": 20, "title": "Aktuell"}},
+                    {"properties": {"sheetId": 30, "title": "Insider Activity"}},
+                ],
+            }
+        )
+        headers = list(_headers_for("Insider Activity"))
+        excluded_url = "https://sec/derivative-sale"
+        existing_sale = [f'=HYPERLINK("{excluded_url}","Example")', "", "EXM", "Jane Doe", "", "", "2026-08-01", "sale", "Disposed", "1", "1", "1"]
+        sale = ["Example", "", "EXM", "Jane Doe", "", "", "2026-08-02", "sale", "Disposed", "1", "1", "1"]
+        award = ["Example", "", "EXM", "Jane Doe", "", "", "2026-08-03", "Awarded", "Acquired", "1", "1", "1"]
+        sheets.spreadsheets_resource.values_resource.values_by_range[
+            "'Insider Activity'!A1:S"
+        ] = [headers, existing_sale]
+
+        result = write_insider_activity_rows_to_google_sheet(
+            GoogleAccessConfig(
+                drive_folder_id="synthetic-drive-folder-id-0001",
+                sheets_spreadsheet_id="test-spreadsheet",
+                credentials_path=Path("synthetic.json"),
+                service_account_email="stock-analyst@example.test",
+            ),
+            [sale, award],
+            source_urls=["https://sec/sale", "https://sec/award"],
+            excluded_source_urls=[excluded_url],
+            sheets_service_factory=lambda: sheets,
+        )
+
+        self.assertEqual(result["rowsRetained"], 1)
+        self.assertEqual(result["rowsExcludedByTransactionType"], 2)
+        raw_write = next(
+            item
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "RAW"
+            for item in request["body"]["data"]
+            if item["range"] == "'Insider Activity'!B4:L4"
+        )
+        self.assertEqual(raw_write["values"][0][6], "sale")
 
     def test_insider_activity_rejects_partial_header_before_mutation(self) -> None:
         for header in (
@@ -999,7 +1355,7 @@ class GoogleAccessTest(unittest.TestCase):
         filing_url = "https://www.sec.gov/example#transaction-1"
         existing = [
             f'=HYPERLINK("{filing_url}","Stale Company")',
-            "OLDWKN", "", "Jane Doe", "", "", "2026-08-01", "Other",
+            "OLDWKN", "", "Jane Doe", "", "", "2026-08-01", "purchase",
             "Acquired", "", "", "",
         ]
         incoming = [
@@ -1027,12 +1383,67 @@ class GoogleAccessTest(unittest.TestCase):
             for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
             if request["body"].get("valueInputOption") == "RAW"
             for item in request["body"]["data"]
-            if item["range"] == "'Insider Activity'!B2:L2"
+            if item["range"] == "'Insider Activity'!B4:L4"
         )
         self.assertEqual(raw_write["values"][0], [
             "OLDWKN | NEWWKN", "EXM", "Jane Doe", "Director", "110",
             "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
         ])
+
+    def test_insider_activity_reader_accepts_bilingual_instruction_layout(self) -> None:
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {"properties": {"sheetId": 10, "title": "Search"}},
+                    {"properties": {"sheetId": 20, "title": "Aktuell"}},
+                    {"properties": {"sheetId": 30, "title": "Insider Activity"}},
+                ],
+            }
+        )
+        existing = [
+            "Example", "WKN001", "EXM", "Jane Doe", "Director", "110",
+            "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
+        ]
+        spec = next(
+            spec for spec in DEFAULT_SHEET_TABS if spec.title == "Insider Activity"
+        )
+        sheets.spreadsheets_resource.values_resource.values_by_range[
+            "'Insider Activity'!A1:S"
+        ] = [
+            [spec.metadata_cells[0][1]],
+            [spec.metadata_cells[1][1]],
+            list(spec.headers),
+            existing,
+        ]
+        sheets.spreadsheets_resource.values_resource.values_by_range[
+            "'Insider Activity'!A1:S3"
+        ] = [
+            [spec.metadata_cells[0][1]],
+            [spec.metadata_cells[1][1]],
+            list(spec.headers),
+        ]
+
+        result = write_insider_activity_rows_to_google_sheet(
+            GoogleAccessConfig(
+                drive_folder_id="synthetic-drive-folder-id-0001",
+                sheets_spreadsheet_id="test-spreadsheet",
+                credentials_path=Path("synthetic.json"),
+                service_account_email="stock-analyst@example.test",
+            ),
+            (),
+            sheets_service_factory=lambda: sheets,
+        )
+
+        self.assertEqual(result["rowsRetained"], 1)
+        raw_write = next(
+            item
+            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            if request["body"].get("valueInputOption") == "RAW"
+            for item in request["body"]["data"]
+            if item["range"] == "'Insider Activity'!B4:L4"
+        )
+        self.assertEqual(raw_write["values"][0][5:8], ["2026-08-01", "purchase", "Acquired"])
 
     def test_insider_activity_has_requested_headers_and_direction_colours(self) -> None:
         self.assertEqual(
@@ -1072,8 +1483,8 @@ class GoogleAccessTest(unittest.TestCase):
             for request in batch["body"]["requests"]
             if "addConditionalFormatRule" in request
         ]
-        self.assertIn('=$I2="Acquired"', formulas)
-        self.assertIn('=$I2="Disposed"', formulas)
+        self.assertIn('=$I4="Acquired"', formulas)
+        self.assertIn('=$I4="Disposed"', formulas)
 
     def test_generic_bootstrap_fails_closed_on_legacy_insider_header(self) -> None:
         legacy_headers = list(LEGACY_INSIDER_ACTIVITY_HEADERS)
@@ -1088,7 +1499,7 @@ class GoogleAccessTest(unittest.TestCase):
             }
         )
         sheets.spreadsheets_resource.values_resource.values_by_range[
-            "'Insider Activity'!A1:S1"
+            "'Insider Activity'!A1:S3"
         ] = [legacy_headers]
 
         with self.assertRaisesRegex(
@@ -1103,6 +1514,40 @@ class GoogleAccessTest(unittest.TestCase):
                 ),
                 sheets_service_factory=lambda: sheets,
             )
+
+    def test_generic_bootstrap_requires_current_insider_layout_migration(self) -> None:
+        sheets = _FakeSheets(
+            {
+                "spreadsheetId": "test-spreadsheet",
+                "sheets": [
+                    {"properties": {"sheetId": 10, "title": "Search"}},
+                    {"properties": {"sheetId": 20, "title": "Aktuell"}},
+                    {"properties": {"sheetId": 30, "title": "Insider Activity"}},
+                ],
+            }
+        )
+        sheets.spreadsheets_resource.values_resource.values_by_range[
+            "'Insider Activity'!A1:S3"
+        ] = [list(_headers_for("Insider Activity"))]
+
+        with self.assertRaisesRegex(
+            GoogleAccessError,
+            "instructions must be migrated through the insider writer",
+        ):
+            bootstrap_google_sheet(
+                GoogleAccessConfig(
+                    drive_folder_id="synthetic-drive-folder-id-0001",
+                    sheets_spreadsheet_id="test-spreadsheet",
+                    credentials_path=Path("synthetic.json"),
+                ),
+                sheets_service_factory=lambda: sheets,
+            )
+
+        self.assertEqual(sheets.spreadsheets_resource.batch_update_requests, [])
+        self.assertEqual(
+            sheets.spreadsheets_resource.values_resource.batch_update_requests,
+            [],
+        )
 
     def test_managed_protections_cover_existing_and_future_review_tabs(self) -> None:
         sheets = _FakeSheets(
@@ -1392,8 +1837,8 @@ class GoogleAccessTest(unittest.TestCase):
             18,
             "d0test example call",
         ])
-        self.assertEqual(rows[1][4:21], derivative_row)
-        self.assertEqual(rows[1][21:], ["", ""])
+        self.assertEqual(rows[1][4:19], derivative_row)
+        self.assertEqual(rows[1][19:], ["", "", "", ""])
         self.assertEqual(rows[2][1:3], [202629, 10])
         self.assertEqual(rows[2][4:20], older_stock_row)
         self.assertNotIn("Aktuell", str(rows))
@@ -1412,7 +1857,17 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn('"Source","WKN","Company","Action"', formula)
         self.assertIn('"Source","WKN","Derivative","Action"', formula)
         self.assertIn("CHOOSECOLS(stockSorted,16,3,4,5", formula)
-        self.assertIn("CHOOSECOLS(derivativeSorted,17,3,4,5", formula)
+        self.assertIn("CHOOSECOLS(derivativeSorted,15,3,4,5", formula)
+        self.assertIn(
+            "CHOOSECOLS(derivativeSorted,15,3,4,5,6,7,8,9,10,11,12,13,14,"
+            "16,17,18,19,20,21)",
+            formula,
+        )
+        self.assertIn(
+            '"Underlying / Price","Strike / KO","Leverage","Runtime",'
+            '"Comment","Import date","Review status"',
+            formula,
+        )
         self.assertIn('{"Stocks"', formula)
         self.assertIn('{"Derivatives"', formula)
         self.assertIn('{"Insider Activity"', formula)
@@ -1459,6 +1914,8 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn('=$D4="Buy"', formulas)
         self.assertIn('=$D4="Hold"', formulas)
         self.assertIn('=$D4="Sell"', formulas)
+        self.assertIn('=$I4="Acquired"', formulas)
+        self.assertIn('=$I4="Disposed"', formulas)
         self.assertFalse(any("Wait" in formula for formula in formulas))
         for rule in add_rules:
             data_range = rule["ranges"][0]
@@ -1492,7 +1949,7 @@ class GoogleAccessTest(unittest.TestCase):
             stock_row[0:3] = ["A0TEST", "Example AG", "Buy"]
             stock_row[stock_header.index("Source")] = "2026-W30:12"
             sheets.spreadsheets_resource.values_resource.values_by_range[
-                "'DA_2026_30'!A:Q"
+                "'DA_2026_30'!A:P"
             ] = [stock_header, stock_row]
             sheets.spreadsheets_resource.values_resource.values_by_range[
                 "'Search'!B1:C1"
@@ -1504,6 +1961,14 @@ class GoogleAccessTest(unittest.TestCase):
             )
 
         self.assertEqual(result["searchIndexedRows"], 1)
+        issue_read_ranges = [
+            range_name
+            for request in sheets.spreadsheets_resource.values_resource.batch_get_requests
+            for range_name in request["ranges"]
+            if range_name.startswith("'DA_")
+        ]
+        self.assertEqual(issue_read_ranges, ["'DA_2026_30'!A:P"])
+        self.assertFalse(any(":Q" in range_name for range_name in issue_read_ranges))
         self.assertEqual(
             result["protectedTabs"],
             ["Search", "Aktuell", "Insider Activity", "DA_2026_30"],
@@ -1565,11 +2030,6 @@ class GoogleAccessTest(unittest.TestCase):
             ],
             0,
         )
-        search_structure_requests = next(
-            batch["body"]["requests"]
-            for batch in sheets.spreadsheets_resource.batch_update_requests
-            if any("mergeCells" in request for request in batch["body"]["requests"])
-        )
         input_range = {
             "sheetId": 10,
             "startRowIndex": 0,
@@ -1577,6 +2037,12 @@ class GoogleAccessTest(unittest.TestCase):
             "startColumnIndex": 2,
             "endColumnIndex": 5,
         }
+        search_structure_requests = next(
+            batch["body"]["requests"]
+            for batch in sheets.spreadsheets_resource.batch_update_requests
+            if {"unmergeCells": {"range": input_range}}
+            in batch["body"]["requests"]
+        )
         self.assertIn(
             {"unmergeCells": {"range": input_range}},
             search_structure_requests,
@@ -1624,6 +2090,7 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(requests[2]["repeatCell"]["range"]["startRowIndex"], 4)
         self.assertEqual(requests[3]["repeatCell"]["range"]["startRowIndex"], 5)
         body_reset = requests[0]["repeatCell"]
+        self.assertEqual(body_reset["range"]["endColumnIndex"], 16)
         self.assertEqual(
             body_reset["fields"],
             "userEnteredFormat.backgroundColor,"
@@ -1665,17 +2132,17 @@ class GoogleAccessTest(unittest.TestCase):
                 ('=$C2="Buy"', 16, {"red": 0.85, "green": 0.94, "blue": 0.85}),
                 ('=$C2="Hold"', 16, {"red": 1.0, "green": 0.95, "blue": 0.75}),
                 ('=$C2="Sell"', 16, {"red": 0.98, "green": 0.84, "blue": 0.84}),
-                ('=$C2="Buy"', 17, {"red": 0.85, "green": 0.94, "blue": 0.85}),
-                ('=$C2="Hold"', 17, {"red": 1.0, "green": 0.95, "blue": 0.75}),
-                ('=$C2="Sell"', 17, {"red": 0.98, "green": 0.84, "blue": 0.84}),
+                ('=$C2="Buy"', 15, {"red": 0.85, "green": 0.94, "blue": 0.85}),
+                ('=$C2="Hold"', 15, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Sell"', 15, {"red": 0.98, "green": 0.84, "blue": 0.84}),
             ),
             43: (
                 ('=$C2="Buy"', 16, {"red": 0.85, "green": 0.94, "blue": 0.85}),
                 ('=$C2="Hold"', 16, {"red": 1.0, "green": 0.95, "blue": 0.75}),
                 ('=$C2="Sell"', 16, {"red": 0.98, "green": 0.84, "blue": 0.84}),
-                ('=$C2="Buy"', 17, {"red": 0.85, "green": 0.94, "blue": 0.85}),
-                ('=$C2="Hold"', 17, {"red": 1.0, "green": 0.95, "blue": 0.75}),
-                ('=$C2="Sell"', 17, {"red": 0.98, "green": 0.84, "blue": 0.84}),
+                ('=$C2="Buy"', 15, {"red": 0.85, "green": 0.94, "blue": 0.85}),
+                ('=$C2="Hold"', 15, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Sell"', 15, {"red": 0.98, "green": 0.84, "blue": 0.84}),
             ),
         }
         actual_by_sheet: dict[int, set[tuple[object, object, object]]] = {}
@@ -1789,20 +2256,20 @@ class GoogleAccessTest(unittest.TestCase):
             item for item in raw_data if item["range"] == "'Aktuell'!A1:P1"
         )
         derivative_label = next(
-            item for item in raw_data if item["range"] == "'Aktuell'!A5:Q5"
+            item for item in raw_data if item["range"] == "'Aktuell'!A5:O5"
         )
         derivative_header = next(
-            item for item in raw_data if item["range"] == "'Aktuell'!A6:Q6"
+            item for item in raw_data if item["range"] == "'Aktuell'!A6:O6"
         )
         self.assertEqual(stock_header["values"], [list(_headers_for("Aktuell"))])
-        self.assertEqual(derivative_label["values"], [["Derivatives", *([""] * 16)]])
+        self.assertEqual(derivative_label["values"], [["Derivatives", *([""] * 14)]])
         self.assertEqual(derivative_header["values"][0][:3], ["WKN", "Derivative", "Action"])
-        self.assertEqual(derivative_header["values"][0][14], "Issue:Page")
+        self.assertEqual(derivative_header["values"][0][12], "Issue:Page")
         self.assertTrue(
             any(item["range"] == "'DA_2026_30'!A1:P1" for item in raw_data)
         )
         self.assertTrue(
-            any(item["range"] == "'DA_2026_30'!A5:Q5" for item in raw_data)
+            any(item["range"] == "'DA_2026_30'!A5:O5" for item in raw_data)
         )
         self.assertFalse(
             any(item["range"] in {"'Aktuell'!A1", "'Aktuell'!A2", "'Aktuell'!A3"}
@@ -1829,6 +2296,7 @@ class GoogleAccessTest(unittest.TestCase):
                                 "sheetId": index + 1,
                                 "title": spec.title,
                                 "gridProperties": {
+                                    "columnCount": 35,
                                     "frozenRowCount": 4,
                                     "frozenColumnCount": 4,
                                     "rowCount": 1000,
@@ -1843,6 +2311,7 @@ class GoogleAccessTest(unittest.TestCase):
                                 "sheetId": 99,
                                 "title": "DA_2026_30",
                                 "gridProperties": {
+                                    "columnCount": 35,
                                     "frozenRowCount": 4,
                                     "frozenColumnCount": 4,
                                     "rowCount": 1000,
@@ -1884,10 +2353,322 @@ class GoogleAccessTest(unittest.TestCase):
         }
         for title in ("Aktuell", "DA_2026_30"):
             grid = properties_by_title[title]["gridProperties"]
+            self.assertEqual(grid["columnCount"], 16)
             self.assertEqual(grid["frozenRowCount"], 1)
             self.assertEqual(grid["frozenColumnCount"], 3)
             self.assertEqual(grid["rowCount"], 8)
         self.assertEqual(result["reviewerGridTabsSynced"], ["DA_2026_30", "Aktuell"])
+
+    def test_reviewer_grid_migration_retries_converge_after_wider_partial_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "service-account.json"
+            credentials_path.write_text(TEST_SERVICE_ACCOUNT_CREDENTIALS, encoding="utf-8")
+            config = load_google_access_config(
+                env={
+                    "GOOGLE_DRIVE_FOLDER_ID": "synthetic-drive-folder-id-0001",
+                    "GOOGLE_SHEETS_SPREADSHEET_ID": "synthetic-spreadsheet-id-0001",
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_path),
+                }
+            )
+            sheets = _FakeSheets(
+                {
+                    "spreadsheetId": config.sheets_spreadsheet_id,
+                    "sheets": [
+                        {
+                            "properties": {
+                                "sheetId": index + 1,
+                                "title": spec.title,
+                                "gridProperties": {
+                                    "columnCount": 35,
+                                    "frozenRowCount": 4,
+                                    "frozenColumnCount": 4,
+                                    "rowCount": 1000,
+                                },
+                            }
+                        }
+                        for index, spec in enumerate(DEFAULT_SHEET_TABS)
+                    ]
+                    + [
+                        {
+                            "properties": {
+                                "sheetId": 99,
+                                "title": "DA_2026_30",
+                                "gridProperties": {
+                                    "columnCount": 35,
+                                    "frozenRowCount": 4,
+                                    "frozenColumnCount": 4,
+                                    "rowCount": 1000,
+                                },
+                            }
+                        }
+                    ],
+                }
+            )
+            stock_values = ["" for _ in _headers_for("Aktuell")]
+            stock_values[0:3] = ["Example WKN", "Example Stock", "Buy"]
+            derivative_values = ["" for _ in AKTUELL_DERIVATIVE_HEADERS]
+            derivative_values[0:3] = ["DERIV1", "Example Call", "Buy"]
+            plan = {
+                "issueId": "2026-W30",
+                "rows": [
+                    {
+                        "tab": "Aktuell",
+                        "rowKind": "latest_issue_stock_buy_sell_recommendation",
+                        "values": stock_values,
+                    },
+                    {
+                        "tab": "Aktuell",
+                        "rowKind": "latest_issue_derivative_buy_sell_recommendation",
+                        "values": derivative_values,
+                    },
+                ],
+            }
+
+            retry_logs = []
+            for _attempt in range(2):
+                start = len(sheets.operation_log)
+                write_workbook_plan_to_google_sheet(
+                    config,
+                    plan,
+                    sheets_service_factory=lambda: sheets,
+                    allow_draft_rows=True,
+                )
+                retry_logs.append(sheets.operation_log[start:])
+
+        reviewer_titles = ("'DA_2026_30'!", "'Aktuell'!")
+
+        def migration_signature(events):
+            signature = []
+            for operation, request in events:
+                if operation == "values.batchUpdate":
+                    reviewer_ranges = tuple(
+                        item["range"]
+                        for item in request["body"].get("data", [])
+                        if item["range"].startswith(reviewer_titles)
+                    )
+                    if reviewer_ranges:
+                        signature.append(("write", reviewer_ranges))
+                elif operation == "values.clear":
+                    range_name = request["range"]
+                    if range_name.startswith(reviewer_titles):
+                        signature.append(("clear", range_name))
+                elif operation == "spreadsheets.batchUpdate":
+                    shrunk_sheet_ids = tuple(
+                        item["updateSheetProperties"]["properties"]["sheetId"]
+                        for item in request["body"].get("requests", [])
+                        if "updateSheetProperties" in item
+                        and item["updateSheetProperties"]["properties"].get(
+                            "gridProperties", {}
+                        ).get("columnCount") == 16
+                        and "gridProperties.rowCount"
+                        in item["updateSheetProperties"].get("fields", "")
+                    )
+                    if shrunk_sheet_ids:
+                        signature.append(("shrink", shrunk_sheet_ids))
+            return signature
+
+        signatures = [migration_signature(events) for events in retry_logs]
+        self.assertEqual(signatures[0], signatures[1])
+        for signature in signatures:
+            write_index = next(
+                index
+                for index, item in enumerate(signature)
+                if item[0] == "write" and "'DA_2026_30'!A1:P1" in item[1]
+            )
+            clear_indexes = [
+                index for index, item in enumerate(signature) if item[0] == "clear"
+            ]
+            shrink_index = next(
+                index for index, item in enumerate(signature) if item[0] == "shrink"
+            )
+            self.assertTrue(clear_indexes)
+            self.assertLess(write_index, min(clear_indexes))
+            self.assertLess(max(clear_indexes), shrink_index)
+            write_ranges = signature[write_index][1]
+            self.assertIn("'DA_2026_30'!A2:P2", write_ranges)
+            self.assertIn("'DA_2026_30'!A7:O7", write_ranges)
+            self.assertNotIn("'DA_2026_30'!A7:P7", write_ranges)
+            clear_ranges = {item[1] for item in signature if item[0] == "clear"}
+            self.assertTrue(
+                {
+                    "'DA_2026_30'!A3:P4",
+                    "'DA_2026_30'!P5:P7",
+                    "'DA_2026_30'!A8:P",
+                    "'Aktuell'!A3:P4",
+                    "'Aktuell'!P5:P7",
+                    "'Aktuell'!A8:P",
+                }.issubset(clear_ranges)
+            )
+
+        class ReviewerGridModel:
+            range_pattern = re.compile(
+                r"^'(?P<title>[^']+)'!(?P<start_column>[A-Z]+)"
+                r"(?P<start_row>\d*)"
+                r"(?::(?P<end_column>[A-Z]+)(?P<end_row>\d*)?)?$"
+            )
+
+            def __init__(self):
+                self.cells = {
+                    title: {
+                        (row, column): f"stale-{row}-{column}"
+                        for row in (1, 2, 5, 6, 7, 8, 900)
+                        for column in range(1, 18)
+                    }
+                    for title in ("Aktuell", "DA_2026_30")
+                }
+                self.column_counts = {
+                    "Aktuell": 35,
+                    "DA_2026_30": 35,
+                }
+                self.row_counts = {
+                    "Aktuell": 1000,
+                    "DA_2026_30": 1000,
+                }
+
+            @staticmethod
+            def column_number(column: str) -> int:
+                number = 0
+                for character in column:
+                    number = number * 26 + ord(character) - ord("A") + 1
+                return number
+
+            def parsed_range(self, range_name):
+                match = self.range_pattern.fullmatch(range_name)
+                if match is None or match.group("title") not in self.cells:
+                    return None
+                title = match.group("title")
+                start_column = self.column_number(match.group("start_column"))
+                start_row = int(match.group("start_row") or 1)
+                end_column = self.column_number(
+                    match.group("end_column") or match.group("start_column")
+                )
+                end_row = int(match.group("end_row") or self.row_counts[title])
+                return title, start_row, end_row, start_column, end_column
+
+            def write(self, range_name, values):
+                parsed = self.parsed_range(range_name)
+                if parsed is None:
+                    return
+                title, start_row, _end_row, start_column, _end_column = parsed
+                for row_offset, row_values in enumerate(values):
+                    for column_offset, value in enumerate(row_values):
+                        coordinate = (
+                            start_row + row_offset,
+                            start_column + column_offset,
+                        )
+                        if value in (None, ""):
+                            self.cells[title].pop(coordinate, None)
+                        else:
+                            self.cells[title][coordinate] = value
+
+            def clear(self, range_name):
+                parsed = self.parsed_range(range_name)
+                if parsed is None:
+                    return
+                title, start_row, end_row, start_column, end_column = parsed
+                self.cells[title] = {
+                    coordinate: value
+                    for coordinate, value in self.cells[title].items()
+                    if not (
+                        start_row <= coordinate[0] <= end_row
+                        and start_column <= coordinate[1] <= end_column
+                    )
+                }
+
+            def resize(self, sheet_id, grid_properties):
+                title = title_by_sheet_id.get(sheet_id)
+                if title not in self.cells:
+                    return
+                if "columnCount" in grid_properties:
+                    self.column_counts[title] = grid_properties["columnCount"]
+                if "rowCount" in grid_properties:
+                    self.row_counts[title] = grid_properties["rowCount"]
+                self.cells[title] = {
+                    coordinate: value
+                    for coordinate, value in self.cells[title].items()
+                    if coordinate[0] <= self.row_counts[title]
+                    and coordinate[1] <= self.column_counts[title]
+                }
+
+            def apply(self, events):
+                for operation, request in events:
+                    if operation == "values.batchUpdate":
+                        for item in request["body"].get("data", []):
+                            self.write(item["range"], item.get("values", []))
+                    elif operation == "values.clear":
+                        self.clear(request["range"])
+                    elif operation == "spreadsheets.batchUpdate":
+                        for item in request["body"].get("requests", []):
+                            if "updateSheetProperties" not in item:
+                                continue
+                            properties = item["updateSheetProperties"]["properties"]
+                            self.resize(
+                                properties["sheetId"],
+                                properties.get("gridProperties", {}),
+                            )
+
+            def row(self, title, row_number, width=16):
+                return [
+                    self.cells[title].get((row_number, column), "")
+                    for column in range(1, width + 1)
+                ]
+
+            def snapshot(self):
+                return (
+                    dict(self.column_counts),
+                    dict(self.row_counts),
+                    {
+                        title: tuple(sorted(cells.items()))
+                        for title, cells in self.cells.items()
+                    },
+                )
+
+        title_by_sheet_id = {
+            item["properties"]["sheetId"]: item["properties"]["title"]
+            for item in sheets.spreadsheets_resource.payload["sheets"]
+        }
+        grid_model = ReviewerGridModel()
+        grid_model.apply(retry_logs[0])
+        first_retry_state = grid_model.snapshot()
+        grid_model.apply(retry_logs[1])
+        self.assertEqual(grid_model.snapshot(), first_retry_state)
+
+        expected_derivative_label = ["Derivatives", *("" for _ in range(14))]
+        for title in ("Aktuell", "DA_2026_30"):
+            self.assertEqual(grid_model.column_counts[title], 16)
+            self.assertEqual(grid_model.row_counts[title], 8)
+            self.assertEqual(grid_model.row(title, 1), list(_headers_for("Aktuell")))
+            self.assertEqual(grid_model.row(title, 2), stock_values)
+            self.assertEqual(grid_model.row(title, 5, 15), expected_derivative_label)
+            self.assertEqual(grid_model.row(title, 6, 15), list(AKTUELL_DERIVATIVE_HEADERS))
+            self.assertEqual(grid_model.row(title, 7, 15), derivative_values)
+            self.assertEqual(grid_model.row(title, 5)[15], "")
+            self.assertEqual(grid_model.row(title, 6)[15], "")
+            self.assertEqual(grid_model.row(title, 7)[15], "")
+            self.assertEqual(grid_model.row(title, 8), ["" for _ in range(16)])
+            self.assertFalse(
+                any(column > 16 for _row, column in grid_model.cells[title])
+            )
+            self.assertFalse(
+                any(
+                    str(value).startswith("stale-")
+                    for value in grid_model.cells[title].values()
+                )
+            )
+
+        properties_by_title = {
+            item["properties"]["title"]: item["properties"]
+            for item in sheets.spreadsheets_resource.payload["sheets"]
+        }
+        for title in ("Aktuell", "DA_2026_30"):
+            self.assertEqual(
+                properties_by_title[title]["gridProperties"]["columnCount"],
+                16,
+            )
+            self.assertEqual(
+                properties_by_title[title]["gridProperties"]["rowCount"],
+                8,
+            )
 
     def test_google_sheet_export_expands_compact_reviewer_grid_before_larger_write(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1975,10 +2756,20 @@ class GoogleAccessTest(unittest.TestCase):
             )
         )
         self.assertEqual(result["reviewerGridTabsExpanded"], ["DA_2026_30", "Aktuell"])
-        self.assertIn("'DA_2026_30'!Q1:Q5", result["staleRangesCleared"])
-        self.assertIn("'Aktuell'!Q1:Q5", result["staleRangesCleared"])
-        self.assertIn("'DA_2026_30'!A11:AI", result["staleRangesCleared"])
-        self.assertIn("'Aktuell'!A11:AI", result["staleRangesCleared"])
+        self.assertIn("'DA_2026_30'!P8:P10", result["staleRangesCleared"])
+        self.assertIn("'Aktuell'!P8:P10", result["staleRangesCleared"])
+        self.assertIn("'DA_2026_30'!A11:P", result["staleRangesCleared"])
+        self.assertIn("'Aktuell'!A11:P", result["staleRangesCleared"])
+        self.assertFalse(
+            any(
+                any(
+                    marker in range_name
+                    for marker in ("!Q", ":Q", "!S", ":AI")
+                )
+                for range_name in result["staleRangesCleared"]
+            )
+        )
+
     def _stock_sheet_row(
         self,
         *,
@@ -2008,7 +2799,7 @@ class GoogleAccessTest(unittest.TestCase):
         if comment:
             row[headers.index("Enrichment status")] = comment
         row[headers.index("Issue:Page")] = f"{issue}:{page}" if issue and page else issue or page
-        row[headers.index("date updated")] = date_updated
+        row[headers.index("Import date")] = date_updated
         return row
 
     def test_google_sheet_export_creates_issue_tab_and_keeps_aktuell_on_newest_issue(self) -> None:
@@ -2059,7 +2850,7 @@ class GoogleAccessTest(unittest.TestCase):
                 allow_draft_rows=True,
             )
             sheets.spreadsheets_resource.values_resource.values_by_range[
-                "'DA_2026_25'!A:Q"
+                "'DA_2026_25'!A:P"
             ] = [list(_headers_for("Aktuell")), aktuell_values]
 
             earlier_plan = {**latest_plan, "issueId": "2026-W24"}
@@ -2076,8 +2867,8 @@ class GoogleAccessTest(unittest.TestCase):
             latest_result["protectedTabs"],
             ["Search", "Aktuell", "Insider Activity", "DA_2026_25"],
         )
-        self.assertIn("'DA_2026_25'!A3:Q4", latest_result["staleRangesCleared"])
-        self.assertNotIn("'DA_2026_25'!A2:Q4", latest_result["staleRangesCleared"])
+        self.assertIn("'DA_2026_25'!A3:P4", latest_result["staleRangesCleared"])
+        self.assertNotIn("'DA_2026_25'!A2:P4", latest_result["staleRangesCleared"])
         self.assertEqual(earlier_result["issueTab"], "DA_2026_24")
         self.assertFalse(earlier_result["aktuellUpdated"])
         self.assertEqual(
@@ -2175,10 +2966,10 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(
             resize_requests,
             [
-                {"sheetId": 20, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 17},
-                {"sheetId": 50, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 17},
-                {"sheetId": 60, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 17},
-                {"sheetId": 40, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 17},
+                {"sheetId": 20, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 16},
+                {"sheetId": 50, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 16},
+                {"sheetId": 60, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 16},
+                {"sheetId": 40, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 16},
             ],
         )
         width_requests = [

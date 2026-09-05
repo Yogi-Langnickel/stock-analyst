@@ -20,7 +20,7 @@ from stock_analyst.review_approvals import (
 GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 
-AKTUELL_DERIVATIVE_HEADERS = (
+LEGACY_AKTUELL_DERIVATIVE_HEADERS = (
     "WKN",
     "Derivative",
     "Action",
@@ -40,21 +40,44 @@ AKTUELL_DERIVATIVE_HEADERS = (
     "Reviewer note",
 )
 
+AKTUELL_DERIVATIVE_HEADERS = tuple(
+    header
+    for header in LEGACY_AKTUELL_DERIVATIVE_HEADERS
+    if header not in {"Chance", "Risk"}
+)
+AKTUELL_DERIVATIVE_HEADERS = tuple(
+    "Import date" if header == "date updated" else header
+    for header in AKTUELL_DERIVATIVE_HEADERS
+)
+
+
+def _project_legacy_aktuell_derivative_values(
+    values: Sequence[object],
+) -> list[object]:
+    values_by_header = dict(zip(LEGACY_AKTUELL_DERIVATIVE_HEADERS, values))
+    return [
+        values_by_header.get(
+            "date updated" if header == "Import date" else header,
+            "",
+        )
+        for header in AKTUELL_DERIVATIVE_HEADERS
+    ]
+
 # The compact reviewer tabs deliberately use separate schemas for their
 # stacked stock and derivative tables.  Keep these layout facts beside the
 # derivative headers so format rules keep their distinct table widths even
 # though Action is column C in both reviewer tables.
 REVIEWER_STOCK_COLUMN_COUNT = 16  # A:P
 REVIEWER_STOCK_ACTION_COLUMN_INDEX = 2  # C
-REVIEWER_DERIVATIVE_COLUMN_COUNT = len(AKTUELL_DERIVATIVE_HEADERS)  # A:Q
+REVIEWER_DERIVATIVE_COLUMN_COUNT = len(AKTUELL_DERIVATIVE_HEADERS)  # A:O
 REVIEWER_DERIVATIVE_ACTION_COLUMN_INDEX = 2  # C
 
 # Stable reviewer widths prevent numeric values and long labels from visually
 # overlapping after Sheets auto-resize. These apply to both Aktuell and issue
-# tabs, whose stacked stock/derivative tables share columns A:Q.
+# tabs, whose stacked stock/derivative tables share columns A:P.
 REVIEWER_COLUMN_WIDTHS = (
     130, 220, 90, 130, 105, 105, 150, 130, 105,
-    110, 100, 110, 180, 125, 190, 160, 180,
+    110, 100, 110, 180, 125, 190, 160,
 )
 
 REVIEWER_ACTION_FORMATS = (
@@ -79,6 +102,25 @@ ISSUE_TAB_TITLE_RE = re.compile(r"^DA_(?P<year>20\d{2})_(?P<number>\d{2})$")
 ISSUE_ID_RE = re.compile(r"^(?P<year>20\d{2})-W(?P<number>\d{1,2})$")
 SOURCE_PAGE_RE = re.compile(r"20\d{2}-W\d{1,2}:(?P<page>\d+)")
 MANAGED_PROTECTION_DESCRIPTION_PREFIX = "Stock Analyst managed protection:"
+MANAGED_INSIDER_FILTER_VIEW_TITLES = (
+    "Alle Insider-Trades",
+    "Käufe (Acquired)",
+    "Verkäufe (Disposed)",
+)
+INSIDER_ACTIVITY_HEADER_ROW = 3
+INSIDER_ACTIVITY_INSTRUCTIONS = (
+    (
+        "A1",
+        "English — Data → Filter views → choose ‘Alle Insider-Trades’, ‘Käufe’ "
+        "or ‘Verkäufe’. Close the view to return; data stays unchanged.",
+    ),
+    (
+        "A2",
+        "Deutsch — Daten → Filteransichten → ‘Alle Insider-Trades’, ‘Käufe’ oder "
+        "‘Verkäufe’ wählen. Zum Zurückkehren Ansicht schließen; Daten bleiben "
+        "unverändert.",
+    ),
+)
 NAVIGATION_DASHBOARD_HEADER_ROW = 2
 NAVIGATION_DASHBOARD_START_ROW = NAVIGATION_DASHBOARD_HEADER_ROW + 1
 ISSUE_RECOMMENDATION_TABLE_BLANK_ROWS = 2
@@ -233,7 +275,7 @@ NAVIGATION_DASHBOARD_ROWS: tuple[tuple[str, ...], ...] = (
     ("Core review", "__sheet_link__:Derivative Tips", "Calls, puts, certificates, and derivative overview rows.", "Check derivative WKN/product terms.", "=COUNTA('Derivative Tips'!A2:A)", "parser-backed; review required", "Highest risk surface; do not group rows by underlying alone."),
     ("Publisher portfolio", "__sheet_link__:AKTIONAER Depot", "Publisher model-depot position snapshots.", "Treat as source context, not advice.", "=COUNTA('AKTIONAER Depot'!A2:A)", "parser-backed; review required", "This is the publisher's model portfolio, not a household portfolio."),
     ("Publisher portfolio", "__sheet_link__:Depot Transactions", "Publisher transaction and no-transaction ledger.", "Check event history.", "=COUNTA('Depot Transactions'!A2:A)", "parser-backed; review required", "Use for source history and transaction evidence."),
-    ("Source detail", "__sheet_link__:Insider Activity", "SEC Form 4 insider activity rows and stock-level signal context.", "Review filing links and transaction classification.", "=COUNTA('Insider Activity'!A2:A)", "parser-backed; review required", "Signals are context only and must link to source filings."),
+    ("Source detail", "__sheet_link__:Insider Activity", "SEC Form 4 insider activity rows and stock-level signal context.", "Review filing links and transaction classification.", "=COUNTA('Insider Activity'!A4:A)", "parser-backed; review required", "Signals are context only and must link to source filings."),
     ("QA", "__sheet_link__:Extraction Audit", "Parser warnings, skipped sections, OCR-needed pages, and review notes.", "Fix blockers before relying on rows.", "=COUNTA('Extraction Audit'!A2:A)", "parser-backed; internal", "Check this tab after each import."),
 )
 NAVIGATION_DASHBOARD_CELLS: tuple[tuple[str, str], ...] = tuple(
@@ -307,7 +349,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Chance",
             "Risk",
             "Comment",
-            "updated",
+            "Import date",
             "Source",
             "Review status",
             "Reviewer note",
@@ -350,7 +392,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Insider Activity",
             "Issue:Page",
             "Enrichment status",
-            "date updated",
+            "Import date",
         ),
         "Equity dashboard and reviewed stock mentions.",
         header_row=1,
@@ -366,7 +408,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Recommendation stores the current action/status; Held since stores the source issue for holds.",
             "Insider Activity is reserved for SEC Form 4 signal links from the dedicated tab.",
             "Comments stay on Aktuell; Stocks keeps canonical identity and enrichment status fields.",
-            "Row-level date updated is the last field and advances on enrichment or newer mention.",
+            "Import date is the last field and advances on enrichment or a newer mention.",
         ),
         parser_status="parser_backed",
     ),
@@ -382,7 +424,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Issue",
             "Page",
             "Review status",
-            "date updated",
+            "Import date",
         ),
         "ETF recommendations and fund-specific context.",
         frozen_rows=2,
@@ -391,7 +433,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         layout_notes=(
             "Reserve row 1 for fund family, holdings, fee, and distribution context.",
             "Rows remain review-gated until ETF parser/export is implemented.",
-            "Row-level date updated is the last field.",
+            "Import date is the last field.",
         ),
     ),
     GoogleSheetTabSpec(
@@ -405,7 +447,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Issue",
             "Page",
             "Review status",
-            "date updated",
+            "Import date",
         ),
         "Commodity recommendations and context.",
         frozen_rows=2,
@@ -414,7 +456,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         layout_notes=(
             "Reserve row 1 for commodity spot/futures context.",
             "Rows remain review-gated until commodity parser/export is implemented.",
-            "Row-level date updated is the last field.",
+            "Import date is the last field.",
         ),
     ),
     GoogleSheetTabSpec(
@@ -430,7 +472,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Issue",
             "Page",
             "Review status",
-            "date updated",
+            "Import date",
         ),
         "Option and derivative recommendations.",
         frozen_rows=2,
@@ -439,7 +481,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         layout_notes=(
             "Reserve row 1 for option risk notes and stale-data warnings.",
             "Detailed option and derivative rows emit to Derivative Tips to avoid split review queues.",
-            "Row-level date updated is the last field.",
+            "Import date is the last field.",
         ),
     ),
     GoogleSheetTabSpec(
@@ -454,7 +496,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Issue",
             "Page",
             "Review status",
-            "date updated",
+            "Import date",
         ),
         "Crypto recommendations and digital-asset context.",
         frozen_rows=2,
@@ -463,7 +505,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         layout_notes=(
             "Reserve row 1 for exchange, liquidity, and risk context.",
             "Rows remain review-gated until crypto parser/export is implemented.",
-            "Row-level date updated is the last field.",
+            "Import date is the last field.",
         ),
     ),
     GoogleSheetTabSpec(
@@ -476,7 +518,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Issue",
             "Page",
             "Review status",
-            "date updated",
+            "Import date",
         ),
         "Currency-pair recommendations and macro context.",
         frozen_rows=2,
@@ -485,7 +527,7 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
         layout_notes=(
             "Reserve row 1 for macro/calendar context.",
             "Rows remain review-gated until forex parser/export is implemented.",
-            "Row-level date updated is the last field.",
+            "Import date is the last field.",
         ),
     ),
     GoogleSheetTabSpec(
@@ -582,14 +624,14 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Recommendation",
             "Review status",
             "Issue:Page",
-            "date updated",
+            "Import date",
         ),
         "Derivative overview tables and option cards.",
         frozen_columns=2,
         layout_notes=(
             "Parser-backed for derivative recommendation cards and the Derivate-Tipps im Rueckblick table.",
             "Derivative Source IDs stay in row metadata; Issue:Page is visible provenance.",
-            "Row-level date updated is the last field.",
+            "Import date is the last field.",
         ),
         parser_status="parser_backed",
     ),
@@ -608,14 +650,14 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Stop",
             "Review status",
             "Issue:Page",
-            "date updated",
+            "Import date",
         ),
         "Publisher model-depot position snapshots.",
         frozen_columns=2,
         layout_notes=(
             "Parser-backed for the weekly publisher model-depot snapshot.",
             "Use one row per issue/position once parser-backed.",
-            "Row-level date updated is the last field.",
+            "Import date is the last field.",
         ),
         parser_status="parser_backed",
     ),
@@ -631,14 +673,14 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Performance since buy",
             "Review status",
             "Issue:Page",
-            "date updated",
+            "Import date",
         ),
         "Publisher model-depot transaction ledger.",
         frozen_columns=2,
         layout_notes=(
             "Parser-backed for explicit no-transaction weeks and future transaction rows.",
             "Include explicit no-transaction weeks once parser-backed.",
-            "Row-level date updated is the last field.",
+            "Import date is the last field.",
         ),
         parser_status="parser_backed",
     ),
@@ -659,7 +701,11 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Transaction value",
         ),
         "SEC Form 4 insider activity context for magazine-backed stock candidates.",
+        header_row=INSIDER_ACTIVITY_HEADER_ROW,
+        metadata_cells=INSIDER_ACTIVITY_INSTRUCTIONS,
+        frozen_rows=INSIDER_ACTIVITY_HEADER_ROW,
         frozen_columns=3,
+        table_starts_at=f"A{INSIDER_ACTIVITY_HEADER_ROW}",
         layout_notes=(
             "Cumulative SEC EDGAR Form 4 enrichment ledger refreshed on issue import.",
             "Company cells retain direct SEC filing hyperlinks for source provenance.",
@@ -696,14 +742,14 @@ DEFAULT_SHEET_TABS: tuple[GoogleSheetTabSpec, ...] = (
             "Stop",
             "Review status",
             "Issue:Page",
-            "date updated",
+            "Import date",
         ),
         "Dividend section and multi-period dividend data.",
         frozen_columns=3,
         layout_notes=(
             "Parser-backed for dividend strategy table rows today.",
             "Keep multi-period dividend context here and concise dividend decision data in Stocks.",
-            "Row-level date updated is the last field.",
+            "Import date is the last field.",
         ),
         parser_status="parser_backed",
     ),
@@ -891,19 +937,24 @@ def bootstrap_google_sheet(
             current_header = _sheet_values_get(
                 sheets,
                 spreadsheet_id=config.sheets_spreadsheet_id,
-                range_name="'Insider Activity'!A1:S1",
+                range_name=f"'Insider Activity'!A1:S{INSIDER_ACTIVITY_HEADER_ROW}",
                 value_render_option="FORMULA",
             )
-            header_values = tuple(
-                str(value or "").strip()
-                for value in (current_header[0] if current_header else [])
+            insider_spec = next(
+                spec for spec in tab_specs if spec.title == "Insider Activity"
             )
-            if (
-                header_values[: len(LEGACY_INSIDER_ACTIVITY_HEADERS)]
-                == LEGACY_INSIDER_ACTIVITY_HEADERS
-            ):
+            existing_schema, header_index = _insider_header_location(
+                current_header,
+                spec=insider_spec,
+            )
+            if existing_schema == "legacy":
                 raise GoogleAccessError(
                     "Legacy Insider Activity schema must be migrated before bootstrap"
+                )
+            if existing_schema == "current" and header_index != insider_spec.header_row - 1:
+                raise GoogleAccessError(
+                    "Insider Activity instructions must be migrated through the "
+                    "insider writer before bootstrap"
                 )
         if "Aktuell" not in existing_title_set:
             legacy_properties = next(
@@ -1058,6 +1109,23 @@ def bootstrap_google_sheet(
                 spreadsheetId=config.sheets_spreadsheet_id,
                 body={"requests": list(layout_requests)},
             ).execute()
+        insider_instruction_presentation: dict[str, int] | None = None
+        insider_sheet_id = next(
+            (
+                int(properties["sheetId"])
+                for properties in sheet_properties
+                if properties.get("title") == "Insider Activity"
+                and "sheetId" in properties
+                and any(spec.title == "Insider Activity" for spec in tab_specs)
+            ),
+            None,
+        )
+        if write_headers and insider_sheet_id is not None:
+            insider_instruction_presentation = _apply_insider_instruction_presentation(
+                sheets,
+                spreadsheet_id=config.sheets_spreadsheet_id,
+                sheet_id=insider_sheet_id,
+            )
     except GoogleAccessError:
         raise
     except Exception as error:
@@ -1082,6 +1150,7 @@ def bootstrap_google_sheet(
         if "grid_property_requests" in locals()
         else 0,
         "formatRulesWritten": len(format_requests) if "format_requests" in locals() else 0,
+        "insiderInstructionPresentation": insider_instruction_presentation,
         "tabs": [
             {
                 "title": spec.title,
@@ -1204,6 +1273,7 @@ def write_insider_activity_rows_to_google_sheet(
     rows: Sequence[Sequence[object]],
     *,
     source_urls: Sequence[str] = (),
+    excluded_source_urls: Sequence[str] = (),
     sheets_service_factory=None,
 ) -> dict[str, object]:
     """Merge deduplicated SEC Form 4 rows and refresh the unified Search tab."""
@@ -1224,6 +1294,20 @@ def write_insider_activity_rows_to_google_sheet(
     if source_urls and len(source_urls) != len(incoming):
         raise GoogleAccessError("Insider Activity source URL count does not match rows")
     incoming_urls = list(source_urls) if source_urls else ["" for _ in incoming]
+    excluded_urls = {
+        str(source_url or "").strip()
+        for source_url in excluded_source_urls
+        if str(source_url or "").strip()
+    }
+    incoming_with_urls = [
+        (row, source_url)
+        for row, source_url in zip(incoming, incoming_urls)
+        if _is_importable_insider_transaction(row, spec=spec)
+        and str(source_url or "").strip() not in excluded_urls
+    ]
+    incoming_excluded_count = len(incoming) - len(incoming_with_urls)
+    incoming = [row for row, _source_url in incoming_with_urls]
+    incoming_urls = [source_url for _row, source_url in incoming_with_urls]
 
     sheets = sheets_service_factory()
     existing_sheet_ids = _fetch_sheet_ids_by_title(
@@ -1240,12 +1324,27 @@ def write_insider_activity_rows_to_google_sheet(
         if spec.title in existing_sheet_ids
         else []
     )
-    existing_schema = _insider_header_schema(existing_raw, spec=spec)
+    existing_schema, existing_header_index = _insider_header_location(
+        existing_raw,
+        spec=spec,
+    )
     existing = _insider_records_from_sheet_values(existing_raw, spec=spec)
+    existing_retained = [
+        record
+        for record in existing
+        if _is_importable_insider_transaction(record["values"], spec=spec)
+        and str(record.get("source_url") or "").strip() not in excluded_urls
+    ]
+    existing_excluded_count = len(existing) - len(existing_retained)
+    existing = existing_retained
     legacy_existing = existing_schema == "legacy"
+    layout_migration_required = (
+        existing_schema != "empty"
+        and existing_header_index != spec.header_row - 1
+    )
     bootstrap_specs = (
         tuple(candidate for candidate in ACTIVE_GOOGLE_SHEET_TABS if candidate.title != spec.title)
-        if legacy_existing
+        if layout_migration_required
         else ACTIVE_GOOGLE_SHEET_TABS
     )
     bootstrap_result = bootstrap_google_sheet(
@@ -1253,7 +1352,7 @@ def write_insider_activity_rows_to_google_sheet(
         sheets_service_factory=sheets_service_factory,
         tab_specs=bootstrap_specs,
         write_headers=True,
-        prune_extra_tabs=not legacy_existing,
+        prune_extra_tabs=not layout_migration_required,
     )
     sheet_ids_by_title = _fetch_sheet_ids_by_title(
         sheets,
@@ -1302,6 +1401,20 @@ def write_insider_activity_rows_to_google_sheet(
         ),
         reverse=True,
     )
+    basic_filter = _fetch_basic_filter_for_sheet(
+        sheets,
+        spreadsheet_id=config.sheets_spreadsheet_id,
+        sheet_id=sheet_id,
+    )
+    basic_filter["range"] = {
+        "sheetId": sheet_id,
+        "startRowIndex": spec.header_row - 1,
+        "endRowIndex": len(combined) + spec.header_row,
+        "startColumnIndex": 0,
+        "endColumnIndex": len(spec.headers),
+    }
+    body_start = spec.header_row + 1
+    body_end = spec.header_row + len(combined)
     try:
         sheets.spreadsheets().batchUpdate(
             spreadsheetId=config.sheets_spreadsheet_id,
@@ -1313,7 +1426,10 @@ def write_insider_activity_rows_to_google_sheet(
                                 "sheetId": sheet_id,
                                 "index": 2,
                                 "gridProperties": {
-                                    "rowCount": max(100, len(combined) + 10),
+                                    "rowCount": max(
+                                        100,
+                                        len(combined) + spec.header_row + 9,
+                                    ),
                                     "columnCount": (
                                         len(LEGACY_INSIDER_ACTIVITY_HEADERS)
                                         if legacy_existing
@@ -1334,42 +1450,53 @@ def write_insider_activity_rows_to_google_sheet(
                 ]
             },
         ).execute()
+        user_entered_ranges = list(_build_sheet_header_ranges((spec,)))
         if combined:
-            sheets.spreadsheets().values().batchUpdate(
-                spreadsheetId=config.sheets_spreadsheet_id,
-                body={
-                    "valueInputOption": "USER_ENTERED",
-                    "data": [
-                        {
-                            "range": f"'Insider Activity'!A2:A{len(combined) + 1}",
-                            "values": [
-                                [
-                                    _insider_company_formula(
-                                        record["values"][company_index],
-                                        str(record.get("source_url") or ""),
-                                    )
-                                ]
-                                for record in combined
-                            ],
-                        }
+            user_entered_ranges.append(
+                {
+                    "range": f"'Insider Activity'!A{body_start}:A{body_end}",
+                    "values": [
+                        [
+                            _insider_company_formula(
+                                record["values"][company_index],
+                                str(record.get("source_url") or ""),
+                            )
+                        ]
+                        for record in combined
                     ],
-                },
-            ).execute()
+                }
+            )
+        sheets.spreadsheets().values().batchUpdate(
+            spreadsheetId=config.sheets_spreadsheet_id,
+            body={
+                "valueInputOption": "USER_ENTERED",
+                "data": user_entered_ranges,
+            },
+        ).execute()
+        if combined:
             sheets.spreadsheets().values().batchUpdate(
                 spreadsheetId=config.sheets_spreadsheet_id,
                 body={
                     "valueInputOption": "RAW",
                     "data": [
                         {
-                            "range": f"'Insider Activity'!B2:L{len(combined) + 1}",
+                            "range": f"'Insider Activity'!B{body_start}:L{body_end}",
                             "values": [record["values"][1:] for record in combined],
                         }
                     ],
                 },
             ).execute()
+        # A legacy row-1 ledger leaves its former headers and first record to
+        # the right of the A:C instruction merge. Clear that unmerged area only
+        # after all replacement values have been written successfully.
         sheets.spreadsheets().values().clear(
             spreadsheetId=config.sheets_spreadsheet_id,
-            range=f"'Insider Activity'!A{len(combined) + 2}:L",
+            range="'Insider Activity'!D1:L2",
+            body={},
+        ).execute()
+        sheets.spreadsheets().values().clear(
+            spreadsheetId=config.sheets_spreadsheet_id,
+            range=f"'Insider Activity'!A{body_end + 1}:L",
             body={},
         ).execute()
         if legacy_existing:
@@ -1378,18 +1505,7 @@ def write_insider_activity_rows_to_google_sheet(
                 range="'Insider Activity'!M:S",
                 body={},
             ).execute()
-            sheets.spreadsheets().values().batchUpdate(
-                spreadsheetId=config.sheets_spreadsheet_id,
-                body={
-                    "valueInputOption": "USER_ENTERED",
-                    "data": [
-                        {
-                            "range": "'Insider Activity'!A1:L1",
-                            "values": [list(spec.headers)],
-                        }
-                    ],
-                },
-            ).execute()
+        if layout_migration_required:
             bootstrap_result = bootstrap_google_sheet(
                 config,
                 sheets_service_factory=sheets_service_factory,
@@ -1421,9 +1537,16 @@ def write_insider_activity_rows_to_google_sheet(
                             }
                         }
                     },
+                    {"setBasicFilter": {"filter": basic_filter}},
                 ]
             },
         ).execute()
+        managed_filter_views = _apply_managed_insider_filter_views(
+            sheets,
+            spreadsheet_id=config.sheets_spreadsheet_id,
+            sheet_id=sheet_id,
+            data_row_count=len(combined),
+        )
         search_indexed_row_count = _refresh_issue_search_sheet(
             sheets,
             spreadsheet_id=config.sheets_spreadsheet_id,
@@ -1445,9 +1568,13 @@ def write_insider_activity_rows_to_google_sheet(
         "rowsAdded": added_count,
         "rowsUpdated": updated_count,
         "rowsRetained": len(combined),
+        "rowsExcludedByTransactionType": (
+            incoming_excluded_count + existing_excluded_count
+        ),
         "duplicateRowsPrevented": updated_count,
         "searchIndexedRows": search_indexed_row_count,
         "protectedTabs": protected_tabs,
+        "managedFilterViews": managed_filter_views,
         "bootstrap": bootstrap_result,
     }
 
@@ -1457,7 +1584,7 @@ def _insider_records_from_sheet_values(
     *,
     spec: GoogleSheetTabSpec,
 ) -> list[dict[str, object]]:
-    schema = _insider_header_schema(raw_values, spec=spec)
+    schema, header_index = _insider_header_location(raw_values, spec=spec)
     if schema == "empty":
         return []
     if schema == "legacy":
@@ -1466,7 +1593,8 @@ def _insider_records_from_sheet_values(
         source_headers = spec.headers
     header_indexes = {header: index for index, header in enumerate(source_headers)}
     result: list[dict[str, object]] = []
-    for raw_row in raw_values[1:]:
+    assert header_index is not None
+    for raw_row in raw_values[header_index + 1:]:
         if not any(str(value or "").strip() for value in raw_row):
             continue
 
@@ -1508,18 +1636,38 @@ def _insider_header_schema(
 ) -> str:
     """Classify the ledger header without accepting partial or drifted schemas."""
 
+    return _insider_header_location(raw_values, spec=spec)[0]
+
+
+def _insider_header_location(
+    raw_values: Sequence[Sequence[object]],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> tuple[str, int | None]:
+    """Return the recognized schema and its zero-based header row."""
+
     if not raw_values:
-        return "empty"
-    normalized = [str(value or "").strip() for value in raw_values[0]]
-    while normalized and not normalized[-1]:
-        normalized.pop()
-    headers = tuple(normalized)
-    if not headers:
-        return "empty"
-    if headers == LEGACY_INSIDER_ACTIVITY_HEADERS:
-        return "legacy"
-    if headers == spec.headers:
-        return "current"
+        return "empty", None
+    for header_index in (0, spec.header_row - 1):
+        if header_index >= len(raw_values):
+            continue
+        normalized = [
+            str(value or "").strip()
+            for value in raw_values[header_index]
+        ]
+        while normalized and not normalized[-1]:
+            normalized.pop()
+        headers = tuple(normalized)
+        if headers == LEGACY_INSIDER_ACTIVITY_HEADERS:
+            return "legacy", header_index
+        if headers == spec.headers:
+            return "current", header_index
+    if not any(
+        str(value or "").strip()
+        for row in raw_values
+        for value in row
+    ):
+        return "empty", None
     raise GoogleAccessError(
         "Insider Activity header does not match the current or recognized legacy schema"
     )
@@ -1560,6 +1708,18 @@ def _simplify_insider_transaction(code: str) -> str:
         "AWARDED": "Awarded",
         "OTHER": "Other",
     }.get(normalized.upper(), "Other")
+
+
+def _is_importable_insider_transaction(
+    values: Sequence[object],
+    *,
+    spec: GoogleSheetTabSpec,
+) -> bool:
+    transaction_index = spec.headers.index("Transaction")
+    transaction = str(
+        values[transaction_index] if transaction_index < len(values) else ""
+    )
+    return _simplify_insider_transaction(transaction) in {"purchase", "sale"}
 
 
 def _insider_company_formula(company: str, source_url: str) -> str:
@@ -1625,10 +1785,17 @@ def preflight_workbook_plan_google_sheet_export(
             if aktuell_derivative_row
             else len(spec.headers)
         )
-        if not (
+        legacy_derivative_row = (
             aktuell_derivative_row
-            and len(values) == len(spec.headers)
-            and len(values) != row_width
+            and len(values) == len(LEGACY_AKTUELL_DERIVATIVE_HEADERS)
+        )
+        if not (
+            legacy_derivative_row
+            or (
+                aktuell_derivative_row
+                and len(values) == len(spec.headers)
+                and len(values) != row_width
+            )
         ):
             _validate_sheet_row_width(tab, values, width=row_width)
 
@@ -1687,7 +1854,9 @@ def write_workbook_plan_to_google_sheet(
             if aktuell_derivative_row
             else len(spec.headers)
         )
-        if (
+        if aktuell_derivative_row and len(values) == len(LEGACY_AKTUELL_DERIVATIVE_HEADERS):
+            normalized_values = _project_legacy_aktuell_derivative_values(values)
+        elif (
             aktuell_derivative_row
             and len(values) == len(spec.headers)
             and len(values) != row_width
@@ -2527,6 +2696,7 @@ def _ensure_issue_review_tab(
                             "properties": {
                                 "title": spec.title,
                                 "gridProperties": {
+                                    "columnCount": REVIEWER_STOCK_COLUMN_COUNT,
                                     "frozenRowCount": spec.frozen_rows,
                                     "frozenColumnCount": spec.frozen_columns,
                                 },
@@ -2635,7 +2805,10 @@ def _auto_resize_issue_review_tab_columns(
                     "sheetId": sheet_ids_by_title[title],
                     "dimension": "COLUMNS",
                     "startIndex": 0,
-                    "endIndex": len(AKTUELL_DERIVATIVE_HEADERS),
+                    "endIndex": max(
+                        REVIEWER_STOCK_COLUMN_COUNT,
+                        REVIEWER_DERIVATIVE_COLUMN_COUNT,
+                    ),
                 }
             }
         }
@@ -2680,10 +2853,10 @@ def _sync_reviewer_tab_grid_properties(
 ) -> list[str]:
     """Keep reviewer grids compact after their generated tail is cleared.
 
-    Issue tabs can predate the current compact layout, so their frozen panes
-    cannot be configured only when a sheet is created.  This runs after the
-    value clear requests, ensuring a reduced row count only trims cleared,
-    generated space and leaves one trailing row for reviewer navigation.
+    Issue tabs can predate the current compact layout, so their column count
+    and frozen panes cannot be configured only when a sheet is created. This
+    runs after the value clear requests, ensuring reduced grid dimensions only
+    trim cleared, generated space and leave one trailing row for navigation.
     """
 
     requests: list[dict[str, object]] = []
@@ -2704,12 +2877,14 @@ def _sync_reviewer_tab_grid_properties(
                     "properties": {
                         "sheetId": sheet_id,
                         "gridProperties": {
+                            "columnCount": REVIEWER_STOCK_COLUMN_COUNT,
                             "frozenRowCount": spec.frozen_rows,
                             "frozenColumnCount": spec.frozen_columns,
                             "rowCount": row_count,
                         },
                     },
                     "fields": (
+                        "gridProperties.columnCount,"
                         "gridProperties.frozenRowCount,"
                         "gridProperties.frozenColumnCount,"
                         "gridProperties.rowCount"
@@ -2860,17 +3035,16 @@ def _issue_recommendation_table_clear_ranges(
     layout: tuple[int, int, int, int, int],
 ) -> tuple[str, ...]:
     (
-        stock_header_row,
+        _stock_header_row,
         stock_data_end_row,
         derivative_label_row,
         _derivative_header_row,
         derivative_data_end_row,
     ) = layout
     return (
-        f"{_quote_sheet_title(tab_title)}!Q{stock_header_row}:Q{stock_data_end_row}",
-        f"{_quote_sheet_title(tab_title)}!A{stock_data_end_row + 1}:Q{derivative_label_row - 1}",
-        f"{_quote_sheet_title(tab_title)}!A{derivative_data_end_row + 1}:AI",
-        f"{_quote_sheet_title(tab_title)}!S1:AI",
+        f"{_quote_sheet_title(tab_title)}!A{stock_data_end_row + 1}:P{derivative_label_row - 1}",
+        f"{_quote_sheet_title(tab_title)}!P{derivative_label_row}:P{derivative_data_end_row}",
+        f"{_quote_sheet_title(tab_title)}!A{derivative_data_end_row + 1}:P",
     )
 
 
@@ -2930,6 +3104,10 @@ def _build_issue_search_index_rows(
 
             def value_for(header: str) -> str:
                 index = header_indexes.get(header)
+                if index is None and header == "Import date":
+                    index = header_indexes.get("updated")
+                if index is None and header == "Import date":
+                    index = header_indexes.get("date updated")
                 if index is None or index >= len(trimmed_row):
                     return ""
                 return trimmed_row[index]
@@ -2946,12 +3124,16 @@ def _build_issue_search_index_rows(
                 if source_page_match is not None
                 else row_number
             )
-            row_width = (
-                REVIEWER_STOCK_COLUMN_COUNT
+            target_headers = (
+                next(
+                    spec.headers
+                    for spec in DEFAULT_SHEET_TABS
+                    if spec.title == "Aktuell"
+                )
                 if row_kind == "Stock"
-                else REVIEWER_DERIVATIVE_COLUMN_COUNT
+                else AKTUELL_DERIVATIVE_HEADERS
             )
-            row_values = _normalize_sheet_row_values(row, width=row_width)
+            row_values = [value_for(header) for header in target_headers]
             row_values.extend([""] * (19 - len(row_values)))
             index_rows.append(
                 [
@@ -3010,7 +3192,10 @@ def _build_issue_search_results_formula() -> str:
         *next(spec.headers for spec in DEFAULT_SHEET_TABS if spec.title == "Aktuell"),
         "", "", "",
     ]
-    derivative_source_headers = [*AKTUELL_DERIVATIVE_HEADERS, "", ""]
+    derivative_source_headers = [*AKTUELL_DERIVATIVE_HEADERS]
+    derivative_source_headers.extend(
+        [""] * (19 - len(derivative_source_headers))
+    )
     insider_source_headers = list(
         next(
             spec.headers
@@ -3192,6 +3377,13 @@ def _build_search_format_requests(
                 )
                 for action, color in REVIEWER_ACTION_FORMATS
             ),
+            *(
+                add_rule(
+                    f'=$I4="{direction}"',
+                    {"backgroundColor": color},
+                )
+                for direction, color in INSIDER_DIRECTION_FORMATS
+            ),
         )
     )
     return requests
@@ -3237,7 +3429,11 @@ def _refresh_issue_search_sheet(
     search_input = current_search_input or legacy_search_input
 
     issue_titles = _issue_tab_titles_newest_first(sheet_ids_by_title)
-    ranges = [f"{_quote_sheet_title(title)}!A:Q" for title in issue_titles]
+    issue_end_column = _column_letter(REVIEWER_STOCK_COLUMN_COUNT)
+    ranges = [
+        f"{_quote_sheet_title(title)}!A:{issue_end_column}"
+        for title in issue_titles
+    ]
     issue_values_by_title: dict[str, Sequence[Sequence[object]]] = {}
     if ranges:
         response = (
@@ -3552,7 +3748,10 @@ def _build_aktuell_table_format_requests(
             "startRowIndex": row_number - 1,
             "endRowIndex": row_number,
             "startColumnIndex": 0,
-            "endColumnIndex": REVIEWER_DERIVATIVE_COLUMN_COUNT,
+            "endColumnIndex": max(
+                REVIEWER_STOCK_COLUMN_COUNT,
+                REVIEWER_DERIVATIVE_COLUMN_COUNT,
+            ),
         }
 
     def header_request(
@@ -3588,7 +3787,10 @@ def _build_aktuell_table_format_requests(
                     "sheetId": sheet_id,
                     "startRowIndex": stock_header_row,
                     "startColumnIndex": 0,
-                    "endColumnIndex": REVIEWER_DERIVATIVE_COLUMN_COUNT,
+                    "endColumnIndex": max(
+                        REVIEWER_STOCK_COLUMN_COUNT,
+                        REVIEWER_DERIVATIVE_COLUMN_COUNT,
+                    ),
                 },
                 "cell": {
                     "userEnteredFormat": {
@@ -3672,9 +3874,10 @@ def _build_conditional_format_requests(
                 )
             )
             direction_column = _column_letter(spec.headers.index("Direction") + 1)
+            data_start_row = spec.header_row + 1
             data_range = {
                 "sheetId": sheet_id,
-                "startRowIndex": 1,
+                "startRowIndex": spec.header_row,
                 "startColumnIndex": 0,
                 "endColumnIndex": len(spec.headers),
             }
@@ -3689,7 +3892,7 @@ def _build_conditional_format_requests(
                                     "values": [
                                         {
                                             "userEnteredValue": (
-                                                f'=${direction_column}2="{direction}"'
+                                                f'=${direction_column}{data_start_row}="{direction}"'
                                             )
                                         }
                                     ],
@@ -3755,13 +3958,21 @@ def _is_owned_insider_direction_format_rule(
     boolean_rule = rule.get("booleanRule")
     if not isinstance(ranges, list) or len(ranges) != 1 or not isinstance(boolean_rule, Mapping):
         return False
-    expected_range = {
-        "sheetId": sheet_id,
-        "startRowIndex": 1,
-        "startColumnIndex": 0,
-        "endColumnIndex": 12,
-    }
-    if ranges[0] != expected_range:
+    raw_range = ranges[0]
+    if raw_range not in (
+        {
+            "sheetId": sheet_id,
+            "startRowIndex": 1,
+            "startColumnIndex": 0,
+            "endColumnIndex": 12,
+        },
+        {
+            "sheetId": sheet_id,
+            "startRowIndex": INSIDER_ACTIVITY_HEADER_ROW,
+            "startColumnIndex": 0,
+            "endColumnIndex": 12,
+        },
+    ):
         return False
     condition = boolean_rule.get("condition")
     if not isinstance(condition, Mapping):
@@ -3772,6 +3983,8 @@ def _is_owned_insider_direction_format_rule(
     return values[0].get("userEnteredValue") in {
         '=$I2="Acquired"',
         '=$I2="Disposed"',
+        f'=$I{INSIDER_ACTIVITY_HEADER_ROW + 1}="Acquired"',
+        f'=$I{INSIDER_ACTIVITY_HEADER_ROW + 1}="Disposed"',
     }
 
 
@@ -3781,7 +3994,7 @@ def _build_reviewer_action_format_requests(
     """Reconcile generated reviewer action colours without touching user rules.
 
     Reviewer stock and derivative rows use Action in column C. Their ranges
-    differ (A:P and A:Q respectively), and both remain open ended from row 2
+    differ (A:P and A:O respectively), and both remain open ended from row 2
     so they still apply after a compact reviewer tab expands on a later import.
 
     The ownership signature is deliberately narrow (one of this feature's
@@ -3889,10 +4102,17 @@ def _is_owned_reviewer_action_format_rule(rule: object, *, sheet_id: int) -> boo
         (f'=$C2="{action}"', REVIEWER_DERIVATIVE_COLUMN_COUNT)
         for action, _color in REVIEWER_ACTION_FORMATS
     } | {
+        (f'=$C2="{action}"', len(LEGACY_AKTUELL_DERIVATIVE_HEADERS))
+        for action, _color in REVIEWER_ACTION_FORMATS
+    } | {
         # Legacy derivative formatting used Action in column A. Remove it on
         # the next export instead of leaving conflicting colour rules behind.
-        (f'=$A2="{action}"', REVIEWER_DERIVATIVE_COLUMN_COUNT)
+        (f'=$A2="{action}"', width)
         for action, _color in REVIEWER_ACTION_FORMATS
+        for width in (
+            REVIEWER_DERIVATIVE_COLUMN_COUNT,
+            len(LEGACY_AKTUELL_DERIVATIVE_HEADERS),
+        )
     }
     return (
         (formula, raw_range.get("endColumnIndex")) in owned_formula_ranges
@@ -3995,6 +4215,366 @@ def _fetch_sheet_properties_with_formats(
         .execute()
     )
     return _sheet_properties_with_formats(response)
+
+
+def _fetch_basic_filter_for_sheet(
+    sheets,
+    *,
+    spreadsheet_id: str,
+    sheet_id: int,
+) -> dict[str, object]:
+    """Return a copy of the native filter so criteria and sorting survive resizing."""
+
+    response = (
+        sheets.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties.sheetId,basicFilter)",
+        )
+        .execute()
+    )
+    for sheet in response.get("sheets", []):
+        if not isinstance(sheet, Mapping):
+            continue
+        properties = sheet.get("properties", {})
+        if not isinstance(properties, Mapping) or properties.get("sheetId") != sheet_id:
+            continue
+        basic_filter = sheet.get("basicFilter")
+        return dict(basic_filter) if isinstance(basic_filter, Mapping) else {}
+    return {}
+
+
+def _managed_insider_filter_view_specs(
+    *,
+    sheet_id: int,
+    data_row_count: int,
+) -> tuple[dict[str, object], ...]:
+    start_row_index = INSIDER_ACTIVITY_HEADER_ROW - 1
+    end_row_index = max(
+        INSIDER_ACTIVITY_HEADER_ROW + 1,
+        data_row_count + INSIDER_ACTIVITY_HEADER_ROW,
+    )
+    view_range = {
+        "sheetId": sheet_id,
+        "startRowIndex": start_row_index,
+        "endRowIndex": end_row_index,
+        "startColumnIndex": 0,
+        "endColumnIndex": 12,
+    }
+    sort_specs = [{"dimensionIndex": 6, "sortOrder": "DESCENDING"}]
+    specs: list[dict[str, object]] = []
+    for title, direction in zip(
+        MANAGED_INSIDER_FILTER_VIEW_TITLES,
+        (None, "Acquired", "Disposed"),
+    ):
+        view: dict[str, object] = {
+            "title": title,
+            "range": dict(view_range),
+            "sortSpecs": list(sort_specs),
+        }
+        if direction is not None:
+            view["criteria"] = {
+                "8": {
+                    "condition": {
+                        "type": "TEXT_EQ",
+                        "values": [{"userEnteredValue": direction}],
+                    }
+                }
+            }
+        specs.append(view)
+    return tuple(specs)
+
+
+def _apply_insider_instruction_presentation(
+    sheets,
+    *,
+    spreadsheet_id: str,
+    sheet_id: int,
+) -> dict[str, int]:
+    """Merge and format the compact bilingual banner above the ledger."""
+
+    response = (
+        sheets.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title),merges)",
+        )
+        .execute()
+    )
+    insider_sheet = next(
+        (
+            sheet
+            for sheet in response.get("sheets", [])
+            if isinstance(sheet, Mapping)
+            and isinstance(sheet.get("properties"), Mapping)
+            and sheet["properties"].get("sheetId") == sheet_id
+            and sheet["properties"].get("title") == "Insider Activity"
+        ),
+        None,
+    )
+    if insider_sheet is None:
+        raise GoogleAccessError(
+            "Insider Activity tab is missing while formatting instructions"
+        )
+
+    expected_merges = tuple(
+        {
+            "sheetId": sheet_id,
+            "startRowIndex": row_index,
+            "endRowIndex": row_index + 1,
+            "startColumnIndex": 0,
+            "endColumnIndex": 3,
+        }
+        for row_index in range(INSIDER_ACTIVITY_HEADER_ROW - 1)
+    )
+    existing_merges = insider_sheet.get("merges", [])
+    existing = [
+        merge for merge in existing_merges if isinstance(merge, Mapping)
+    ] if isinstance(existing_merges, list) else []
+    for expected in expected_merges:
+        incompatible = next(
+            (
+                merge
+                for merge in existing
+                if dict(merge) != expected
+                and _grid_ranges_overlap(merge, expected)
+            ),
+            None,
+        )
+        if incompatible is not None:
+            raise GoogleAccessError(
+                "Insider Activity has an incompatible merge in the instruction area"
+            )
+
+    requests: list[dict[str, object]] = [
+        {"mergeCells": {"range": expected, "mergeType": "MERGE_ALL"}}
+        for expected in expected_merges
+        if expected not in existing
+    ]
+    instruction_colors = (
+        {"red": 0.91, "green": 0.94, "blue": 0.99},
+        {"red": 0.91, "green": 0.97, "blue": 0.93},
+    )
+    requests.extend(
+        {
+            "repeatCell": {
+                "range": expected,
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": color,
+                        "horizontalAlignment": "LEFT",
+                        "verticalAlignment": "MIDDLE",
+                        "wrapStrategy": "WRAP",
+                        "textFormat": {
+                            "bold": True,
+                            "fontSize": 10,
+                            "foregroundColor": {
+                                "red": 0.12,
+                                "green": 0.16,
+                                "blue": 0.22,
+                            },
+                        },
+                    }
+                },
+                "fields": "userEnteredFormat",
+            }
+        }
+        for expected, color in zip(expected_merges, instruction_colors)
+    )
+    header_range = {
+        "sheetId": sheet_id,
+        "startRowIndex": INSIDER_ACTIVITY_HEADER_ROW - 1,
+        "endRowIndex": INSIDER_ACTIVITY_HEADER_ROW,
+        "startColumnIndex": 0,
+        "endColumnIndex": 12,
+    }
+    requests.extend(
+        (
+            {
+                "repeatCell": {
+                    "range": header_range,
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": {
+                                "red": 0.0,
+                                "green": 0.45,
+                                "blue": 0.55,
+                            },
+                            "horizontalAlignment": "CENTER",
+                            "verticalAlignment": "MIDDLE",
+                            "wrapStrategy": "WRAP",
+                            "textFormat": {
+                                "bold": True,
+                                "foregroundColor": {
+                                    "red": 1.0,
+                                    "green": 1.0,
+                                    "blue": 1.0,
+                                },
+                            },
+                        }
+                    },
+                    "fields": "userEnteredFormat",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": 0,
+                        "endIndex": INSIDER_ACTIVITY_HEADER_ROW - 1,
+                    },
+                    "properties": {"pixelSize": 54},
+                    "fields": "pixelSize",
+                }
+            },
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": INSIDER_ACTIVITY_HEADER_ROW - 1,
+                        "endIndex": INSIDER_ACTIVITY_HEADER_ROW,
+                    },
+                    "properties": {"pixelSize": 30},
+                    "fields": "pixelSize",
+                }
+            },
+        )
+    )
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"requests": requests},
+    ).execute()
+    return {
+        "mergeCount": len(expected_merges),
+        "mergesAdded": sum("mergeCells" in request for request in requests),
+    }
+
+
+def _grid_ranges_overlap(
+    left: Mapping[str, object],
+    right: Mapping[str, object],
+) -> bool:
+    if left.get("sheetId") != right.get("sheetId"):
+        return False
+    return (
+        int(left.get("startRowIndex", 0)) < int(right.get("endRowIndex", 0))
+        and int(right.get("startRowIndex", 0)) < int(left.get("endRowIndex", 0))
+        and int(left.get("startColumnIndex", 0))
+        < int(right.get("endColumnIndex", 0))
+        and int(right.get("startColumnIndex", 0))
+        < int(left.get("endColumnIndex", 0))
+    )
+
+
+def _apply_managed_insider_filter_views(
+    sheets,
+    *,
+    spreadsheet_id: str,
+    sheet_id: int,
+    data_row_count: int,
+) -> dict[str, int]:
+    """Reconcile reusable family filter views without touching custom views."""
+
+    response = (
+        sheets.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields=(
+                "sheets(properties(sheetId,title),"
+                "filterViews(filterViewId,title,range,criteria,sortSpecs))"
+            ),
+        )
+        .execute()
+    )
+    insider_sheet = next(
+        (
+            sheet
+            for sheet in response.get("sheets", [])
+            if isinstance(sheet, Mapping)
+            and isinstance(sheet.get("properties"), Mapping)
+            and sheet["properties"].get("sheetId") == sheet_id
+            and sheet["properties"].get("title") == "Insider Activity"
+        ),
+        None,
+    )
+    if insider_sheet is None:
+        raise GoogleAccessError(
+            "Insider Activity tab is missing while reconciling filter views"
+        )
+
+    existing_views = insider_sheet.get("filterViews", [])
+    existing_by_title: dict[str, list[Mapping[str, object]]] = {}
+    if isinstance(existing_views, list):
+        for view in existing_views:
+            if not isinstance(view, Mapping):
+                continue
+            title = str(view.get("title") or "")
+            if title in MANAGED_INSIDER_FILTER_VIEW_TITLES:
+                existing_by_title.setdefault(title, []).append(view)
+
+    requests: list[dict[str, object]] = []
+    added = 0
+    updated = 0
+    deleted = 0
+    expected_views = _managed_insider_filter_view_specs(
+        sheet_id=sheet_id,
+        data_row_count=data_row_count,
+    )
+    for expected in expected_views:
+        title = str(expected["title"])
+        matches = existing_by_title.get(title, [])
+        current = matches[0] if matches else None
+        if current is None or not isinstance(current.get("filterViewId"), int):
+            requests.append({"addFilterView": {"filter": expected}})
+            added += 1
+        else:
+            current_shape = {
+                "title": current.get("title"),
+                "range": current.get("range"),
+                "sortSpecs": current.get("sortSpecs") or [],
+            }
+            expected_shape = {
+                "title": expected.get("title"),
+                "range": expected.get("range"),
+                "sortSpecs": expected.get("sortSpecs") or [],
+            }
+            if (current.get("criteria") or {}) != (expected.get("criteria") or {}):
+                current_shape["criteria"] = current.get("criteria") or {}
+                expected_shape["criteria"] = expected.get("criteria") or {}
+            if current_shape != expected_shape:
+                requests.append(
+                    {
+                        "updateFilterView": {
+                            "filter": {
+                                **expected,
+                                "filterViewId": current["filterViewId"],
+                            },
+                            "fields": "title,range,sortSpecs,criteria",
+                        }
+                    }
+                )
+                updated += 1
+        for duplicate in matches[1:]:
+            duplicate_id = duplicate.get("filterViewId")
+            if isinstance(duplicate_id, int):
+                requests.append(
+                    {"deleteFilterView": {"filterId": duplicate_id}}
+                )
+                deleted += 1
+
+    if requests:
+        sheets.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": requests},
+        ).execute()
+    return {
+        "added": added,
+        "updated": updated,
+        "deleted": deleted,
+        "count": len(expected_views),
+    }
 
 
 def _apply_managed_sheet_protections(
@@ -4382,7 +4962,7 @@ def _merge_stock_sheet_row(
         "Risk",
         "Insider Activity",
         "Enrichment status",
-        "date updated",
+        "Import date",
     }
     fill_only_headers = {
         "Company",

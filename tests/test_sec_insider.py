@@ -942,6 +942,48 @@ class SecInsiderTests(unittest.TestCase):
             )[0]
             self.assertEqual(row.to_sheet_row()[7], label)
 
+    def test_distinguishes_stock_purchases_from_derivative_security_purchases(self) -> None:
+        derivative_purchase = b"""
+  <derivativeTable>
+    <derivativeTransaction>
+      <transactionDate><value>2026-07-31</value></transactionDate>
+      <transactionCoding><transactionCode>P</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>2</value></transactionShares>
+        <transactionPricePerShare><value>3</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>2</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+    </derivativeTransaction>
+  </derivativeTable>
+"""
+        mixed_xml = FORM4_XML.replace(
+            b"</ownershipDocument>",
+            derivative_purchase + b"</ownershipDocument>",
+        )
+
+        rows = parse_form4_transactions(
+            mixed_xml,
+            issuer=SecResolvedIssuer(
+                cik="0000001234",
+                ticker="EXM",
+                company="Example",
+                wkn="A0TEST",
+                source_ref="2026-W33:10",
+            ),
+            filing_date="2026-08-06",
+            filing_url="https://www.sec.gov/filing.xml",
+            date_updated="2026-08-06",
+        )
+
+        self.assertEqual([row.security_kind for row in rows], [
+            "non_derivative", "non_derivative", "derivative",
+        ])
+        self.assertEqual(
+            [row.is_stock_purchase_or_sale for row in rows],
+            [True, True, False],
+        )
+
     def test_enrichment_uses_cache_and_does_not_duplicate_transactions(self) -> None:
         ticker_payload = json.dumps(
             {"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}

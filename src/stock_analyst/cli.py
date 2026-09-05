@@ -1297,10 +1297,20 @@ def run_google_sheets_export_plan_command(
     sheet_result["insiderSchemaMigration"] = insider_schema_migration
     try:
         enrichment = enrich_sec_form4(sec_candidates, sec_config)
+        importable_transactions = [
+            transaction
+            for transaction in enrichment.transactions
+            if transaction.is_stock_purchase_or_sale
+        ]
         insider_sheet_result = write_insider_activity_rows_to_google_sheet(
             config,
-            [transaction.to_sheet_row() for transaction in enrichment.transactions],
-            source_urls=[transaction.filing_url for transaction in enrichment.transactions],
+            [transaction.to_sheet_row() for transaction in importable_transactions],
+            source_urls=[transaction.filing_url for transaction in importable_transactions],
+            excluded_source_urls=[
+                transaction.filing_url
+                for transaction in enrichment.transactions
+                if not transaction.is_stock_purchase_or_sale
+            ],
         )
     except Exception as error:
         sheet_result["insiderEnrichment"] = {

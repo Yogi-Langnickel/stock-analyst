@@ -97,6 +97,14 @@ class SecInsiderTransaction:
     original_submission_date: str = ""
     period_of_report: str = ""
     correction_status: str = "original"
+    security_kind: str = "non_derivative"
+
+    @property
+    def is_stock_purchase_or_sale(self) -> bool:
+        return (
+            self.security_kind == "non_derivative"
+            and self.transaction_code.strip().upper() in {"P", "S", "PURCHASE", "SALE"}
+        )
 
     def to_sheet_row(self) -> list[str]:
         relationship = self.relationship
@@ -578,6 +586,11 @@ def parse_form4_transactions(
     ]
     transactions: list[SecInsiderTransaction] = []
     for index, node in enumerate(nodes, 1):
+        security_kind = (
+            "derivative"
+            if _local_name(node.tag) == "derivativeTransaction"
+            else "non_derivative"
+        )
         transaction_date = _nested_text(node, "transactionDate", "value")
         code = _nested_text(node, "transactionCoding", "transactionCode")
         acquired_disposed = _nested_text(
@@ -627,6 +640,7 @@ def parse_form4_transactions(
                 filing_accession=filing_accession,
                 original_submission_date=original_submission_date,
                 period_of_report=period_of_report,
+                security_kind=security_kind,
             )
         )
     return tuple(transactions)

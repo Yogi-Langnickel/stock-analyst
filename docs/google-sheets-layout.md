@@ -30,6 +30,8 @@ long/short products, certificates, and derivative overview rows all use
    `C1:E1` input field. No Search rows are frozen. Matching
    stock and derivative references are shown in vertically stacked sections
    using the full reviewer values and action colors from the issue tabs.
+   Insider matches use the same full-row Acquired/Disposed colors as the
+   dedicated ledger.
    `Source` is the first visible column for both sections (using the stock
    `Source` or derivative `Issue:Page` value). Matches are ordered by numeric
    issue year/week descending and source page ascending. The generated index
@@ -41,6 +43,8 @@ long/short products, certificates, and derivative overview rows all use
    only source-linked explicit publisher Buy, Sell, Hold, and Wait actions from
    the latest imported issue. Separate Stocks and Derivatives tables use their own
    headers; stock rows retain dividend yield, KUV, and KGV when printed.
+   Derivative rows omit `Chance` and `Risk`. Reviewer-facing update timestamps
+   are labeled `Import date`.
    Crypto and ETF rows appear only when the issue contains an actionable
    recommendation. It is a triage view and is not part of the search index.
 
@@ -66,7 +70,16 @@ Derivatives. Its visible schema is limited to 12 reviewer columns: company,
 WKN, ticker, insider, relationship, shares owned after the transaction,
 transaction date, simplified transaction, direction, shares, USD price, and
 transaction value. Company cells link to the source SEC filing, while acquired
-rows are green and disposed rows are red.
+rows are green and disposed rows are red. Only non-derivative SEC stock
+purchases and sales are retained; awards, gifts, conversions, exercises,
+payments, derivative-security transactions, and other transaction types are
+excluded. The native filter is kept on the exact 12-column data range after
+each write without dropping the reviewer's criteria or sort state. Managed
+filter views for all trades, purchases, and sales let family reviewers select a
+personal view while the underlying ledger remains protected. User-created
+custom filter views are left untouched. Two compact rows merged across the
+frozen `A:C` pane above the ledger explain the workflow in English and German.
+The instructions and row-3 header remain frozen while scrolling.
 
 ## Tab Layout Matrix
 
@@ -87,7 +100,7 @@ values and formatting have been written:
 | --- | --- | --- | --- | --- | --- |
 | `Search` | `layout_only` | 0 rows, 0 cols | `A1` | Search label in `A1`, merged user input in `C1:E1`, scope note in `A2`, results from `A4` | Searches company/WKN across issue tabs and company/WKN/ticker/insider across Insider Activity. Results appear as Stocks, Derivatives, then Insider Activity. Generated index columns `U:AQ` are hidden; `Aktuell` is excluded. |
 | `Aktuell` | `parser_backed` | 1 row, 3 cols | `A1` | Stock headers, then two intentional spacer rows and a separate Derivatives table | Current issue explicit publisher Buy, Sell, Hold, and Wait actions only. The derivative table starts `WKN`, `Derivative`, `Action`; its `Issue:Page` provenance is kept near the review fields at the tail. Stock rows retain source dividend yield, KUV, and KGV; derivative rows use underlying, strike/KO, leverage, and runtime columns. |
-| `Insider Activity` | `parser_backed` | 1 row, 3 cols | `A1` | Cumulative SEC Form 4 transaction ledger | Exactly 12 visible columns in the requested order. Weekly imports merge by stable SEC source identity; company hyperlinks retain source provenance. Acquired rows are green and disposed rows red. |
+| `Insider Activity` | `parser_backed` | 3 rows, 3 cols | `A3` | Bilingual filter-view instructions in rows 1-2; cumulative SEC Form 4 transaction ledger from row 3 | Exactly 12 visible columns in the requested order. Weekly imports merge by stable SEC source identity; company hyperlinks retain source provenance. Acquired rows are green and disposed rows red. |
 | `DA_YYYY_NN` | `parser_backed` | 1 row, 3 cols | `A1` | Same compact stacked tables as `Aktuell` | One source-linked review tab per scanned issue. Uses the PDF stem convention, such as `DA_2026_25`; preserved for archive review while `Aktuell` remains the latest issue. |
 <!-- markdownlint-enable MD013 -->
 
