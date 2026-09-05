@@ -236,6 +236,30 @@ class WorkbookExportPlanTest(unittest.TestCase):
                                 "Stopp",
                                 "8,00 €",
                                 "Neuempfehlung",
+                                "Unternehmen",
+                                "WKN",
+                                "Aktueller Kurs",
+                                "Marktkap.",
+                                "DR*",
+                                "KUV",
+                                "KGV",
+                                "Empf.-",
+                                "Ausgabe",
+                                "Ziel",
+                                "Stopp",
+                                "Chance",
+                                "Risiko",
+                                "Alpha Engineering AG",
+                                "ENG001",
+                                "81,25 EUR",
+                                "3,0",
+                                "3,5",
+                                "0,5",
+                                "12",
+                                "108,00 EUR",
+                                "63,00 EUR",
+                                "•••••",
+                                "•••••",
                             )
                         ),
                         layout_text="\n".join(
@@ -274,6 +298,135 @@ class WorkbookExportPlanTest(unittest.TestCase):
             [value_for(row, "Action", tab="Aktuell") for row in aktuell_rows],
             ["Buy"] * 4,
         )
+
+    def test_pdf_plan_routes_table_without_kuv_new_recommendations_to_aktuell(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(
+                        page_number=20,
+                        text="\n".join(
+                            (
+                                "Unternehmen",
+                                "WKN",
+                                "Aktueller Kurs",
+                                "Marktkap.",
+                                "DR*",
+                                "KGV",
+                                "2027e",
+                                "Perf. seit",
+                                "Erstempf.",
+                                "Empf.-",
+                                "Ausgabe",
+                                "Ziel",
+                                "Stopp",
+                                "Chance",
+                                "Risiko",
+                                "Alpha Energy",
+                                "NRG001",
+                                "81,25 EUR",
+                                "3,0",
+                                "3,5",
+                                "12",
+                                "Neuempfehlung",
+                                "108,00 EUR",
+                                "63,00 EUR",
+                                "•••••",
+                                "•••••",
+                                "Beta Energy",
+                                "NRG002",
+                                "42,50 EUR",
+                                "9,5",
+                                "0,0",
+                                "17",
+                                "Neuempfehlung",
+                                "55,00 EUR",
+                                "33,00 EUR",
+                                "•••••",
+                                "•••••",
+                                "Gamma Energy",
+                                "NRG003",
+                                "112,00 EUR",
+                                "28,0",
+                                "3,6",
+                                "10",
+                                "Neuempfehlung",
+                                "136,00 EUR",
+                                "93,00 EUR",
+                                "•••••",
+                                "•••••",
+                            )
+                        ),
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_36.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        rows = plan.to_dict()["rows"]
+        aktuell_rows = [row for row in rows if row["tab"] == "Aktuell"]
+        self.assertEqual(len(aktuell_rows), 3)
+        self.assertEqual(
+            [value_for(row, "Action", tab="Aktuell") for row in aktuell_rows],
+            ["Buy"] * 3,
+        )
+
+    def test_pdf_plan_routes_recommendation_with_ambiguous_optional_metrics(self) -> None:
+        class StubExtractor:
+            extractor_name = "stub"
+
+            def extract_pages(self, _pdf_path: Path) -> tuple[RawPageText, ...]:
+                return (
+                    RawPageText(
+                        page_number=20,
+                        text="\n".join(
+                            (
+                                "Unternehmen",
+                                "WKN",
+                                "Aktueller Kurs",
+                                "Marktkap.",
+                                "DR*",
+                                "KUV",
+                                "KGV",
+                                "Empf.-",
+                                "Ausgabe",
+                                "Ziel",
+                                "Stopp",
+                                "Chance",
+                                "Risiko",
+                                "Alpha Energy",
+                                "NRG001",
+                                "81,25 EUR",
+                                "3,0",
+                                "3,5",
+                                "17",
+                                "Neuempfehlung",
+                                "108,00 EUR",
+                                "63,00 EUR",
+                                "•••••",
+                                "•••••",
+                            )
+                        ),
+                    ),
+                )
+
+        with TemporaryDirectory() as directory:
+            pdf = Path(directory) / "DA_2026_36.pdf"
+            pdf.write_bytes(b"%PDF-1.7\nprivate synthetic fixture")
+            plan = build_workbook_export_plan_from_pdf(pdf, extractor=StubExtractor())
+
+        rows = plan.to_dict()["rows"]
+        stock_rows = [row for row in rows if row["tab"] == "Stocks"]
+        aktuell_rows = [row for row in rows if row["tab"] == "Aktuell"]
+        self.assertEqual(len(stock_rows), 1)
+        self.assertEqual(value_for(stock_rows[0], "P/S Ratio 26e"), "")
+        self.assertEqual(value_for(stock_rows[0], "P/E Ratio 26e"), "")
+        self.assertEqual(len(aktuell_rows), 1)
+        self.assertEqual(value_for(aktuell_rows[0], "Action", tab="Aktuell"), "Buy")
 
     def test_pdf_plan_routes_all_explicit_dax_actions_to_aktuell(self) -> None:
         class StubExtractor:
@@ -587,7 +740,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(row, "Insider Activity"), "")
         self.assertEqual(value_for(row, "Issue:Page"), "2026-W03:22")
         self.assertEqual(value_for(row, "Enrichment status"), "not_started")
-        self.assertEqual(value_for(row, "date updated"), "2026-05-17")
+        self.assertEqual(value_for(row, "Import date"), "2026-05-17")
         self.assertIn("manual_review_required", row["warnings"][0])
 
     def test_plan_emits_latest_issue_recommendation_tab_from_stock_rows(self) -> None:
@@ -1084,8 +1237,14 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(rows["Derivative Tips"]["values"][17], "2026-W03:62 | 2026-W03:63")
         self.assertEqual(len(rows["Derivative Tips"]["values"]), len(headers_for("Derivative Tips")))
         self.assertEqual(rows["Aktuell"]["values"][2], "Sell")
-        self.assertEqual(rows["Aktuell"]["values"][12], "")
-        self.assertEqual(rows["Aktuell"]["values"][16], "Tauschen")
+        self.assertEqual(
+            rows["Aktuell"]["values"][AKTUELL_DERIVATIVE_HEADERS.index("Comment")],
+            "",
+        )
+        self.assertEqual(
+            rows["Aktuell"]["values"][AKTUELL_DERIVATIVE_HEADERS.index("Reviewer note")],
+            "Tauschen",
+        )
         self.assertEqual(
             rows["Aktuell"]["values"][AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")],
             "2026-W03:62 | 2026-W03:63",
@@ -1564,7 +1723,7 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(value_for(stock_row, "Recommendation"), "hold")
         self.assertEqual(value_for(stock_row, "Held since"), "52/25")
         self.assertFalse(any(row["tab"] == "Aktuell" for row in rows))
-        self.assertEqual(value_for(stock_row, "date updated"), "2026-05-17")
+        self.assertEqual(value_for(stock_row, "Import date"), "2026-05-17")
         self.assertEqual(len(stock_row["values"]), len(headers_for("Stocks")))
         self.assertFalse(any(row["tab"] == "Stock Quickcheck" for row in rows))
 

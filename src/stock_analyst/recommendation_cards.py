@@ -69,6 +69,9 @@ WKN_RE = re.compile(r"^[A-Z0-9]{6}$")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 YEAR_RE = re.compile(r"^20\d{2}e?$")
 DECIMAL_VALUE_RE = re.compile(r"^\d+(?:,\d+)?\*?$")
+UNAVAILABLE_VALUATION_METRICS = frozenset(
+    {"–", "-", "n.a.", "n. a.", "k.a.", "k. a.", "neg.", "nm", "n/m"}
+)
 EUROPEAN_AMOUNT_RE = r"[+-]?(?:\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d+)?"
 MONEY_VALUE_RE = re.compile(rf"^{EUROPEAN_AMOUNT_RE}\s+(?:EUR|USD)$")
 LAYOUT_TABLE_HEADER_RE = re.compile(
@@ -362,9 +365,51 @@ def extract_recommendation_cards_from_lines(
     )
     existing_wkns = {card.wkn for card in cards if card.wkn}
     cards.extend(card for card in table_cards if card.wkn not in existing_wkns)
-    existing_wkns.update(card.wkn for card in cards if card.wkn)
-    cards.extend(card for card in layout_table_cards if card.wkn not in existing_wkns)
+    _merge_layout_table_cards(cards, layout_table_cards)
     return _apply_visual_chance_risk_pairs(tuple(cards), visual_chance_risk_pairs)
+
+
+def _merge_layout_table_cards(
+    cards: list[RecommendationCard],
+    layout_cards: Sequence[RecommendationCard],
+) -> None:
+    """Add layout-only rows and enrich matching primary rows fail-closed.
+
+    PyMuPDF remains the primary reading-order source. Poppler layout extraction
+    may recover an explicit table recommendation that the primary column order
+    separated from the row. Merge only that missing status for the same WKN;
+    never replace a conflicting primary value or infer an action.
+    """
+
+    indexes_by_wkn = {
+        card.wkn: index
+        for index, card in enumerate(cards)
+        if card.wkn
+    }
+    explicit_layout_statuses = {"new_recommendation", "no_buy"}
+    for layout_card in layout_cards:
+        existing_index = indexes_by_wkn.get(layout_card.wkn)
+        if existing_index is None:
+            indexes_by_wkn[layout_card.wkn] = len(cards)
+            cards.append(layout_card)
+            continue
+
+        existing = cards[existing_index]
+        if (
+            existing.recommendation_status is not None
+            or layout_card.recommendation_status not in explicit_layout_statuses
+        ):
+            continue
+        cards[existing_index] = replace(
+            existing,
+            recommendation_status=layout_card.recommendation_status,
+            extraction_notes=tuple(
+                dict.fromkeys(
+                    existing.extraction_notes
+                    + ("layout_table_recommendation_status",)
+                )
+            ),
+        )
 
 
 def extract_dax_action_table_cards_from_pages(
@@ -511,6 +556,12 @@ def _extract_duel_table_cards(
         start_index = header_index + lines[header_index:].index("Risiko") + 1
     except ValueError:
         return ()
+    header_lines = {
+        line.casefold().strip()
+        for line in lines[header_index:start_index]
+    }
+    has_kuv = "kuv" in header_lines
+    has_kgv = "kgv" in header_lines
 
     cards: list[RecommendationCard] = []
     index = start_index
@@ -524,9 +575,33 @@ def _extract_duel_table_cards(
         current_price = lines[index + 2]
         market_cap = _market_cap_from_billions_value(lines[index + 3])
         dividend_yield = _percentage_from_table_value(lines[index + 4])
-        kuv_26e = _dash_to_empty(lines[index + 5])
-        kgv_26e = _dash_to_empty(lines[index + 6])
-        index += 7
+        metric_index = index + 5
+        kuv_26e: str | None = None
+        kgv_26e: str | None = None
+        expected_metric_count = int(has_kuv) + int(has_kgv)
+        metric_values: list[str] = []
+        while (
+            metric_index < len(lines)
+            and len(metric_values) < expected_metric_count
+            and _is_optional_valuation_metric(lines[metric_index])
+        ):
+            metric_values.append(lines[metric_index])
+            metric_index += 1
+
+        extraction_notes = ["duel_table_extraction"]
+        if has_kuv and has_kgv:
+            if len(metric_values) == 2:
+                kuv_26e = _valuation_metric_or_none(metric_values[0])
+                kgv_26e = _valuation_metric_or_none(metric_values[1])
+            elif len(metric_values) == 1:
+                # Reading-order extraction drops blank table cells.  A lone
+                # value cannot safely be attributed to either column.
+                extraction_notes.append("valuation_metrics_ambiguous")
+        elif has_kuv and metric_values:
+            kuv_26e = _valuation_metric_or_none(metric_values[0])
+        elif has_kgv and metric_values:
+            kgv_26e = _valuation_metric_or_none(metric_values[0])
+        index = metric_index
 
         performance_since_recommendation: str | None = None
         if index < len(lines) and PERCENT_RE.match(lines[index]):
@@ -585,7 +660,7 @@ def _extract_duel_table_cards(
                 dividend_yield=dividend_yield,
                 kuv_26e=kuv_26e,
                 kgv_26e=kgv_26e,
-                extraction_notes=("duel_table_extraction",),
+                extraction_notes=tuple(extraction_notes),
             )
         )
 
@@ -1241,6 +1316,19 @@ def _percentage_from_table_value(value: str) -> str | None:
 
 def _dash_to_empty(value: str) -> str | None:
     return None if value == "–" else value
+
+
+def _is_optional_valuation_metric(value: str) -> bool:
+    return (
+        value.casefold().strip() in UNAVAILABLE_VALUATION_METRICS
+        or DECIMAL_VALUE_RE.match(value) is not None
+    )
+
+
+def _valuation_metric_or_none(value: str) -> str | None:
+    if value.casefold().strip() in UNAVAILABLE_VALUATION_METRICS:
+        return None
+    return value
 
 
 def _rating_from_dots(value: str | None) -> int | None:

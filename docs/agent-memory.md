@@ -50,8 +50,9 @@ Last compacted: 2026-06-06
 - The merged `Search!C1:E1` field matches company names and WKNs against issue
   tabs only. Search has no frozen rows. Stock and
   derivative results are stacked vertically with their full reviewer values and
-  action colors. `Source` is column A for both sections. Results sort by numeric
-  issue year/week descending and source page ascending.
+  action colors. Insider results reuse the dedicated Acquired/Disposed full-row
+  colors. `Source` is column A for stock and derivative sections. Results sort
+  by numeric issue year/week descending and source page ascending.
 - Search refresh and workbook export protect `Search`, `Aktuell`, and all
   `DA_YYYY_NN` tabs after generated writes finish. Only merged `Search!C1:E1`
   remains editable; the service account is retained as a protection editor.
@@ -65,7 +66,17 @@ Last compacted: 2026-06-06
   requires explicit provider config.
 - `Insider Activity` exposes exactly 12 reviewer columns. Company cells retain
   the direct SEC filing hyperlink; transaction codes use simplified labels;
-  full rows are green for Acquired and red for Disposed.
+  only non-derivative stock purchases and sales are retained. Full rows are
+  green for Acquired and red for Disposed. Its native filter is resized to the
+  exact cumulative data range after every write while preserving criteria and
+  sort state. Three managed personal filter views provide all trades,
+  purchases, and sales without granting family reviewers edit access to the
+  protected ledger; custom user views are preserved. A compact bilingual
+  English/German instruction banner occupies rows 1-2, the ledger header is in
+  row 3, and all three rows remain frozen for small-screen use.
+- Reviewer-facing update columns are named `Import date`. Derivative reviewer
+  tables omit `Chance` and `Risk`; those source facts may remain internal to
+  extraction but are not displayed in derivative review rows.
 - OpenFIGI, ECB FX, SEC companyfacts, GLEIF LEI, and Bundesbank
   SDMX have no-network dry-run descriptors for identifier mapping, issuer
   identity, EUR FX/macro display context, and fundamentals planning. They remain

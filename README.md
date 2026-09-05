@@ -125,7 +125,7 @@ scripts/stock-analyst workbook-export-plan ./data/private/issues/DA_2026_03.pdf
 ```
 
 `workbook-export-plan` is still a dry run. Instrument rows include a row-level
-`date updated` value as the last field. Stock rows initialize it from the
+`Import date` value as the last field. Stock rows initialize it from the
 import/issue date when available, or from the command's current UTC date. Broad
 index or constituent-table context is kept as review/audit context and does not
 create stock rows unless a stock is explicitly mentioned as a recommendation
@@ -218,7 +218,9 @@ calls. When `SEC_USER_AGENT` is configured, it additionally refreshes cached
 SEC Form 4 activity, merges new transactions without duplicates into
 `Insider Activity`, and indexes those rows in Search. The ledger exposes the
 12 reviewer columns documented in `docs/google-sheets-layout.md`; company cells
-link to SEC filings and direction colors each full row green or red.
+link to SEC filings and direction colors each full row green or red. Only
+non-derivative stock purchases and sales are imported, and the native filter is
+resized to the exact ledger range while retaining its criteria and sort.
 Unapproved draft rows are skipped unless `--allow-draft-rows` is supplied for
 the private reviewer workbook. The approval CSV and reviewed workbook plan are
 private artifacts; command output returns counts and paths, not row content.

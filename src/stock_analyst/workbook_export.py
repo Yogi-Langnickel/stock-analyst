@@ -386,7 +386,7 @@ def _latest_issue_recommendation_rows(
             "Chance": _stock_value(stock_row.values, "Chance"),
             "Risk": _stock_value(stock_row.values, "Risk"),
             "Comment": _latest_issue_comment(stock_row),
-            "updated": _stock_value(stock_row.values, "date updated"),
+            "Import date": _stock_value(stock_row.values, "Import date"),
             "Source": _stock_value(stock_row.values, "Issue:Page")
             or _source_ref(issue_id, stock_row.page),
             "Review status": ReviewStatus.NEEDS_REVIEW.value,
@@ -437,12 +437,10 @@ def _latest_issue_recommendation_rows(
                 "Dividend Yield": card.dividend_yield or "",
                 "KUV 2026e": card.kuv_26e or "",
                 "KGV 2026e": card.kgv_26e or "",
-                "Chance": _rating_cell(card.chance),
-                "Risk": _rating_cell(card.risk),
                 "Comment": "",
                 "Reviewer note": "",
                 "Review status": ReviewStatus.NEEDS_REVIEW.value,
-                "date updated": update_date,
+                "Import date": update_date,
                 "Source": _latest_issue_source_name(card.instrument_type),
             }
             if card.instrument_type == InstrumentType.DERIVATIVE:
@@ -452,12 +450,10 @@ def _latest_issue_recommendation_rows(
                         "Strike / KO": card.base_price or "",
                         "Leverage": card.omega_hebel or "",
                         "Runtime": card.runtime or "",
-                        "Chance": _rating_cell(card.chance),
-                        "Risk": _rating_cell(card.risk),
                         "Comment": "",
                         "Reviewer note": "",
                         "Review status": ReviewStatus.NEEDS_REVIEW.value,
-                        "date updated": update_date,
+                        "Import date": update_date,
                     }
                 )
             rows.append(
@@ -506,12 +502,10 @@ def _latest_issue_recommendation_rows(
             "Strike / KO": derivative_row.strike_cap,
             "Leverage": derivative_row.omega_hebel,
             "Runtime": "",
-            "Chance": "",
-            "Risk": "",
             "Comment": "",
             "Reviewer note": derivative_row.recommendation,
             "Review status": ReviewStatus.NEEDS_REVIEW.value,
-            "date updated": update_date,
+            "Import date": update_date,
         }
         if derivative_row.wkn in emitted_derivative_row_indexes:
             existing_index = emitted_derivative_row_indexes[derivative_row.wkn]
@@ -717,7 +711,7 @@ def _recommendation_card_row(
                 "Insider Activity": "",
                 "Issue:Page": _card_source_reference(card),
                 "Enrichment status": "not_started",
-                "date updated": stock_update_date,
+                "Import date": stock_update_date,
             }
         ),
     )
@@ -1196,7 +1190,7 @@ def _quickcheck_stock_rows(
                         "Insider Activity": "",
                         "Issue:Page": _source_ref(row.issue_id, row.page),
                         "Enrichment status": "not_started",
-                        "date updated": stock_update_date,
+                        "Import date": stock_update_date,
                     }
                 ),
             )
@@ -1244,7 +1238,7 @@ def _chart_check_stock_rows(
                         "Insider Activity": "",
                         "Issue:Page": _source_ref(row.issue_id, row.page),
                         "Enrichment status": "not_started",
-                        "date updated": stock_update_date,
+                        "Import date": stock_update_date,
                     }
                 ),
             )
@@ -1293,7 +1287,7 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
         "Report type",
         "P/S Ratio 26e",
         "P/E Ratio 26e",
-        "date updated",
+        "Import date",
     }
     fill_only_headers = {
         "Company",
