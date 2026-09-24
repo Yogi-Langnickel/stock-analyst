@@ -97,6 +97,186 @@ EXTRA_METRICS_LINES = (
 
 
 class DerivativeOverviewTablesTest(unittest.TestCase):
+    def test_underlying_and_wkn_in_one_token_preserves_row_alignment(self) -> None:
+        base = list(BASE_PAGE_LINES[:10])
+        metrics = list(METRICS_HEADER_LINES)
+        for ordinal in range(1, 14):
+            label = f"Synthetic Product {ordinal}"
+            wkn = f"FX{ordinal:04d}"
+            base.extend(
+                ((f"{label} {wkn}",) if ordinal == 12 else (label, wkn))
+            )
+            base.extend(
+                (
+                    "Example Issuer",
+                    "Call",
+                    "0,01",
+                    "300,00 EUR",
+                    "18.12.26",
+                    "2,0",
+                )
+            )
+            metrics.extend(
+                (
+                    "26/26",
+                    "01.07.26",
+                    f"{ordinal},00 EUR",
+                    f"{ordinal},50 EUR",
+                    "+5,0 %",
+                    "30,00 EUR",
+                    "1,00 EUR",
+                    "•••",
+                    "••••",
+                    "Halten",
+                )
+            )
+        base.append("Derivate-Tipps im Rückblick")
+
+        result = extract_derivative_overview_result_from_page_lines(
+            ((62, tuple(base)), (63, tuple(metrics))),
+            issue_id="2026-W34",
+        )
+
+        self.assertEqual(result.exceptions, ())
+        self.assertEqual(len(result.rows), 13)
+        self.assertEqual(result.rows[11].underlying, "Synthetic Product 12")
+        self.assertEqual(result.rows[11].wkn, "FX0012")
+        self.assertEqual(result.rows[11].source_pages, (62, 63))
+
+    def test_six_letter_uppercase_issuer_suffix_is_not_reframed_as_wkn(self) -> None:
+        base = (
+            *BASE_PAGE_LINES[:10],
+            "Synthetic Product",
+            "FX0001",
+            "Example SAFEUP",
+            "Call",
+            "0,01",
+            "300,00 EUR",
+            "18.12.26",
+            "2,0",
+            "Derivate-Tipps im Rückblick",
+        )
+        result = extract_derivative_overview_result_from_page_lines(
+            ((62, base), (63, METRICS_HEADER_LINES + BAYER_METRICS_LINES)),
+            issue_id="2026-W34",
+        )
+
+        self.assertEqual(result.exceptions, ())
+        self.assertEqual(len(result.rows), 1)
+        self.assertEqual(result.rows[0].wkn, "FX0001")
+        self.assertEqual(result.rows[0].underlying, "Synthetic Product")
+        self.assertEqual(result.rows[0].issuer, "Example SAFEUP")
+
+    def test_missing_real_wkn_does_not_promote_uppercase_issuer_suffix(self) -> None:
+        base = (
+            *BASE_PAGE_LINES[:10],
+            "Synthetic Product",
+            "Example SAFEUP",
+            "Call",
+            "0,01",
+            "300,00 EUR",
+            "18.12.26",
+            "2,0",
+            "Derivate-Tipps im Rückblick",
+        )
+        result = extract_derivative_overview_result_from_page_lines(
+            ((62, base), (63, METRICS_HEADER_LINES + BAYER_METRICS_LINES)),
+            issue_id="2026-W34",
+        )
+
+        self.assertEqual(result.rows, ())
+        self.assertEqual(len(result.exceptions), 1)
+        self.assertEqual(result.exceptions[0].reason, "base_row_parse_failed")
+
+    def test_mixed_underlying_suffix_and_standalone_wkn_fails_closed(self) -> None:
+        base = (
+            *BASE_PAGE_LINES[:10],
+            "Synthetic Product TRAP01",
+            "REAL01",
+            "Example Issuer",
+            "Call",
+            "0,01",
+            "300,00 EUR",
+            "18.12.26",
+            "2,0",
+            "Derivate-Tipps im Rückblick",
+        )
+        result = extract_derivative_overview_result_from_page_lines(
+            ((62, base), (63, METRICS_HEADER_LINES + BAYER_METRICS_LINES)),
+            issue_id="2026-W34",
+        )
+
+        self.assertEqual(result.rows, ())
+        self.assertEqual(len(result.exceptions), 1)
+        self.assertEqual(result.exceptions[0].reason, "base_row_parse_failed")
+
+    def test_embedded_wkn_and_wkn_shaped_issuer_prefix_fails_closed(self) -> None:
+        base = (
+            *BASE_PAGE_LINES[:10],
+            "Synthetic Product REAL01",
+            "SAFEUP",
+            "Example Issuer",
+            "Call",
+            "0,01",
+            "300,00 EUR",
+            "18.12.26",
+            "2,0",
+            "Derivate-Tipps im Rückblick",
+        )
+        result = extract_derivative_overview_result_from_page_lines(
+            ((62, base), (63, METRICS_HEADER_LINES + BAYER_METRICS_LINES)),
+            issue_id="2026-W34",
+        )
+
+        self.assertEqual(result.rows, ())
+        self.assertEqual(len(result.exceptions), 1)
+        self.assertEqual(result.exceptions[0].reason, "base_row_parse_failed")
+
+    def test_combined_ratio_strike_preserves_full_spread_order_and_stopped_rows(self) -> None:
+        base = list(BASE_PAGE_LINES[:10])
+        metrics = list(METRICS_HEADER_LINES)
+        for ordinal in range(1, 14):
+            combined = ordinal in {6, 13}
+            base.extend((f"Synthetic Product {ordinal}", f"FX{ordinal:04d}", "Example Issuer", "Put"))
+            base.extend(("10,00 250 ,00JPY" if ordinal == 13 else "10 ,00 250,00JPY",) if combined else ("0,01", "300,00 EUR"))
+            base.extend(("18.12.26", "2,0"))
+            metrics.extend(("26/26", "01.07.26", f"{ordinal},00 EUR", f"{ordinal},50 EUR", "+5,0 %"))
+            metrics.extend(("Verkauft",) if ordinal in {8, 13} else ("30,00 EUR", "1,00 EUR"))
+            metrics.extend(("•••", "••••", "Ausgestoppt" if ordinal in {8, 13} else "Halten"))
+        base.append("Derivate-Tipps im Rückblick")
+
+        result = extract_derivative_overview_result_from_page_lines(
+            ((62, tuple(base)), (63, tuple(metrics))), issue_id="2026-W34",
+        )
+
+        self.assertEqual(result.exceptions, ())
+        self.assertEqual(len(result.rows), 13)
+        for ordinal, row in enumerate(result.rows, 1):
+            self.assertEqual(row.wkn, f"FX{ordinal:04d}")
+            self.assertEqual(row.underlying, f"Synthetic Product {ordinal}")
+            self.assertEqual(row.entry_price, f"{ordinal},00 EUR")
+            self.assertEqual(row.current_price, f"{ordinal},50 EUR")
+            self.assertEqual(row.source_pages, (62, 63))
+            self.assertEqual(row.runtime, "18.12.26")
+            self.assertEqual(row.omega_hebel, "2,0")
+            if ordinal in {6, 13}:
+                self.assertEqual(row.ratio, "10,00")
+                self.assertEqual(row.strike_cap, "250,00JPY")
+            if ordinal in {8, 13}:
+                self.assertEqual(row.target, "")
+                self.assertEqual(row.stop, "")
+                self.assertEqual(row.recommendation, "Ausgestoppt")
+
+    def test_ambiguous_combined_ratio_strike_keeps_pairing_failure_visible(self) -> None:
+        for token in ("10,00 250,00", "10,00 250,00JPY extra", "10,00 250,00JPY 2,00"):
+            with self.subTest(token=token):
+                base = (*BASE_PAGE_LINES[:10], "Synthetic FX", "FX0001", "Example Issuer", "Put", token, "18.12.26", "2,0", "Derivate-Tipps im Rückblick")
+                result = extract_derivative_overview_result_from_page_lines(
+                    ((62, base), (63, METRICS_HEADER_LINES + BAYER_METRICS_LINES)), issue_id="2026-W34",
+                )
+                self.assertEqual(result.rows, ())
+                self.assertEqual(result.exceptions[0].reason, "base_row_parse_failed")
+
     def test_pairs_mini_long_base_row_with_following_page_action(self) -> None:
         mini_long_base_lines = (
             *BASE_PAGE_LINES[:10],

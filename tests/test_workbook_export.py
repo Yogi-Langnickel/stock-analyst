@@ -10,7 +10,7 @@ from stock_analyst.derivative_tables import DerivativeOverviewRow
 from stock_analyst.extraction import RawPageText
 from stock_analyst.google_access import AKTUELL_DERIVATIVE_HEADERS, DEFAULT_SHEET_TABS
 from stock_analyst.processing_policy import MagazineProcessingPolicy
-from stock_analyst.recommendation_cards import RecommendationCard
+from stock_analyst.recommendation_cards import RecommendationCard, extract_recommendation_cards_from_lines
 from stock_analyst.quickcheck import QuickcheckRow
 from stock_analyst.schemas import InstrumentType, ReviewStatus
 from stock_analyst.section_inventory import (
@@ -1048,6 +1048,52 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(row["values"][1], "Baidu")
         self.assertEqual(row["values"][2], "Call")
         self.assertNotIn("Baidu Call", row["sourceId"])
+
+    def test_context_derivative_card_retained_without_implicit_current_buy(self) -> None:
+        for signal, expected_current in ((None, False), ("Neuempfehlung", True), ("Verkaufen", True), ("Halten", True)):
+            with self.subTest(signal=signal):
+                lines = ["Synthetic Index-Zertifikat", "WKN", "INDEX1", "Akt. Kurs", "12,00 EUR"]
+                if signal:
+                    lines.append(signal)
+                cards = extract_recommendation_cards_from_lines(
+                    lines, issue_id="2099-W01", page_number=12,
+                )
+                self.assertEqual(len(cards), 1)
+                plan = build_workbook_export_plan(
+                    pdf_path=Path("data/private/issues/DA_2099_01.pdf"),
+                    issue_id="2099-W01", recommendation_cards=cards,
+                ).to_dict()
+                canonical = [row for row in plan["rows"] if row["tab"] == "Derivative Tips"]
+                current = [row for row in plan["rows"] if row["tab"] == "Aktuell"]
+                self.assertEqual(len(canonical), 1)
+                self.assertEqual(bool(current), expected_current)
+                self.assertEqual(canonical[0]["page"], 12)
+                self.assertTrue(canonical[0]["sourceId"])
+                self.assertEqual(canonical[0]["reviewStatus"], "needs_review")
+
+    def test_symbol_only_stocks_have_distinct_private_source_identity(self) -> None:
+        cards = []
+        for symbol in ("ALP", "BET"):
+            cards.extend(extract_recommendation_cards_from_lines(
+                ["Aktie", "Synthetic Company", "Akt. Kurs", "12,00 EUR", "NYSE:", symbol,
+                 "Ziel", "18,00 EUR", "Stopp", "8,00 EUR", "Neuempfehlung"],
+                issue_id="2099-W01", page_number=12,
+            ))
+        rows = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2099_01.pdf"), issue_id="2099-W01",
+            recommendation_cards=cards,
+        ).to_dict()["rows"]
+        stocks = [row for row in rows if row["tab"] == "Stocks"]
+        self.assertEqual(len(stocks), 2)
+        self.assertEqual(len({row["sourceId"] for row in stocks}), 2)
+        self.assertEqual(len([row for row in rows if row["tab"] == "Aktuell"]), 2)
+        for row in stocks:
+            self.assertEqual(row["values"][headers_for("Stocks").index("WKN")], "")
+            self.assertIn("exchange_symbol:NYSE:", row["sourceBlock"])
+            self.assertNotIn("Synthetic", row["sourceId"])
+            self.assertIn(":symbol-", row["sourceId"])
+            self.assertNotIn(":ALP:", row["sourceId"])
+            self.assertNotIn(":BET:", row["sourceId"])
 
     def test_routes_explicit_asset_class_cards_to_dedicated_tabs(self) -> None:
         plan = build_workbook_export_plan(

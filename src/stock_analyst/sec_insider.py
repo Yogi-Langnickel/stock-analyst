@@ -281,7 +281,10 @@ def enrich_sec_form4(
                 SEC_SUBMISSIONS_URL.format(cik=issuer.cik),
                 Path("submissions") / f"CIK{issuer.cik}.json",
                 ttl=timedelta(hours=24),
-                validator=_validate_submissions_json,
+                validator=lambda payload: _validate_submissions_json(
+                    payload,
+                    form4_document_cutoff=cutoff,
+                ),
             )
         except SecInsiderError:
             failed_issuer_count += 1
@@ -303,7 +306,10 @@ def enrich_sec_form4(
                     SEC_SUBMISSIONS_ARCHIVE_URL.format(name=archive_name),
                     Path("submissions") / "archives" / archive_name,
                     ttl=timedelta(hours=24),
-                    validator=_validate_submission_archive_json,
+                    validator=lambda payload: _validate_submission_archive_json(
+                        payload,
+                        form4_document_cutoff=cutoff,
+                    ),
                 )
             except SecInsiderError:
                 issuer_archive_failed = True
@@ -780,7 +786,11 @@ def _validate_ticker_json(payload: bytes) -> None:
         raise _SecPayloadValidationError("SEC ticker response has no usable records")
 
 
-def _validate_submissions_json(payload: bytes) -> None:
+def _validate_submissions_json(
+    payload: bytes,
+    *,
+    form4_document_cutoff: date | None = None,
+) -> None:
     value = _validated_json_object(payload)
     filings = value.get("filings")
     if not isinstance(filings, Mapping):
@@ -788,20 +798,33 @@ def _validate_submissions_json(payload: bytes) -> None:
     recent = filings.get("recent")
     if not isinstance(recent, Mapping):
         raise _SecPayloadValidationError("SEC submissions response is malformed")
-    _validate_filing_arrays(recent, payload_name="SEC submissions response")
+    _validate_filing_arrays(
+        recent,
+        payload_name="SEC submissions response",
+        form4_document_cutoff=form4_document_cutoff,
+    )
     if not isinstance(filings.get("files"), list):
         raise _SecPayloadValidationError("SEC submissions archive list is malformed")
 
 
-def _validate_submission_archive_json(payload: bytes) -> None:
+def _validate_submission_archive_json(
+    payload: bytes,
+    *,
+    form4_document_cutoff: date | None = None,
+) -> None:
     value = _validated_json_object(payload)
-    _validate_filing_arrays(value, payload_name="SEC submissions archive")
+    _validate_filing_arrays(
+        value,
+        payload_name="SEC submissions archive",
+        form4_document_cutoff=form4_document_cutoff,
+    )
 
 
 def _validate_filing_arrays(
     value: Mapping[str, object],
     *,
     payload_name: str,
+    form4_document_cutoff: date | None = None,
 ) -> None:
     required_arrays = ("form", "accessionNumber", "primaryDocument", "filingDate")
     if any(not isinstance(value.get(name), list) for name in required_arrays):
@@ -827,20 +850,39 @@ def _validate_filing_arrays(
             raise _SecPayloadValidationError(
                 f"{payload_name} filing row {index} has an invalid accession"
             )
-        if not _safe_primary_document(document):
-            raise _SecPayloadValidationError(
-                f"{payload_name} filing row {index} has an invalid primary document"
-            )
         if not isinstance(filing_date, str):
             raise _SecPayloadValidationError(
                 f"{payload_name} filing row {index} has an invalid filing date"
             )
         try:
-            date.fromisoformat(filing_date)
+            parsed_filing_date = date.fromisoformat(filing_date)
         except ValueError as error:
             raise _SecPayloadValidationError(
                 f"{payload_name} filing row {index} has an invalid filing date"
             ) from error
+        # Other filing types use their own styled document paths. We retain
+        # their metadata but only Form 4/4A documents can become fetch targets.
+        # SEC also retains occasional blank historical Form 4 document fields;
+        # they are safe to ignore only when they predate the active lookback.
+        stale_blank_form4_document = (
+            form in {"4", "4/A"}
+            and document == ""
+            and form4_document_cutoff is not None
+            and parsed_filing_date < form4_document_cutoff
+        )
+        invalid_form4_document = (
+            form in {"4", "4/A"}
+            and not _safe_primary_document(document)
+            and not stale_blank_form4_document
+        )
+        invalid_unrelated_document = (
+            form not in {"4", "4/A"}
+            and not _safe_unrelated_primary_document(document)
+        )
+        if invalid_form4_document or invalid_unrelated_document:
+            raise _SecPayloadValidationError(
+                f"{payload_name} filing row {index} has an invalid primary document"
+            )
 
 
 def _safe_primary_document(value: object) -> bool:
@@ -852,12 +894,27 @@ def _safe_primary_document(value: object) -> bool:
         value,
         flags=re.IGNORECASE,
     )
-    return bool(
-        raw_document
-        and raw_document not in {".", ".."}
-        and "/" not in raw_document
-        and "\\" not in raw_document
-    )
+    return _safe_document_leaf(raw_document)
+
+
+def _safe_document_leaf(value: str) -> bool:
+    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value) is not None
+
+
+def _safe_unrelated_primary_document(value: object) -> bool:
+    """Accept blank metadata or a safe SEC leaf/styled document path."""
+
+    if not isinstance(value, str) or value != value.strip():
+        return False
+    if value == "":
+        return True
+    if _safe_primary_document(value):
+        return True
+    return re.fullmatch(
+        r"xsl[A-Za-z0-9._-]+/[A-Za-z0-9][A-Za-z0-9._-]*",
+        value,
+        flags=re.IGNORECASE,
+    ) is not None
 
 
 def _validate_xml(payload: bytes) -> None:

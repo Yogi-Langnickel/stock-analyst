@@ -17,6 +17,10 @@ DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{2}$")
 PRICE_RE = re.compile(r"^(?:\d+(?:\.\d{3})*,\d+|\d+,\d+)\s*(?:EUR|USD|HKD)$")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 RATIO_RE = re.compile(r"^\d+(?:,\d+)?$")
+COMBINED_RATIO_STRIKE_RE = re.compile(
+    r"^(?P<ratio>\d+(?:\s*,\d+)?)\s+"
+    r"(?P<strike>\d+(?:\.\d{3})*(?:\s*,\d+)?\s*(?:EUR|USD|HKD|GBP|JPY))$"
+)
 TYPE_WORDS = {
     "Call",
     "Put",
@@ -383,16 +387,18 @@ def _extract_base_rows(
 
     cursor = 0
     while cursor < len(body):
-        wkn_index = _next_wkn_index(body, cursor)
-        if wkn_index is None:
+        wkn_match = _next_wkn_match(body, cursor)
+        if wkn_match is None:
             break
-        next_wkn_index = _next_wkn_index(body, wkn_index + 1) or len(body)
-        underlying = " ".join(body[cursor:wkn_index]).strip()
-        tail = body[wkn_index + 1 : next_wkn_index]
+        wkn_index, embedded_underlying, wkn = wkn_match
+        underlying_parts = (*body[cursor:wkn_index], embedded_underlying)
+        underlying = " ".join(part for part in underlying_parts if part).strip()
+        tail = body[wkn_index + 1 :]
         parsed = _parse_base_tail(tail)
         if not underlying or parsed is None:
-            cursor = wkn_index + 1
-            continue
+            # A partially parsed table can silently shift every following row.
+            # Fail the complete base table so the caller emits a review exception.
+            return ()
         rows.append(
             DerivativeOverviewRow(
                 issue_id=issue_id,
@@ -400,7 +406,7 @@ def _extract_base_rows(
                 underlying=underlying,
                 product=underlying,
                 direction=str(parsed["direction"]),
-                wkn=body[wkn_index],
+                wkn=wkn,
                 issuer=str(parsed["issuer"]),
                 ratio=str(parsed["ratio"]),
                 strike_cap=str(parsed["strike_cap"]),
@@ -413,11 +419,51 @@ def _extract_base_rows(
     return tuple(rows)
 
 
-def _next_wkn_index(lines: Sequence[str], start_index: int) -> int | None:
+def _next_wkn_match(
+    lines: Sequence[str], start_index: int,
+) -> tuple[int, str, str] | None:
+    """Find one structurally valid WKN before the row's direction token.
+
+    Mixed embedded and standalone candidates have no source-backed precedence.
+    Multiple candidates of either shape fail closed instead of guessing between
+    an underlying, WKN, and issuer.
+    """
+
+    direction_match = _first_direction_match(lines[start_index:])
+    if direction_match is None:
+        return None
+    direction_index = start_index + direction_match[0]
+    candidates: list[tuple[bool, int, str, str]] = []
     for index in range(start_index, len(lines)):
-        if WKN_RE.match(lines[index]):
-            return index
-    return None
+        if index >= direction_index:
+            break
+        line = lines[index]
+        if WKN_RE.fullmatch(line):
+            embedded_underlying = ""
+            wkn = line
+            standalone = True
+        else:
+            embedded = re.fullmatch(
+                r"(?P<label>.+\S)\s+(?P<wkn>[A-Z0-9]{6})", line
+            )
+            if embedded is None:
+                continue
+            embedded_underlying = embedded.group("label")
+            wkn = embedded.group("wkn")
+            standalone = False
+        underlying_parts = (*lines[start_index:index], embedded_underlying)
+        underlying = " ".join(part for part in underlying_parts if part).strip()
+        if underlying and _parse_base_tail(lines[index + 1 :]) is not None:
+            candidates.append((standalone, index, embedded_underlying, wkn))
+
+    standalone_candidates = [candidate for candidate in candidates if candidate[0]]
+    if standalone_candidates and len(standalone_candidates) != len(candidates):
+        return None
+    eligible = standalone_candidates or candidates
+    if len(eligible) != 1:
+        return None
+    _, index, embedded_underlying, wkn = eligible[0]
+    return index, embedded_underlying, wkn
 
 
 def _parse_base_tail(tail: Sequence[str]) -> dict[str, Any] | None:
@@ -426,15 +472,24 @@ def _parse_base_tail(tail: Sequence[str]) -> dict[str, Any] | None:
         return None
     direction_index, direction, direction_consumed = direction_match
     issuer = " ".join(tail[:direction_index]).strip()
-    index = direction_index + direction_consumed
-    if index >= len(tail) or not RATIO_RE.match(tail[index]):
+    if not issuer:
         return None
-    ratio = tail[index]
-    index += 1
+    index = direction_index + direction_consumed
     if index >= len(tail):
         return None
-    strike_cap = tail[index]
-    index += 1
+    combined = COMBINED_RATIO_STRIKE_RE.fullmatch(tail[index])
+    if combined is not None:
+        ratio = re.sub(r"\s+(?=,)", "", combined.group("ratio"))
+        strike_cap = re.sub(r"\s+(?=,)", "", combined.group("strike"))
+        # These two printed columns occupy one extracted token. Keep the
+        # consumed count in original tokens so the next underlying stays put.
+        index += 1
+    elif RATIO_RE.fullmatch(tail[index]) and index + 1 < len(tail):
+        ratio = tail[index]
+        strike_cap = tail[index + 1]
+        index += 2
+    else:
+        return None
     if index >= len(tail):
         return None
     runtime = tail[index]

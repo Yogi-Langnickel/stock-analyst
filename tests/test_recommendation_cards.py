@@ -725,6 +725,91 @@ class RecommendationCardsTest(unittest.TestCase):
             [("layout_table_extraction",)] * 3,
         )
 
+    def test_table_without_dividend_preserves_actions_and_primary_values(self) -> None:
+        header = (
+            "Unternehmen", "WKN", "Aktueller Kurs", "Marktkap.", "KUV", "KGV",
+            "Perf. seit", "Empf.-", "Ausgabe", "Ziel", "Stopp", "Chance", "Risiko",
+        )
+        primary = header + (
+            "Alpha Labs", "ALPHA1", "12,00 EUR", "1,2", "3,4", "21",
+            "Kauflimit: 10,00 EUR", "18,00 EUR", "8,00 EUR", "•••••", "•••••",
+            "Beta Labs", "BETA01", "4,00 EUR", "0,3", "–", "–",
+            "Neuempfehlung", "7,00 EUR", "2,00 EUR", "•••••", "•••••",
+            "Gamma Labs", "GAMMA1", "90,00 EUR", "5,6", "7,8", "19",
+            "+9,5 %", "12/26", "18.03.26", "120,00 EUR", "70,00 EUR", "•••••", "•••••",
+            "Delta Labs", "DELTA1", "8,00 EUR", "0,8", "2,1", "33",
+            "Neuempfehlung", "13,00 EUR", "5,00 EUR", "•••••", "•••••",
+        )
+        layout = (
+            "Unternehmen  WKN  Aktueller Kurs  Marktkap.  KUV  KGV  Empf.-  Ziel  Stopp  Chance  Risiko",
+            "Alpha Labs ALPHA1  11,90 EUR  1,2  3,4  21  Kauflimit: 10,00 EUR  18,00 EUR  8,00 EUR  •••○○  ••○○○",
+            "Beta Labs BETA01  4,00 EUR  0,3  –  –  Neuempfehlung  7,00 EUR  2,00 EUR  ••••○  ••••○",
+            "Gamma Labs GAMMA1  90,00 EUR  5,6  7,8  19  +9,5 % 12/26 18.03.26  120,00 EUR  70,00 EUR  •••○○  ••○○○",
+            "Delta Labs DELTA1  8,00 EUR  0,8  2,1  33  Neuempfehlung  13,00 EUR  5,00 EUR  ••••○  •••○○",
+        )
+        for lines, layout_lines in ((primary, ()), (layout, ()), (primary, layout)):
+            with self.subTest(primary=lines is primary, additive=bool(layout_lines)):
+                cards = extract_recommendation_cards_from_lines(
+                    lines, issue_id="2099-W01", page_number=12, layout_lines=layout_lines,
+                )
+                self.assertEqual(len(cards), 4)
+                self.assertEqual([card.recommendation_status for card in cards], [
+                    "Kauflimit: 10,00 EUR", "new_recommendation", "follow_up", "new_recommendation",
+                ])
+                self.assertTrue(all(card.dividend_yield is None for card in cards))
+                self.assertEqual(cards[0].current_price, "12,00 EUR" if lines is primary else "11,90 EUR")
+                self.assertEqual((cards[0].kuv_26e, cards[0].kgv_26e), ("3,4", "21"))
+                self.assertEqual((cards[0].target, cards[0].stop), ("18,00 EUR", "8,00 EUR"))
+                self.assertIsNone(cards[1].kuv_26e)
+                self.assertIsNone(cards[1].kgv_26e)
+                self.assertEqual(cards[2].performance_since_recommendation, "+9,5 %")
+                self.assertEqual((cards[3].kuv_26e, cards[3].kgv_26e), ("2,1", "33"))
+
+    def test_no_dividend_table_does_not_guess_a_missing_valuation_column(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            (
+                "Unternehmen", "WKN", "Aktueller Kurs", "Marktkap.", "KUV", "KGV",
+                "Empf.-", "Ziel", "Stopp", "Chance", "Risiko",
+                "Alpha Labs", "ALPHA1", "12,00 EUR", "1,2", "21",
+                "Neuempfehlung", "18,00 EUR", "8,00 EUR", "•••••", "•••••",
+            ),
+            issue_id="2099-W01", page_number=12,
+        )
+        self.assertEqual(len(cards), 1)
+        self.assertIsNone(cards[0].dividend_yield)
+        self.assertIsNone(cards[0].kuv_26e)
+        self.assertIsNone(cards[0].kgv_26e)
+        self.assertIn("valuation_metrics_ambiguous", cards[0].extraction_notes)
+
+    def test_symbol_only_stock_requires_exchange_and_complete_explicit_card(self) -> None:
+        valid = ["Aktie", "Synthetic Labs", "Akt. Kurs", "12,00 EUR", "NYSE:", "SYN",
+                 "Ziel", "18,00 EUR", "Stopp", "8,00 EUR", "Neuempfehlung"]
+        cases = [
+            (valid, True),
+            ([*valid, "WKN", "BAD"], False),
+            ([s for s in valid if s != "Neuempfehlung"], False),
+            ([s for s in valid if s not in {"NYSE:", "SYN"}], False),
+            (["Derivat", *valid[1:]], False),
+            ([s if s != "18,00 EUR" else "–" for s in valid], False),
+        ]
+        for lines, accepted in cases:
+            with self.subTest(lines=lines):
+                cards = extract_recommendation_cards_from_lines(lines, issue_id="2099-W01", page_number=12)
+                self.assertEqual(bool(cards), accepted)
+                if accepted:
+                    self.assertIsNone(cards[0].wkn)
+                    self.assertEqual(cards[0].recommendation_status, "new_recommendation")
+                    self.assertIn("exchange_symbol:NYSE:SYN", cards[0].extraction_notes)
+
+    def test_placeholder_derivative_prices_do_not_imply_buy(self) -> None:
+        for suffix in ([], ["Ziel", "–", "Stopp", "–"], ["Ziel", "Stopp"]):
+            cards = extract_recommendation_cards_from_lines(
+                ["Synthetic Index-Zertifikat", "WKN", "INDEX1", "Akt. Kurs", "12,00 EUR", *suffix],
+                issue_id="2099-W01", page_number=12,
+            )
+            self.assertEqual(len(cards), 1)
+            self.assertIsNone(cards[0].recommendation_status)
+
     def test_layout_table_enriches_missing_primary_recommendation_status(self) -> None:
         cards = extract_recommendation_cards_from_lines(
             (

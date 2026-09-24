@@ -78,7 +78,7 @@ LAYOUT_TABLE_HEADER_RE = re.compile(
     r"\bUnternehmen\b.*\bWKN\b.*\bChance\b.*\bRisiko\b",
     flags=re.IGNORECASE,
 )
-LAYOUT_TABLE_ROW_RE = re.compile(
+LAYOUT_TABLE_ROW_PATTERN = (
     r"^\s*"
     r"(?P<name>.+?)\s+"
     r"(?P<wkn>[A-Z0-9]{6})\s+"
@@ -92,6 +92,10 @@ LAYOUT_TABLE_ROW_RE = re.compile(
     rf"(?P<stop>{EUROPEAN_AMOUNT_RE}\s*(?:€|\$|EUR|USD))\s+"
     r"(?P<chance>[•○]{5})\s+"
     r"(?P<risk>[•○]{5})\s*$"
+)
+LAYOUT_TABLE_ROW_RE = re.compile(LAYOUT_TABLE_ROW_PATTERN)
+LAYOUT_TABLE_ROW_WITHOUT_DIVIDEND_RE = re.compile(
+    LAYOUT_TABLE_ROW_PATTERN.replace(r"(?P<dividend_yield>\d+(?:,\d+)?|–)\s+", "")
 )
 DAX_ACTION_TABLE_HEADER_RE = re.compile(
     r"\bEinschätzung\b.*\bKommentar\b.*\bUnternehmen\b",
@@ -150,6 +154,7 @@ class RecommendationCard:
     base_price: str | None = None
     omega_hebel: str | None = None
     runtime: str | None = None
+    exchange_symbol: str | None = None
     review_status: ReviewStatus = ReviewStatus.NEEDS_REVIEW
     extraction_notes: tuple[str, ...] = ()
 
@@ -183,6 +188,7 @@ class RecommendationCard:
             "basePrice": self.base_price,
             "omegaHebel": self.omega_hebel,
             "runtime": self.runtime,
+            "exchangeSymbol": self.exchange_symbol,
         }
         for key, value in optional_fields.items():
             if value is not None:
@@ -562,6 +568,7 @@ def _extract_duel_table_cards(
     }
     has_kuv = "kuv" in header_lines
     has_kgv = "kgv" in header_lines
+    has_dividend = any(re.match(r"(?:dr\b|dividendenrendite\b)", line) for line in header_lines)
 
     cards: list[RecommendationCard] = []
     index = start_index
@@ -574,8 +581,10 @@ def _extract_duel_table_cards(
 
         current_price = lines[index + 2]
         market_cap = _market_cap_from_billions_value(lines[index + 3])
-        dividend_yield = _percentage_from_table_value(lines[index + 4])
-        metric_index = index + 5
+        dividend_yield = (
+            _percentage_from_table_value(lines[index + 4]) if has_dividend else None
+        )
+        metric_index = index + 4 + int(has_dividend)
         kuv_26e: str | None = None
         kgv_26e: str | None = None
         expected_metric_count = int(has_kuv) + int(has_kgv)
@@ -609,6 +618,7 @@ def _extract_duel_table_cards(
             index += 1
 
         recommendation_status: str | None = None
+        recommended_issue: str | None = None
         inline_prices: tuple[str, ...] = ()
         if index < len(lines) and lines[index].startswith("Neuempfehlung"):
             recommendation_status = "new_recommendation"
@@ -617,6 +627,18 @@ def _extract_duel_table_cards(
         elif index < len(lines) and lines[index].lower() == "kein kauf":
             recommendation_status = "no_buy"
             index += 1
+        elif index < len(lines) and lines[index].casefold().startswith("kauflimit:"):
+            limit_prices = _money_values_in_text(lines[index])
+            if limit_prices:
+                recommendation_status = f"Kauflimit: {limit_prices[0]}"
+                inline_prices = limit_prices[1:]
+                index += 1
+        elif index < len(lines) and re.fullmatch(r"\d{1,2}/(?:\d{2}|\d{4})", lines[index]):
+            recommended_issue = lines[index]
+            recommendation_status = "follow_up"
+            index += 1
+            if index < len(lines) and re.fullmatch(r"\d{2}\.\d{2}\.\d{2,4}", lines[index]):
+                index += 1
 
         target: str | None = None
         stop: str | None = None
@@ -655,6 +677,7 @@ def _extract_duel_table_cards(
                 chance=chance,
                 risk=risk,
                 recommendation_status=recommendation_status,
+                recommended_issue=recommended_issue,
                 market_cap=market_cap,
                 performance_since_recommendation=performance_since_recommendation,
                 dividend_yield=dividend_yield,
@@ -681,12 +704,16 @@ def _extract_layout_table_cards(
     order remains strict while known table layouts are handled explicitly.
     """
 
-    if not any(LAYOUT_TABLE_HEADER_RE.search(line) for line in lines):
+    header = next((line for line in lines if LAYOUT_TABLE_HEADER_RE.search(line)), None)
+    if header is None:
         return ()
+    # Column absence is established by the header, never guessed from row length.
+    has_dividend = bool(re.search(r"\b(?:DR|Dividendenrendite)\b", header, re.IGNORECASE))
+    row_pattern = LAYOUT_TABLE_ROW_RE if has_dividend else LAYOUT_TABLE_ROW_WITHOUT_DIVIDEND_RE
 
     cards: list[RecommendationCard] = []
     for line in lines:
-        match = LAYOUT_TABLE_ROW_RE.match(line)
+        match = row_pattern.match(line)
         if match is None:
             continue
         fields = match.groupdict()
@@ -695,6 +722,11 @@ def _extract_layout_table_cards(
             recommendation_status = "new_recommendation"
         elif "kein kauf" in recommendation_text:
             recommendation_status = "no_buy"
+        elif recommendation_text.startswith("kauflimit:"):
+            limit_prices = _money_values_in_text(fields["recommendation"])
+            if not limit_prices:
+                continue
+            recommendation_status = f"Kauflimit: {limit_prices[0]}"
         else:
             recommendation_status = "follow_up"
 
@@ -718,7 +750,10 @@ def _extract_layout_table_cards(
                 performance_since_recommendation=(
                     performance_match.group(0) if performance_match else None
                 ),
-                dividend_yield=_percentage_from_table_value(fields["dividend_yield"]),
+                dividend_yield=(
+                    _percentage_from_table_value(fields["dividend_yield"])
+                    if has_dividend else None
+                ),
                 kuv_26e=_dash_to_empty(fields["kuv"]),
                 kgv_26e=_dash_to_empty(fields["kgv"]),
                 extraction_notes=("layout_table_extraction",),
@@ -896,10 +931,20 @@ def _parse_labelled_card(
     instrument_name = lines[name_index]
     fields, next_index = _collect_fields(lines, name_index + 1)
     wkn = fields.get("wkn")
-    if wkn is None or not WKN_RE.match(wkn):
+    symbol_only_stock = (
+        raw_type == "Aktie"
+        and wkn is None
+        and bool(fields.get("exchange_symbol"))
+        and "new_recommendation" in fields
+        and all(MONEY_VALUE_RE.fullmatch(fields.get(key, "")) for key in ("current_price", "target", "stop"))
+    )
+    if not symbol_only_stock and (wkn is None or not WKN_RE.match(wkn)):
         return None, start_index + 1
 
     notes: list[str] = []
+    if symbol_only_stock:
+        notes.append(f"exchange_symbol:{fields['exchange_symbol']}")
+        notes.append("wkn_missing_in_source")
     chance = _rating_from_dots(fields.get("chance"))
     risk = _rating_from_dots(fields.get("risk"))
     if chance is None:
@@ -932,7 +977,9 @@ def _parse_labelled_card(
         recommendation_status = "sold"
     if "recommended_issue" in fields or "performance_since_recommendation" in fields:
         recommendation_status = recommendation_status or "follow_up"
-    if instrument_type == InstrumentType.DERIVATIVE:
+    if instrument_type == InstrumentType.DERIVATIVE and any(
+        MONEY_VALUE_RE.fullmatch(fields.get(key, "")) for key in ("target", "stop")
+    ):
         recommendation_status = recommendation_status or "new_recommendation"
 
     return (
@@ -961,6 +1008,7 @@ def _parse_labelled_card(
             base_price=fields.get("base_price"),
             omega_hebel=fields.get("omega_hebel"),
             runtime=fields.get("runtime"),
+            exchange_symbol=fields.get("exchange_symbol"),
             extraction_notes=tuple(notes),
         ),
         next_index,
@@ -1040,6 +1088,13 @@ def _collect_fields(lines: Sequence[str], start_index: int) -> tuple[dict[str, s
                 fields["dividend_per_share_trend"] = dividend_trend
             index += consumed
             continue
+
+        if re.fullmatch(r"(?:NYSE|NASDAQ|AMEX):", combined) and index + consumed < len(lines):
+            symbol = lines[index + consumed]
+            if re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", symbol):
+                fields["exchange_symbol"] = f"{combined}{symbol}"
+                index += consumed + 1
+                continue
 
         if combined.lower() == "kein kauf":
             fields["no_buy"] = "Kein Kauf"

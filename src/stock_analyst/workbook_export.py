@@ -91,6 +91,7 @@ class WorkbookDraftRow:
     exportable: bool = False
     warnings: tuple[str, ...] = (MANUAL_REVIEW_WARNING,)
     source_block: str | None = None
+    stock_identity_key: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -400,8 +401,12 @@ def _latest_issue_recommendation_rows(
                     "latest-stock",
                     issue_id,
                     stock_row.page,
-                    _stock_value(stock_row.values, "WKN")
-                    or _stock_value(stock_row.values, "Company"),
+                    _public_stock_identity(
+                        _stock_identity_key(
+                            stock_row.values,
+                            fallback_identity=stock_row.stock_identity_key,
+                        )
+                    ),
                 ),
                 issue_id=issue_id,
                 page=stock_row.page,
@@ -682,14 +687,19 @@ def _recommendation_card_row(
         card.recommendation_status,
         card.recommended_issue,
     )
+    stock_identity_key = _recommendation_card_stock_identity_key(card)
     return WorkbookDraftRow(
         tab="Stocks",
         row_kind="stock_recommendation",
-        source_id=_source_id("card", card.issue_id, card.page, card.wkn),
+        source_id=_source_id(
+            "card", card.issue_id, card.page,
+            _public_stock_identity(stock_identity_key),
+        ),
         issue_id=card.issue_id,
         page=card.page,
         review_status=ReviewStatus.NEEDS_REVIEW,
         source_block=_card_source_block(card),
+        stock_identity_key=stock_identity_key,
         values=_stock_values(
             {
                 "Company": card.instrument_name,
@@ -722,6 +732,11 @@ def _stock_values(values_by_header: Mapping[str, str]) -> tuple[str, ...]:
 
 
 def _card_source_block(card: RecommendationCard) -> str:
+    exchange_symbol = (
+        f"exchange_symbol:{card.exchange_symbol}" if card.exchange_symbol else None
+    )
+    if exchange_symbol:
+        return f"manual_review_pending; {exchange_symbol}; wkn_missing_in_source"
     paired_source = next(
         (note for note in card.extraction_notes if note.startswith("source_pages:")),
         None,
@@ -987,7 +1002,9 @@ def _dividend_rows_from_stock_rows(
     rows: list[WorkbookDraftRow] = []
     for stock_row in stock_rows:
         values = stock_row.values
-        key = _stock_identity_key(values)
+        key = _stock_identity_key(
+            values, fallback_identity=stock_row.stock_identity_key,
+        )
         if key in existing_keys or not _dividend_yield_over_threshold(
             _stock_value(values, "Dividend Yield")
         ):
@@ -1000,7 +1017,7 @@ def _dividend_rows_from_stock_rows(
                     "dividend-stock",
                     stock_row.issue_id,
                     stock_row.page,
-                    _stock_value(values, "WKN") or _stock_value(values, "Company"),
+                    _public_stock_identity(key),
                 ),
                 issue_id=stock_row.issue_id,
                 page=stock_row.page,
@@ -1250,7 +1267,9 @@ def _consolidate_stock_rows(rows: Sequence[WorkbookDraftRow]) -> list[WorkbookDr
     grouped: dict[str, WorkbookDraftRow] = {}
     order: list[str] = []
     for row in rows:
-        key = _stock_identity_key(row.values)
+        key = _stock_identity_key(
+            row.values, fallback_identity=row.stock_identity_key,
+        )
         if row.source_block and "source_pages:" in row.source_block:
             key = f"{key}:{row.source_id}"
         if key not in grouped:
@@ -1261,12 +1280,35 @@ def _consolidate_stock_rows(rows: Sequence[WorkbookDraftRow]) -> list[WorkbookDr
     return [grouped[key] for key in order]
 
 
-def _stock_identity_key(values: Sequence[str]) -> str:
+def _stock_identity_key(
+    values: Sequence[str], *, fallback_identity: str | None = None,
+) -> str:
     wkn = _stock_value(values, "WKN")
     if wkn:
         return f"wkn:{wkn.casefold()}"
+    if fallback_identity:
+        return fallback_identity
     name = _stock_value(values, "Company")
     return f"name:{_normalize_stock_name(name)}"
+
+
+def _recommendation_card_stock_identity_key(card: RecommendationCard) -> str:
+    if card.wkn:
+        return f"wkn:{card.wkn.casefold()}"
+    if card.exchange_symbol:
+        return f"symbol:{_normalize_exchange_symbol(card.exchange_symbol)}"
+    return f"name:{_normalize_stock_name(card.instrument_name)}"
+
+
+def _normalize_exchange_symbol(value: str) -> str:
+    return re.sub(r"\s+", "", value).casefold()
+
+
+def _public_stock_identity(identity_key: str) -> str:
+    if identity_key.startswith("wkn:"):
+        return identity_key.partition(":")[2].upper()
+    digest = sha256(identity_key.encode("utf-8")).hexdigest()[:16]
+    return f"{identity_key.partition(':')[0]}-{digest}"
 
 
 def _normalize_stock_name(value: str) -> str:
@@ -1323,6 +1365,10 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
             separator=" | ",
         )
 
+    identity_key = _stock_identity_key(
+        values,
+        fallback_identity=existing.stock_identity_key or incoming.stock_identity_key,
+    )
     return WorkbookDraftRow(
         tab="Stocks",
         row_kind="stock_consolidated",
@@ -1330,13 +1376,14 @@ def _merge_stock_rows(existing: WorkbookDraftRow, incoming: WorkbookDraftRow) ->
             "stock",
             existing.issue_id,
             existing.page,
-            _stock_value(values, "WKN") or _stock_value(values, "Company"),
+            _public_stock_identity(identity_key),
         ),
         issue_id=existing.issue_id,
         page=existing.page,
         values=tuple(values),
         review_status=ReviewStatus.NEEDS_REVIEW,
         source_block="manual_review_pending",
+        stock_identity_key=identity_key,
     )
 
 
