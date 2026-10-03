@@ -1320,8 +1320,9 @@ def run_google_sheets_export_plan_command(
             "errorType": type(error).__name__,
             "networkAccess": None,
         }
-        if int(insider_schema_migration.get("rowsRetained") or 0) > 0:
-            _mark_insider_review_required(sheet_result)
+        # A failed merge may already have exposed new unreviewed rows, even
+        # when the initial ledger was empty. Failure cannot establish approval.
+        _mark_insider_review_required(sheet_result)
         return sheet_result
     enrichment_complete = (
         not enrichment.request_budget_exhausted

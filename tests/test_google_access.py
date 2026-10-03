@@ -871,6 +871,63 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertEqual(result["insiderEnrichment"]["status"], "failed")
         self.assertEqual(result["insiderEnrichment"]["errorType"], "ValueError")
         self.assertNotIn("corrupt cached ticker map", str(result))
+        self.assertFalse(result["familyVisibleSafe"])
+        self.assertEqual(result["exportMode"], "private_draft_review_export")
+        self.assertTrue(result["privateDraftReviewOnly"])
+        self.assertTrue(result["insiderReviewRequired"])
+
+    def test_google_sheet_export_keeps_indeterminate_insider_merge_private(self) -> None:
+        synthetic_row = [
+            "Example", "A0TEST", "EXM", "Jane Doe", "Director", "110",
+            "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
+        ]
+        transaction = SimpleNamespace(
+            filing_url="https://www.sec.gov/example#transaction-1",
+            is_stock_purchase_or_sale=True,
+            to_sheet_row=lambda: list(synthetic_row),
+        )
+        for retained_count in (0, 1):
+            with self.subTest(initial_rows_retained=retained_count), tempfile.TemporaryDirectory() as temp_dir:
+                plan_path = Path(temp_dir) / "plan.json"
+                plan_path.write_text(APPROVED_EMPTY_WORKBOOK_PLAN, encoding="utf-8")
+                committed_rows = []
+
+                def write_insiders(_config, rows, **_kwargs):
+                    if not rows:
+                        return {"rowsRetained": retained_count}
+                    committed_rows.extend(rows)
+                    raise RuntimeError("synthetic private merge response lost after write")
+
+                with (
+                    patch.dict("stock_analyst.cli.os.environ", {
+                        "STOCK_ANALYST_SYMBOL_MAP_FILE": str(Path(temp_dir) / "symbols.csv"),
+                    }, clear=True),
+                    patch("stock_analyst.cli.load_google_access_config", return_value=object()),
+                    patch("stock_analyst.cli.load_sec_insider_config", return_value=object()),
+                    patch("stock_analyst.cli.build_market_data_symbol_map_template_csv",
+                        return_value="source_id,wkn,name,symbol,status,tab,row_kind,issue,page,notes\n"),
+                    patch("stock_analyst.cli.market_data_candidates_from_symbol_map_template_csv", return_value=()),
+                    patch("stock_analyst.cli.write_workbook_plan_to_google_sheet", return_value={
+                        "exportMode": "approved_family_export", "familyVisibleSafe": True,
+                        "privateDraftReviewOnly": False,
+                    }),
+                    patch("stock_analyst.cli.enrich_sec_form4",
+                        return_value=SimpleNamespace(transactions=(transaction,))),
+                    patch("stock_analyst.cli.write_insider_activity_rows_to_google_sheet",
+                        side_effect=write_insiders) as write_ledger,
+                ):
+                    result = run_google_sheets_export_plan_command(plan_path)
+
+                self.assertEqual(committed_rows, [synthetic_row])
+                self.assertEqual(write_ledger.call_count, 2)
+                self.assertFalse(result["familyVisibleSafe"])
+                self.assertEqual(result["exportMode"], "private_draft_review_export")
+                self.assertTrue(result["privateDraftReviewOnly"])
+                self.assertTrue(result["insiderReviewRequired"])
+                self.assertEqual(result["insiderEnrichment"]["status"], "failed")
+                self.assertFalse(result["insiderEnrichment"]["complete"])
+                self.assertEqual(result["insiderEnrichment"]["errorType"], "RuntimeError")
+                self.assertNotIn("synthetic private merge response", str(result))
 
     def test_google_sheet_export_validates_local_symbol_map_before_google_write(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -960,11 +1017,16 @@ class GoogleAccessTest(unittest.TestCase):
                 patch("stock_analyst.cli.enrich_sec_form4", return_value=enrichment),
             ):
                 result = run_google_sheets_export_plan_command(plan_path)
+                enrichment.failed_filing_count = 1
+                partial_result = run_google_sheets_export_plan_command(plan_path)
 
         self.assertEqual(result["exportMode"], "private_draft_review_export")
         self.assertFalse(result["familyVisibleSafe"])
         self.assertTrue(result["privateDraftReviewOnly"])
         self.assertTrue(result["insiderReviewRequired"])
+        self.assertEqual(partial_result["insiderEnrichment"]["failedFilingCount"], 1)
+        self.assertEqual(partial_result["insiderEnrichment"]["status"], "partial")
+        self.assertFalse(partial_result["insiderEnrichment"]["complete"])
 
     def test_insider_activity_merge_is_cumulative_and_deduplicated(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

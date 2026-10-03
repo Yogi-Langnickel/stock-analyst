@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
+from decimal import Inexact, Overflow, localcontext
 from pathlib import Path
 
 from stock_analyst.sec_insider import (
@@ -1012,6 +1013,119 @@ class SecInsiderTests(unittest.TestCase):
             recent_form4_filings(payload, cutoff=date(2026, 1, 1)),
             (("a", "a.xml", "2026-07-30"), ("b", "b.xml", "2026-07-29")),
         )
+
+    def test_form4_rejects_nonfinite_and_malformed_numeric_fields(self) -> None:
+        for tag, original in (("transactionShares", "10"),
+                              ("transactionPricePerShare", "12.50"),
+                              ("sharesOwnedFollowingTransaction", "110")):
+            for invalid in ("NaN", "Infinity", "-Infinity", "sNaN", "invalid-number",
+                            "1_000", "1__0", "_10", "10_", "١٠", "１２"):
+                with self.subTest(field=tag, invalid=invalid):
+                    xml = FORM4_XML.replace(
+                        f"<{tag}><value>{original}</value></{tag}>".encode(),
+                        f"<{tag}><value>{invalid}</value></{tag}>".encode(), 1,
+                    )
+                    with self.assertRaises(SecInsiderError) as caught:
+                        self._parse_form4_fixture(xml)
+                    self.assertNotIn(invalid, str(caught.exception))
+        for blank_tag, invalid_tag in (("transactionShares", "transactionPricePerShare"),
+                                       ("transactionPricePerShare", "transactionShares")):
+            xml = FORM4_XML.replace(b"<value>10</value>", b"<value></value>" if blank_tag == "transactionShares"
+                else b"<value>NaN</value>", 1).replace(b"<value>12.50</value>",
+                b"<value></value>" if blank_tag == "transactionPricePerShare" else b"<value>NaN</value>", 1)
+            with self.subTest(blank_field=blank_tag, invalid_field=invalid_tag), self.assertRaises(SecInsiderError):
+                self._parse_form4_fixture(xml)
+
+    def test_form4_preserves_blank_and_footnote_only_numeric_fields(self) -> None:
+        for tag, original, attribute in (("transactionShares", "10", "shares"),
+                ("transactionPricePerShare", "12.50", "price"),
+                ("sharesOwnedFollowingTransaction", "110", "shares_owned_after")):
+            for replacement in (b"<value></value>", b'<footnoteId id="F1"/>'):
+                with self.subTest(field=tag, replacement=replacement):
+                    xml = FORM4_XML.replace(f"<{tag}><value>{original}</value></{tag}>".encode(),
+                        f"<{tag}>".encode() + replacement + f"</{tag}>".encode(), 1)
+                    row = self._parse_form4_fixture(xml)[0]
+                    self.assertEqual(getattr(row, attribute), "")
+                    self.assertEqual(row.transaction_value, "125.00" if attribute == "shares_owned_after" else "")
+
+    def test_form4_preserves_zero_negative_and_fractional_precision(self) -> None:
+        for shares, price, total in (("0", "12.50", "0.00"),
+                ("-0.12500001", "2.00000001", "-0.2500000212500001"),
+                ("0.12500001", "0", "0.00000000"),
+                (".5", "1.", "0.5"), ("+1e2", "1e-2", "1"),
+                ("-0", "2", "-0"), ("1.", "2.", "2")):
+            with self.subTest(shares=shares, price=price):
+                xml = FORM4_XML.replace(b"<value>10</value>", f"<value>{shares}</value>".encode(), 1)
+                xml = xml.replace(b"<value>12.50</value>", f"<value>{price}</value>".encode(), 1)
+                xml = xml.replace(b"<value>110</value>", b"<value>-0.0000000123456789</value>", 1)
+                row = self._parse_form4_fixture(xml)[0]
+                self.assertEqual((row.shares, row.price, row.transaction_value, row.shares_owned_after),
+                    (shares, price, total, "-0.0000000123456789"))
+
+    def test_form4_rejects_overflow_with_and_without_decimal_traps(self) -> None:
+        xml = FORM4_XML.replace(b"<value>10</value>", b"<value>1e9</value>", 1)
+        xml = xml.replace(b"<value>12.50</value>", b"<value>1e9</value>", 1)
+        for trapped in (True, False):
+            with self.subTest(overflow_trapped=trapped), localcontext() as context:
+                context.Emax = 9
+                context.traps[Overflow] = trapped
+                with self.assertRaises(SecInsiderError):
+                    self._parse_form4_fixture(xml)
+
+        extreme = FORM4_XML.replace(b"<value>10</value>", b"<value>1e999999999</value>", 1)
+        with self.assertRaises(SecInsiderError):
+            self._parse_form4_fixture(extreme)
+
+    def test_form4_preserves_exact_product_beyond_default_decimal_precision(self) -> None:
+        xml = FORM4_XML.replace(b"<value>10</value>", b"<value>123456789012345678901234567890</value>", 1)
+        xml = xml.replace(b"<value>12.50</value>", b"<value>1.23</value>", 1)
+        with localcontext() as context:
+            context.prec = 7
+            self.assertEqual(self._parse_form4_fixture(xml)[0].transaction_value,
+                "151851850485185185048518518504.70")
+            self.assertEqual(context.prec, 7)
+
+    def test_form4_rejects_nonzero_underflow_without_changing_caller_traps(self) -> None:
+        xml = FORM4_XML.replace(b"<value>10</value>", b"<value>1e-999999999</value>", 1)
+        with localcontext() as context:
+            context.traps[Inexact] = False
+            with self.assertRaises(SecInsiderError):
+                self._parse_form4_fixture(xml)
+            self.assertFalse(context.traps[Inexact])
+
+    def test_numeric_invalid_filing_isolated_from_valid_filing(self) -> None:
+        ticker = json.dumps({"0": {"cik_str": 1234, "ticker": "EXM", "title": "EXAMPLE CORP"}}).encode()
+        submissions = self._submissions_payload(forms=["4", "4"],
+            accessions=["0000001234-26-000001", "0000001234-26-000002"],
+            documents=["bad.xml", "valid.xml"], filing_dates=["2026-08-01", "2026-08-02"])
+        invalid_payloads = (FORM4_XML.replace(b"<value>110</value>", b"<value>NaN</value>", 1),
+            FORM4_XML.replace(b"<value>10</value>", b"<value>1e999999999</value>", 1))
+        for invalid in invalid_payloads:
+            def fetch(url, _agent):
+                if url == SEC_TICKER_MAP_URL:
+                    return ticker
+                if url == SEC_SUBMISSIONS_URL.format(cik="0000001234"):
+                    return submissions
+                return invalid if url.endswith("/bad.xml") else FORM4_XML
+
+            with self.subTest(invalid_payload=invalid), tempfile.TemporaryDirectory() as temp_dir:
+                result = enrich_sec_form4((SecStockCandidate("Example", "A0TEST", "EXM", "2026-W32:10"),),
+                    SecInsiderConfig("Stock Analyst owner@example.test", Path(temp_dir)),
+                    fetch_bytes=fetch, now=datetime(2026, 8, 3, tzinfo=timezone.utc))
+                self.assertEqual(result.filing_count, 2)
+                self.assertEqual(result.failed_filing_count, 1)
+                self.assertFalse(result.request_budget_exhausted)
+                self.assertEqual(result.failed_issuer_count, 0)
+                self.assertEqual(len(result.transactions), 2)
+                self.assertEqual([r.transaction_value for r in result.transactions], ["75", "125.00"])
+                self.assertTrue(all("/valid.xml#" in r.filing_url for r in result.transactions))
+
+    @staticmethod
+    def _parse_form4_fixture(payload):
+        return parse_form4_transactions(payload,
+            issuer=SecResolvedIssuer("0000001234", "EXM", "Example", "A0TEST", "2026-W32:10"),
+            filing_date="2026-08-01", filing_url="https://www.sec.gov/filing.xml",
+            date_updated="2026-08-03")
 
     def test_parses_all_transactions_with_unique_filing_identities(self) -> None:
         issuer = SecResolvedIssuer(

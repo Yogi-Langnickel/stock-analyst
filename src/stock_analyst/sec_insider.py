@@ -12,7 +12,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException, Inexact, localcontext
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
@@ -618,6 +618,7 @@ def parse_form4_transactions(
             "sharesOwnedFollowingTransaction",
             "value",
         )
+        _finite_decimal(shares_after)
         direction = {"A": "Acquired", "D": "Disposed"}.get(
             acquired_disposed.upper(), acquired_disposed
         )
@@ -989,11 +990,42 @@ def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def _multiply(left: str, right: str) -> str:
+def _finite_decimal(value: str) -> Decimal | None:
+    if not value:
+        return None
+    if re.fullmatch(
+        r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", value
+    ) is None:
+        raise SecInsiderError("SEC Form 4 numeric field is invalid")
     try:
-        return format(Decimal(left) * Decimal(right), "f")
-    except (InvalidOperation, ValueError):
+        number = Decimal(value)
+    except (DecimalException, ValueError):
+        raise SecInsiderError("SEC Form 4 numeric field is invalid") from None
+    if not number.is_finite():
+        raise SecInsiderError("SEC Form 4 numeric field is not finite")
+    return number
+
+
+def _multiply(left: str, right: str) -> str:
+    # Validate each nonempty operand even when the other is legitimately blank.
+    left_number = _finite_decimal(left)
+    right_number = _finite_decimal(right)
+    if left_number is None or right_number is None:
         return ""
+    try:
+        with localcontext() as context:
+            context.prec = max(
+                context.prec,
+                len(left_number.as_tuple().digits) + len(right_number.as_tuple().digits),
+            )
+            # Coefficient precision is exact; exponent-bound rounding must fail.
+            context.traps[Inexact] = True
+            product = left_number * right_number
+    except DecimalException:
+        raise SecInsiderError("SEC Form 4 numeric product is invalid") from None
+    if not product.is_finite():
+        raise SecInsiderError("SEC Form 4 numeric product is not finite")
+    return format(product, "f")
 
 
 def _signal(code: str, direction: str) -> str:
