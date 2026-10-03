@@ -1916,7 +1916,15 @@ class GoogleAccessTest(unittest.TestCase):
         self.assertIn('=$D4="Sell"', formulas)
         self.assertIn('=$I4="Acquired"', formulas)
         self.assertIn('=$I4="Disposed"', formulas)
-        self.assertFalse(any("Wait" in formula for formula in formulas))
+        self.assertIn('=$D4="Wait"', formulas)
+        wait_rule = next(
+            rule for rule in add_rules
+            if rule["booleanRule"]["condition"]["values"][0]["userEnteredValue"] == '=$D4="Wait"'
+        )
+        self.assertEqual(
+            wait_rule["booleanRule"]["format"]["backgroundColor"],
+            {"red": 1.0, "green": 0.95, "blue": 0.75},
+        )
         for rule in add_rules:
             data_range = rule["ranges"][0]
             self.assertEqual(data_range["startRowIndex"], 3)
@@ -2120,28 +2128,26 @@ class GoogleAccessTest(unittest.TestCase):
             for request in requests
             if "addConditionalFormatRule" in request
         ]
-        self.assertEqual(len(add_requests), 12)
-        self.assertFalse(
-            any(
-                "Wait" in rule["rule"]["booleanRule"]["condition"]["values"][0]["userEnteredValue"]
-                for rule in add_requests
-            )
-        )
+        self.assertEqual(len(add_requests), 16)
         expected_by_sheet = {
             42: (
                 ('=$C2="Buy"', 16, {"red": 0.85, "green": 0.94, "blue": 0.85}),
                 ('=$C2="Hold"', 16, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Wait"', 16, {"red": 1.0, "green": 0.95, "blue": 0.75}),
                 ('=$C2="Sell"', 16, {"red": 0.98, "green": 0.84, "blue": 0.84}),
                 ('=$C2="Buy"', 15, {"red": 0.85, "green": 0.94, "blue": 0.85}),
                 ('=$C2="Hold"', 15, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Wait"', 15, {"red": 1.0, "green": 0.95, "blue": 0.75}),
                 ('=$C2="Sell"', 15, {"red": 0.98, "green": 0.84, "blue": 0.84}),
             ),
             43: (
                 ('=$C2="Buy"', 16, {"red": 0.85, "green": 0.94, "blue": 0.85}),
                 ('=$C2="Hold"', 16, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Wait"', 16, {"red": 1.0, "green": 0.95, "blue": 0.75}),
                 ('=$C2="Sell"', 16, {"red": 0.98, "green": 0.84, "blue": 0.84}),
                 ('=$C2="Buy"', 15, {"red": 0.85, "green": 0.94, "blue": 0.85}),
                 ('=$C2="Hold"', 15, {"red": 1.0, "green": 0.95, "blue": 0.75}),
+                ('=$C2="Wait"', 15, {"red": 1.0, "green": 0.95, "blue": 0.75}),
                 ('=$C2="Sell"', 15, {"red": 0.98, "green": 0.84, "blue": 0.84}),
             ),
         }
@@ -2198,7 +2204,7 @@ class GoogleAccessTest(unittest.TestCase):
         )
         self.assertEqual(
             len([request for request in requests if "addConditionalFormatRule" in request]),
-            6,
+            8,
         )
 
     def test_issue_recommendation_tables_leave_at_most_two_blank_rows_between_sections(self) -> None:

@@ -83,6 +83,7 @@ REVIEWER_COLUMN_WIDTHS = (
 REVIEWER_ACTION_FORMATS = (
     ("Buy", {"red": 0.85, "green": 0.94, "blue": 0.85}),
     ("Hold", {"red": 1.0, "green": 0.95, "blue": 0.75}),
+    ("Wait", {"red": 1.0, "green": 0.95, "blue": 0.75}),
     ("Sell", {"red": 0.98, "green": 0.84, "blue": 0.84}),
 )
 
