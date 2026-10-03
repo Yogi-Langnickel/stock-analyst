@@ -10,6 +10,30 @@ from stock_analyst.schemas import InstrumentType
 
 
 class RecommendationCardsTest(unittest.TestCase):
+    def test_explicit_wait_card_labels_override_follow_up(self) -> None:
+        for label in ("Abwarten", "Wait", "ABWARTEN"):
+            with self.subTest(label=label):
+                cards = extract_recommendation_cards_from_lines(
+                    ("Aktie", "Synthetic Wait AG", "WKN", "WAIT01",
+                     "Akt. Kurs", "10,00 EUR", "Performance", "+5,0 %",
+                     label, "Weitere Informationen"),
+                    issue_id="2099-W01", page_number=12,
+                )
+                self.assertEqual(len(cards), 1)
+                self.assertEqual(cards[0].recommendation_status, "wait")
+
+    def test_wait_prose_and_adjacent_card_do_not_promote_follow_up(self) -> None:
+        cards = extract_recommendation_cards_from_lines(
+            ("Abwarten auf Zahlen", "Aktie", "Synthetic Follow AG", "WKN",
+             "FOLL01", "Akt. Kurs", "10,00 EUR", "Performance", "+5,0 %",
+             "Wir sollten abwarten und beobachten.", "Weitere Informationen",
+             "Abwarten", "Aktie", "Synthetic Next AG", "WKN", "NEXT01",
+             "Akt. Kurs", "20,00 EUR", "Weitere Informationen"),
+            issue_id="2099-W01", page_number=12,
+        )
+        self.assertEqual([card.recommendation_status for card in cards],
+                         ["follow_up", None])
+
     def test_extracts_new_recommendation_stock_card(self) -> None:
         cards = extract_recommendation_cards_from_lines(
             (

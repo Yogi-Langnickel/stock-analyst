@@ -601,6 +601,8 @@ def _latest_issue_stock_action(
 
 def _publisher_action(recommendation: str | None) -> str | None:
     normalized = re.sub(r"\s+", " ", (recommendation or "").casefold()).strip()
+    if re.fullmatch(r"ausge-\s*stoppt", normalized):
+        normalized = "ausgestoppt"
     normalized = normalized.replace("- ", "-")
     if normalized in {"new_recommendation", "neu"}:
         return "Buy"
@@ -1454,6 +1456,8 @@ def _recommendation_cells(
     if normalized == "no_buy":
         return "no_buy", ""
     issue = _issue_only(recommended_issue or "")
+    if normalized in {"hold", "wait"}:
+        return normalized, issue
     if normalized == "follow_up" or issue:
         return "hold", issue
     return status or "", ""

@@ -962,6 +962,8 @@ def _parse_labelled_card(
         recommendation_status = "sold"
     if recommendation_status is None and "hold" in fields:
         recommendation_status = "hold"
+    if recommendation_status is None and "wait" in fields:
+        recommendation_status = "wait"
     card_lines = lines[start_index:next_index]
     if recommendation_status is None and _has_unambiguous_recommendation_signal(
         lines,
@@ -1108,6 +1110,11 @@ def _collect_fields(lines: Sequence[str], start_index: int) -> tuple[dict[str, s
 
         if combined.casefold() in {"halten", "hold"}:
             fields["hold"] = "Halten"
+            index += consumed
+            continue
+
+        if combined.casefold() in {"abwarten", "wait"}:
+            fields["wait"] = "Abwarten"
             index += consumed
             continue
 

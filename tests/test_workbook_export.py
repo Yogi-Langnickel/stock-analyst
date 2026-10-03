@@ -61,6 +61,49 @@ def load_workbook_fixture(name: str) -> dict[str, object]:
 
 
 class WorkbookExportPlanTest(unittest.TestCase):
+    def test_explicit_wait_card_reaches_aktuell_with_provenance(self) -> None:
+        for follow_up in ((), ("Empfohlen in Ausgabe", "01/2098")):
+            with self.subTest(follow_up=bool(follow_up)):
+                cards = extract_recommendation_cards_from_lines(
+                    ("Aktie", "Synthetic Wait AG", "WKN", "WAIT01",
+                     "Akt. Kurs", "10,00 EUR", *follow_up, "Abwarten",
+                     "Weitere Informationen"),
+                    issue_id="2099-W01", page_number=12,
+                )
+                plan = build_workbook_export_plan(
+                    pdf_path=Path("data/private/issues/DA_2099_01.pdf"),
+                    issue_id="2099-W01", recommendation_cards=cards,
+                ).to_dict()
+                latest = [row for row in plan["rows"] if row["tab"] == "Aktuell"]
+                self.assertEqual(len(latest), 1)
+                self.assertEqual(value_for(latest[0], "Action", tab="Aktuell"), "Wait")
+                self.assertEqual(value_for(latest[0], "Source", tab="Aktuell"), "2099-W01:12")
+                self.assertEqual(latest[0]["reviewStatus"], "needs_review")
+                self.assertFalse(latest[0]["exportable"])
+
+    def test_wrapped_stopped_derivative_actions_reach_aktuell(self) -> None:
+        statuses = ("Ausgestoppt", "Ausge-stoppt", "Ausge-\nstoppt",
+                    "Ausge- stoppt", "Stopp nachziehen", "Abwarten auf Ausgestoppt",
+                    "Ausge stoppt", "Ausgestoppt beobachten")
+        rows = tuple(DerivativeOverviewRow(
+            issue_id="2099-W01", page=20, metrics_page=21,
+            underlying="Synthetic AG", product="Call", direction="Long",
+            wkn=f"SYN{i:03d}", issuer="Synthetic Issuer", ratio="1,0",
+            strike_cap="10,00 EUR", omega_hebel="2,0", runtime="open end",
+            recommendation=status,
+        ) for i, status in enumerate(statuses))
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2099_01.pdf"),
+            issue_id="2099-W01", derivative_overview=rows,
+        ).to_dict()
+        latest = [row for row in plan["rows"] if row["tab"] == "Aktuell"]
+        self.assertEqual([row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Action")]
+                          for row in latest], ["Sell"] * 4 + ["Hold"])
+        self.assertTrue(all(row["values"][AKTUELL_DERIVATIVE_HEADERS.index("Issue:Page")]
+                            == "2099-W01:20 | 2099-W01:21" for row in latest))
+        self.assertTrue(all(row["reviewStatus"] == "needs_review" and not row["exportable"]
+                            for row in latest))
+
     def test_plan_rejects_stale_row_width_before_serialization(self) -> None:
         with self.assertRaisesRegex(
             WorkbookExportPlanError,
