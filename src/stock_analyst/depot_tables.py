@@ -12,10 +12,13 @@ from stock_analyst.schemas import ReviewStatus
 
 
 WKN_RE = re.compile(r"^[A-Z0-9]{6}$")
-DATE_RE = re.compile(r"\d{2}\.\d{2}(?:\./\d{2}\.\d{2})?\.\d{2}")
+DATE_RE = re.compile(
+    r"\d{2}\.\d{2}(?:\./\d{2}\.\d{2})?\.\d{2}(?:/\d{2}\.\d{2}\.\d{2})*"
+)
 PRICE_RE = re.compile(r"\d+(?:\.\d{3})*,\d+\s*EUR\*?")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 QUANTITY_RE = re.compile(r"^\d+(?:\.\d{3})*$")
+TRANSACTION_ACTIONS = {"Kauf", "Verkauf", "Teilkauf", "Teilverkauf"}
 
 
 @dataclass(frozen=True)
@@ -127,12 +130,13 @@ def _extract_position_rows(
     while cursor < len(body):
         wkn_index = _next_wkn_index(body, cursor)
         if wkn_index is None:
-            break
+            raise ValueError("publisher depot position identity is incomplete")
         instrument = " ".join(body[cursor:wkn_index]).strip()
         if not instrument:
-            cursor = wkn_index + 1
-            continue
+            raise ValueError("publisher depot position identity is incomplete")
         parsed, next_cursor = _parse_position_tail(body, wkn_index + 1)
+        if parsed is None:
+            raise ValueError("publisher depot position row does not match schema")
         if parsed is not None:
             rows.append(
                 DepotPositionRow(
@@ -167,7 +171,43 @@ def _extract_transaction_rows(
                 action="Keine Transaktionen",
             ),
         )
-    return ()
+    try:
+        header_start = lines.index("Transaktion")
+        body_start = lines.index("seit Kauf", header_start) + 1
+    except ValueError:
+        return ()
+    header = lines[header_start:body_start]
+    if not all(label in header for label in ("Wertpapier", "WKN", "Kurs", "Performance")):
+        return ()
+    rows: list[DepotTransactionRow] = []
+    cursor = body_start
+    boundaries = {"Aktie/Derivat", "Durchgeführte Transaktionen", "Hinweis auf Interessenkonflikte:"}
+    while cursor < len(lines) and lines[cursor] not in boundaries:
+        action = lines[cursor]
+        if action not in TRANSACTION_ACTIONS:
+            raise ValueError("publisher depot transaction row does not match schema")
+        wkn_index = _next_wkn_index(lines, cursor + 1)
+        if wkn_index is None or wkn_index == cursor + 1:
+            raise ValueError("publisher depot transaction identity is incomplete")
+        instrument_parts = lines[cursor + 1:wkn_index]
+        if any(part in TRANSACTION_ACTIONS for part in instrument_parts):
+            raise ValueError("publisher depot transaction identity is ambiguous")
+        tail = lines[wkn_index + 1:wkn_index + 5]
+        if len(tail) != 4 or not (
+            QUANTITY_RE.fullmatch(tail[0])
+            and re.fullmatch(r"\d{2}\.\d{2}\.\d{2}", tail[1])
+            and PRICE_RE.fullmatch(tail[2])
+            and PERCENT_RE.fullmatch(tail[3])
+        ):
+            raise ValueError("publisher depot transaction values are incomplete")
+        rows.append(DepotTransactionRow(
+            issue_id=issue_id, page=page_number, action=action,
+            instrument=" ".join(instrument_parts), wkn=lines[wkn_index],
+            quantity=tail[0], transaction_date=tail[1], price=tail[2],
+            performance_since_buy=tail[3],
+        ))
+        cursor = wkn_index + 5
+    return tuple(rows)
 
 
 def _parse_position_tail(
@@ -182,11 +222,13 @@ def _parse_position_tail(
 
     index = start_index + 1
     date_line = body[index]
-    buy_date_match = DATE_RE.search(date_line)
+    buy_date_match = DATE_RE.match(date_line)
     if buy_date_match is None:
         return None, index + 1
     buy_date = buy_date_match.group(0)
     remainder = date_line[buy_date_match.end() :].strip()
+    if remainder and PRICE_RE.fullmatch(remainder) is None:
+        return None, index + 1
     index += 1
 
     if remainder:

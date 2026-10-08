@@ -19,7 +19,8 @@ PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 RATIO_RE = re.compile(r"^\d+(?:,\d+)?$")
 COMBINED_RATIO_STRIKE_RE = re.compile(
     r"^(?P<ratio>\d+(?:\s*,\d+)?)\s+"
-    r"(?P<strike>\d+(?:\.\d{3})*(?:\s*,\d+)?\s*(?:EUR|USD|HKD|GBP|JPY))$"
+    r"(?P<strike>\d+(?:\.\d{3})*(?:\s*,\d+)?\s*(?:EUR|USD|HKD|GBP|JPY|CHF|DKK))"
+    r"(?:\s+(?P<runtime>open end|\d{2}\.\d{2}\.\d{2}))?$"
 )
 TYPE_WORDS = {
     "Call",
@@ -377,9 +378,11 @@ def _extract_base_rows(
             "Typ",
             "Ratio",
             "Strike /",
+            "Strike",
             "Cap",
             "Laufzeit",
             "Hebel /",
+            "Hebel",
             "Omega",
         }
     )
@@ -389,7 +392,8 @@ def _extract_base_rows(
     while cursor < len(body):
         wkn_match = _next_wkn_match(body, cursor)
         if wkn_match is None:
-            break
+            # Never retain an apparently valid prefix of an incomplete table.
+            return ()
         wkn_index, embedded_underlying, wkn = wkn_match
         underlying_parts = (*body[cursor:wkn_index], embedded_underlying)
         underlying = " ".join(part for part in underlying_parts if part).strip()
@@ -478,9 +482,11 @@ def _parse_base_tail(tail: Sequence[str]) -> dict[str, Any] | None:
     if index >= len(tail):
         return None
     combined = COMBINED_RATIO_STRIKE_RE.fullmatch(tail[index])
+    combined_runtime = None
     if combined is not None:
         ratio = re.sub(r"\s+(?=,)", "", combined.group("ratio"))
         strike_cap = re.sub(r"\s+(?=,)", "", combined.group("strike"))
+        combined_runtime = combined.group("runtime")
         # These two printed columns occupy one extracted token. Keep the
         # consumed count in original tokens so the next underlying stays put.
         index += 1
@@ -490,10 +496,15 @@ def _parse_base_tail(tail: Sequence[str]) -> dict[str, Any] | None:
         index += 2
     else:
         return None
-    if index >= len(tail):
+    if combined_runtime is not None:
+        runtime = combined_runtime
+    else:
+        if index >= len(tail):
+            return None
+        runtime = tail[index]
+        index += 1
+    if runtime != "open end" and DATE_RE.fullmatch(runtime) is None:
         return None
-    runtime = tail[index]
-    index += 1
     if index < len(tail) and _looks_like_duration(tail[index]):
         runtime = f"{runtime} ({tail[index]})"
         index += 1

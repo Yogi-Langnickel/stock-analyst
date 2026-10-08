@@ -50,6 +50,17 @@ Created: 2026-06-06
   block, or when the page contains exactly one card candidate. Established
   derivative source literals `Dabei-bleiben` and `Ausgestoppt` map to reviewer
   actions `Hold` and `Sell`.
+- Derivative base-table parsing must retain combined ratio/strike/runtime cells,
+  including CHF/DKK, and reject the whole table when a later row is incomplete;
+  a valid prefix does not prove coverage. Retain both pages of a paired spread.
+- Depot extraction preserves full purchase-date lists and supports structurally
+  complete executed transactions, including partial sales. Malformed identity or
+  value tails fail locally; never silently replace executed rows with no-data.
+- An exact sold literal in the Chart Check or Quick Check target cell is an
+  explicit Sell action. Its target price remains blank; prose is not an action.
+- Comparison-table valuation columns are consumed in their printed header order.
+  Preserve supported 2026 P/S and P/E values, but never relabel book-value metrics
+  or another forecast year. Missing column cells remain ambiguous and blank.
 
 ## Active Tabs And Identity
 

@@ -1176,7 +1176,8 @@ def _quickcheck_stock_rows(
     for row in rows:
         source_id = _source_id("quickcheck-stock", row.issue_id, row.page, row.wkn)
         recommendation, held_since = _recommendation_cells(
-            "sold" if row.current_price.casefold() == "verkauft" else None,
+            "sold" if any(value.casefold().strip() == "verkauft"
+                for value in (row.current_price, row.target)) else None,
             row.recommended_issue,
         )
         draft_rows.append(
@@ -1226,7 +1227,10 @@ def _chart_check_stock_rows(
     for row in rows:
         source_id = _source_id("chart-check-stock", row.issue_id, row.page, row.wkn)
         report_date, report_type = _split_next_report(row.next_report_date)
-        recommendation, held_since = _recommendation_cells(None, row.recommended_issue)
+        recommendation, held_since = _recommendation_cells(
+            "sold" if row.target.casefold().strip() == "verkauft" else None,
+            row.recommended_issue,
+        )
         draft_rows.append(
             WorkbookDraftRow(
                 tab="Stocks",

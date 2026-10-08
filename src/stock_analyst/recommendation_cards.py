@@ -566,8 +566,18 @@ def _extract_duel_table_cards(
         line.casefold().strip()
         for line in lines[header_index:start_index]
     }
-    has_kuv = "kuv" in header_lines
-    has_kgv = "kgv" in header_lines
+    metric_columns: list[tuple[str, str | None]] = []
+    ordered_header = lines[header_index:start_index]
+    for ordinal, label in enumerate(ordered_header):
+        metric = re.fullmatch(r"(KUV|KGV|KBV)(?:\s*(20\d{2}e|\d{2}e))?", label, re.I)
+        if metric is None:
+            continue
+        year = metric.group(2)
+        if year is None and ordinal + 1 < len(ordered_header):
+            following = ordered_header[ordinal + 1]
+            if re.fullmatch(r"20\d{2}e|\d{2}e", following, re.I):
+                year = following
+        metric_columns.append((metric.group(1).casefold(), year.casefold() if year else None))
     has_dividend = any(re.match(r"(?:dr\b|dividendenrendite\b)", line) for line in header_lines)
 
     cards: list[RecommendationCard] = []
@@ -587,7 +597,7 @@ def _extract_duel_table_cards(
         metric_index = index + 4 + int(has_dividend)
         kuv_26e: str | None = None
         kgv_26e: str | None = None
-        expected_metric_count = int(has_kuv) + int(has_kgv)
+        expected_metric_count = len(metric_columns)
         metric_values: list[str] = []
         while (
             metric_index < len(lines)
@@ -598,18 +608,20 @@ def _extract_duel_table_cards(
             metric_index += 1
 
         extraction_notes = ["duel_table_extraction"]
-        if has_kuv and has_kgv:
-            if len(metric_values) == 2:
-                kuv_26e = _valuation_metric_or_none(metric_values[0])
-                kgv_26e = _valuation_metric_or_none(metric_values[1])
-            elif len(metric_values) == 1:
-                # Reading-order extraction drops blank table cells.  A lone
-                # value cannot safely be attributed to either column.
-                extraction_notes.append("valuation_metrics_ambiguous")
-        elif has_kuv and metric_values:
-            kuv_26e = _valuation_metric_or_none(metric_values[0])
-        elif has_kgv and metric_values:
-            kgv_26e = _valuation_metric_or_none(metric_values[0])
+        if any(kind == "kbv" or year not in {None, "26e", "2026e"}
+            for kind, year in metric_columns):
+            extraction_notes.append("valuation_columns_not_in_workbook_schema")
+        if metric_values and len(metric_values) != expected_metric_count:
+            # Omitted blank cells make column attribution ambiguous.
+            extraction_notes.append("valuation_metrics_ambiguous")
+        else:
+            for (kind, year), value in zip(metric_columns, metric_values):
+                if year not in {None, "26e", "2026e"}:
+                    continue
+                if kind == "kuv":
+                    kuv_26e = _valuation_metric_or_none(value)
+                elif kind == "kgv":
+                    kgv_26e = _valuation_metric_or_none(value)
         index = metric_index
 
         performance_since_recommendation: str | None = None

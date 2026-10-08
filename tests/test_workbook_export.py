@@ -1777,6 +1777,28 @@ class WorkbookExportPlanTest(unittest.TestCase):
         self.assertEqual(result["rowsByTab"], {"Extraction Audit": 1})
         self.assertTrue(all(row["tab"] != "Stocks" for row in result["rows"]))
 
+    def test_controlled_sell_target_enters_latest_review_without_price_invention(self) -> None:
+        for kind in ("quick", "chart"):
+            for target in ("Verkauft", " verkauft ", "Verkauft nach Prüfung", "12,00 EUR"):
+                with self.subTest(kind=kind, target=target):
+                    common = dict(issue_id="2099-W01", page=12,
+                        instrument="Invented Company", wkn="ZZ0001",
+                        current_price="7,00 EUR", target=target,
+                        stop="5,00 EUR", recommended_issue="01/99")
+                    kwargs = {"quickcheck_rows": (QuickcheckRow(**common, recommendation_price="6,00 EUR", performance_since_recommendation="+16,7 %", comment="Publisher summary"),)} if kind == "quick" else {
+                        "chart_check_rows": (ChartCheckRow(**common, sector="Example", signal="Publisher summary"),)}
+                    plan = build_workbook_export_plan(pdf_path=Path("data/private/issues/DA_2099_01.pdf"), issue_id="2099-W01", **kwargs)
+                    rows = plan.to_dict()["rows"]
+                    latest = [r for r in rows if r["tab"] == "Aktuell"]
+                    if target.strip().casefold() == "verkauft":
+                        self.assertEqual(len(latest), 1)
+                        self.assertEqual(latest[0]["values"][headers_for("Aktuell").index("Action")], "Sell")
+                        self.assertEqual(latest[0]["values"][headers_for("Aktuell").index("Target")], "")
+                        self.assertEqual(latest[0]["values"][headers_for("Aktuell").index("Source")], "2099-W01:12")
+                        self.assertEqual(latest[0]["reviewStatus"], "needs_review")
+                    else:
+                        self.assertEqual(latest, [])
+
     def test_routes_quickcheck_rows_to_stock_tab_only(self) -> None:
         plan = build_workbook_export_plan(
             pdf_path=Path("data/private/issues/DA_2026_03.pdf"),

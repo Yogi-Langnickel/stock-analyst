@@ -495,6 +495,39 @@ class RecommendationCardsTest(unittest.TestCase):
         self.assertEqual(cards[0].risk, 3)
         self.assertIn("visual_rating_from_pdf", cards[0].extraction_notes)
 
+    def test_comparison_book_value_and_later_forecast_year_retain_no_buy_row(self) -> None:
+        cards = extract_recommendation_cards_from_lines((
+            "Unternehmen", "WKN", "Aktueller", "Kurs", "Marktkap.",
+            "DR*", "KBV", "2027e", "KGV", "2027e", "Empf.-", "Ausgabe", "Ziel", "Stopp", "Chance", "Risiko",
+            "Invented First", "ZZ0001", "7,00 EUR", "8,0", "1,0", "0,9", "12", "Kein Kauf", "•••", "••••",
+            "Invented Second", "ZZ0002", "9,00 EUR", "10,0", "2,0", "1,1", "13", "+2,0 %", "01/99", "01.01.99", "12,00 EUR", "6,00 EUR", "••••", "•••",
+        ), issue_id="2099-W01", page_number=12)
+        self.assertEqual(len(cards), 2)
+        self.assertEqual(cards[0].instrument_name, "Invented First")
+        self.assertEqual(cards[0].wkn, "ZZ0001")
+        self.assertEqual(cards[0].recommendation_status, "no_buy")
+        self.assertIsNone(cards[0].target)
+        self.assertIsNone(cards[0].stop)
+        self.assertEqual(cards[1].recommendation_status, "follow_up")
+        self.assertEqual(cards[1].target, "12,00 EUR")
+        self.assertEqual(cards[1].stop, "6,00 EUR")
+        self.assertTrue(all(card.kuv_26e is None and card.kgv_26e is None for card in cards))
+        self.assertTrue(all("valuation_columns_not_in_workbook_schema" in card.extraction_notes for card in cards))
+
+    def test_comparison_mixed_forecast_columns_preserve_supported_values_only(self) -> None:
+        for headers, expected in (
+            (("KBV", "2027e", "KGV", "2026e"), (None, "12")),
+            (("KUV", "2026e", "KGV", "2027e"), ("0,9", None)),
+        ):
+            with self.subTest(headers=headers):
+                cards = extract_recommendation_cards_from_lines((
+                    "Unternehmen", "WKN", "Aktueller", "Kurs", "Marktkap.",
+                    "DR*", *headers, "Empf.-", "Ausgabe", "Ziel", "Stopp", "Chance", "Risiko",
+                    "Invented First", "ZZ0001", "7,00 EUR", "8,0", "1,0", "0,9", "12", "Kein Kauf", "•••", "••••",
+                ), issue_id="2099-W01", page_number=12)
+                self.assertEqual(len(cards), 1)
+                self.assertEqual((cards[0].kuv_26e, cards[0].kgv_26e), expected)
+
     def test_extracts_duel_table_stock_rows(self) -> None:
         cards = extract_recommendation_cards_from_lines(
             (
@@ -629,7 +662,11 @@ class RecommendationCardsTest(unittest.TestCase):
             ["new_recommendation"] * 3,
         )
         self.assertEqual([card.kuv_26e for card in cards], [None] * 3)
-        self.assertEqual([card.kgv_26e for card in cards], ["12", "17", "10"])
+        self.assertEqual([card.kgv_26e for card in cards], [None] * 3)
+        self.assertTrue(all(
+            "valuation_columns_not_in_workbook_schema" in card.extraction_notes
+            for card in cards
+        ))
 
     def test_optional_valuation_cells_do_not_hide_explicit_recommendations(self) -> None:
         cards = extract_recommendation_cards_from_lines(

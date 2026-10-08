@@ -97,6 +97,35 @@ EXTRA_METRICS_LINES = (
 
 
 class DerivativeOverviewTablesTest(unittest.TestCase):
+    def test_combined_fx_strike_runtime_and_split_headers_preserve_all_rows(self) -> None:
+        base = list(BASE_PAGE_LINES[:10])
+        base[5:9] = ("Strike", "Cap", "Laufzeit", "Hebel", "Omega")
+        for ordinal, currency in enumerate(("EUR", "CHF", "DKK"), 1):
+            base.extend((f"Invented Instrument {ordinal}", f"ZZ{ordinal:04d}",
+                "Example Issuer", "Turbo-Long", f"2,00 17,00 {currency} open end", "3,0"))
+        base.append("Derivate-Tipps im Rückblick")
+        metrics = METRICS_HEADER_LINES + BAYER_METRICS_LINES * 3
+        result = extract_derivative_overview_result_from_page_lines(
+            ((12, base), (13, metrics)), issue_id="2099-W01")
+        self.assertEqual(result.exceptions, ())
+        self.assertEqual(len(result.rows), 3)
+        for ordinal, row in enumerate(result.rows, 1):
+            self.assertEqual(row.underlying, f"Invented Instrument {ordinal}")
+            self.assertEqual(row.wkn, f"ZZ{ordinal:04d}")
+            self.assertEqual(row.runtime, "open end")
+            self.assertEqual(row.omega_hebel, "3,0")
+            self.assertEqual(row.source_pages, (12, 13))
+
+    def test_invalid_later_row_does_not_retain_valid_prefix(self) -> None:
+        base = (*BASE_PAGE_LINES[:-1], "Invented Instrument", "ZZ0001",
+            "Example Issuer", "Call", "bad ratio", "17,00 CHF", "open end",
+            "3,0", "Derivate-Tipps im Rückblick")
+        result = extract_derivative_overview_result_from_page_lines(
+            ((12, base), (13, METRICS_HEADER_LINES + BAYER_METRICS_LINES * 3)),
+            issue_id="2099-W01")
+        self.assertEqual(result.rows, ())
+        self.assertEqual(result.exceptions[0].reason, "base_row_parse_failed")
+
     def test_underlying_and_wkn_in_one_token_preserves_row_alignment(self) -> None:
         base = list(BASE_PAGE_LINES[:10])
         metrics = list(METRICS_HEADER_LINES)
