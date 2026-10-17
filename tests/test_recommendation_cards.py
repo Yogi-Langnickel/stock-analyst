@@ -786,6 +786,68 @@ class RecommendationCardsTest(unittest.TestCase):
             [("layout_table_extraction",)] * 3,
         )
 
+    def test_layout_grouped_cap_and_header_years_preserve_source_semantics(self) -> None:
+        for dividend in (True, False):
+            for metrics, years, expected in (
+                (("KUV", "KGV"), ("2026e", "2026e"), ("1,2", "18")),
+                (("KUV", "KGV"), ("2027e", "2027e"), (None, None)),
+                (("KBV", "KGV"), ("2027e", "2026e"), (None, "18")),
+                (("KGV",), ("2027e",), (None, None)),
+            ):
+                with self.subTest(dividend=dividend, metrics=metrics, years=years):
+                    base = "Unternehmen    WKN    Aktueller Kurs    Marktkap.    " + ("DR*    " if dividend else "")
+                    header = base + "    ".join(metrics) + "    Empf.-    Ziel    Stopp    Chance    Risiko"
+                    continuation = [" "] * len(header)
+                    for metric, year in zip(metrics, years):
+                        start = header.index(metric)
+                        continuation[start:start + len(year)] = year
+                    row = "Invented Followup    ZZ0001    8,00 EUR    2.345,6    " + ("1,0    " if dividend else "")
+                    row += ("1,2    18    " if len(metrics) == 2 else "18    ")
+                    row += "+2,0 % 01.01.99    12,00 EUR    6,00 EUR    ••••○    •••○○"
+                    cards = extract_recommendation_cards_from_lines((header, "".join(continuation), row),
+                        issue_id="2099-W01", page_number=12)
+                    self.assertEqual(len(cards), 1)
+                    self.assertEqual(cards[0].market_cap, "2.345,6 Mrd. EUR")
+                    self.assertEqual(cards[0].recommendation_status, "follow_up")
+                    self.assertEqual(cards[0].target, "12,00 EUR")
+                    self.assertEqual((cards[0].kuv_26e, cards[0].kgv_26e), expected)
+
+    def test_layout_rejects_malformed_grouping_and_blanks_ambiguous_header_year(self) -> None:
+        header = "Unternehmen    WKN    Aktueller Kurs    Marktkap.    DR*    KUV    KGV    Empf.-    Ziel    Stopp    Chance    Risiko"
+        row = "Invented Company    ZZ0001    8,00 EUR    {cap}    1,0    1,2    18    Neuempfehlung    12,00 EUR    6,00 EUR    ••••○    •••○○"
+        for cap in ("2.34", "2.345.67", "2..345", "2,345.6"):
+            with self.subTest(cap=cap):
+                self.assertEqual(extract_recommendation_cards_from_lines((header, row.format(cap=cap)),
+                    issue_id="2099-W01", page_number=12), ())
+        cards = extract_recommendation_cards_from_lines((header,
+            "2027e", row.format(cap="2.345")), issue_id="2099-W01", page_number=12)
+        self.assertEqual(len(cards), 1)
+        self.assertIsNone(cards[0].kuv_26e)
+        self.assertIsNone(cards[0].kgv_26e)
+        for recommendation in ("Neuempfehlung", "+2,0 % 01/99 01.01.99", "2,0 % 01/99 01.01.99"):
+            for malformed in (
+                row.format(cap="2.345").replace("1,2    18", "18"),
+                row.format(cap="2.345").replace("1,2    18", "1,2    18    25"),
+            ):
+                malformed = malformed.replace("Neuempfehlung", recommendation)
+                with self.subTest(malformed=malformed):
+                    self.assertEqual(extract_recommendation_cards_from_lines((header, malformed),
+                        issue_id="2099-W01", page_number=12), ())
+
+    def test_layout_duplicate_supported_metric_identity_remains_ambiguous(self) -> None:
+        for metric in ("KUV", "KGV"):
+            for second_year, expected in (("2026e", None), ("2027e", "12")):
+                with self.subTest(metric=metric, second_year=second_year):
+                    header = f"Unternehmen    WKN    Aktueller Kurs    Marktkap.    DR*    {metric}2026e    {metric}{second_year}    Empf.-    Ziel    Stopp    Chance    Risiko"
+                    row = "Invented Company    ZZ0001    8,00 EUR    2.345    1,0    12    18    Neuempfehlung    12,00 EUR    6,00 EUR    ••••○    •••○○"
+                    cards = extract_recommendation_cards_from_lines((header, row),
+                        issue_id="2099-W01", page_number=12)
+                    self.assertEqual(len(cards), 1)
+                    actual = cards[0].kuv_26e if metric == "KUV" else cards[0].kgv_26e
+                    self.assertEqual(actual, expected)
+                    self.assertEqual("valuation_metrics_ambiguous" in cards[0].extraction_notes,
+                        second_year == "2026e")
+
     def test_table_without_dividend_preserves_actions_and_primary_values(self) -> None:
         header = (
             "Unternehmen", "WKN", "Aktueller Kurs", "Marktkap.", "KUV", "KGV",

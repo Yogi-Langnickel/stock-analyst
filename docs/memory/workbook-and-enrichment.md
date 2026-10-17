@@ -65,6 +65,11 @@ Created: 2026-06-06
 - Comparison-table valuation columns are consumed in their printed header order.
   Preserve supported 2026 P/S and P/E values, but never relabel book-value metrics
   or another forecast year. Missing column cells remain ambiguous and blank.
+- Additive comparison layout recovery preserves strictly grouped European market
+  capitalization and header-declared valuation slot counts. It binds explicit
+  continuation years only through unambiguous column alignment; unsupported or
+  ambiguous metric/year fields stay blank. Recommendation syntax must not absorb
+  missing or extra numeric cells.
 
 ## Active Tabs And Identity
 

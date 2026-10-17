@@ -78,12 +78,13 @@ LAYOUT_TABLE_HEADER_RE = re.compile(
     r"\bUnternehmen\b.*\bWKN\b.*\bChance\b.*\bRisiko\b",
     flags=re.IGNORECASE,
 )
+GROUPED_DECIMAL_VALUE = r"(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?"
 LAYOUT_TABLE_ROW_PATTERN = (
     r"^\s*"
     r"(?P<name>.+?)\s+"
     r"(?P<wkn>[A-Z0-9]{6})\s+"
     rf"(?P<current_price>{EUROPEAN_AMOUNT_RE}\s*(?:€|\$|EUR|USD))\s+"
-    r"(?P<market_cap>\d+(?:,\d+)?)\s+"
+    rf"(?P<market_cap>{GROUPED_DECIMAL_VALUE})\s+"
     r"(?P<dividend_yield>\d+(?:,\d+)?|–)\s+"
     r"(?P<kuv>\d+(?:,\d+)?|–)\s+"
     r"(?P<kgv>\d+(?:,\d+)?|–)\s+"
@@ -716,12 +717,39 @@ def _extract_layout_table_cards(
     order remains strict while known table layouts are handled explicitly.
     """
 
-    header = next((line for line in lines if LAYOUT_TABLE_HEADER_RE.search(line)), None)
-    if header is None:
+    header_index = next((i for i, line in enumerate(lines) if LAYOUT_TABLE_HEADER_RE.search(line)), None)
+    if header_index is None:
         return ()
+    header = lines[header_index]
+    metric_headers = list(re.finditer(r"\b(KUV|KGV|KBV)(?:\s*(20\d{2}e|\d{2}e))?\b", header, re.I))
+    if not metric_headers or len(metric_headers) > 2:
+        return ()
+    metric_years = [m.group(2).casefold() if m.group(2) else None for m in metric_headers]
+    ambiguous_years = False
+    for continuation in lines[header_index + 1:header_index + 3]:
+        # Only header continuation rows may declare years. A source row must
+        # never lend its text or spacing to another row's column identities.
+        if re.search(r"\b[A-Z0-9]{6}\b", continuation):
+            break
+        for year in re.finditer(r"\b(?:20\d{2}e|\d{2}e)\b", continuation, re.I):
+            matches = [i for i, metric in enumerate(metric_headers)
+                if abs((year.start() + year.end()) / 2 - (metric.start() + len(metric.group(1)) / 2)) <= 4]
+            if len(matches) != 1 or metric_years[matches[0]] is not None:
+                ambiguous_years = True
+            else:
+                metric_years[matches[0]] = year.group().casefold()
     # Column absence is established by the header, never guessed from row length.
     has_dividend = bool(re.search(r"\b(?:DR|Dividendenrendite)\b", header, re.IGNORECASE))
-    row_pattern = LAYOUT_TABLE_ROW_RE if has_dividend else LAYOUT_TABLE_ROW_WITHOUT_DIVIDEND_RE
+    pattern = LAYOUT_TABLE_ROW_PATTERN
+    valuation_pattern = r"(?P<kuv>\d+(?:,\d+)?|–)\s+" + r"(?P<kgv>\d+(?:,\d+)?|–)\s+"
+    declared_pattern = "".join(rf"(?P<metric{i}>\d+(?:,\d+)?|–)\s+" for i in range(len(metric_headers)))
+    pattern = pattern.replace(valuation_pattern, declared_pattern)
+    if not has_dividend:
+        pattern = pattern.replace(r"(?P<dividend_yield>\d+(?:,\d+)?|–)\s+", "")
+    row_pattern = re.compile(pattern)
+    supported_kinds = [m.group(1).casefold() for m, year in zip(metric_headers, metric_years)
+        if m.group(1).casefold() in {"kuv", "kgv"} and year in {None, "26e", "2026e"}]
+    ambiguous_kinds = {kind for kind in supported_kinds if supported_kinds.count(kind) > 1}
 
     cards: list[RecommendationCard] = []
     for line in lines:
@@ -729,10 +757,22 @@ def _extract_layout_table_cards(
         if match is None:
             continue
         fields = match.groupdict()
-        recommendation_text = fields["recommendation"].casefold()
-        if "neuempfehlung" in recommendation_text:
+        valuation_values: dict[str, str | None] = {"kuv": None, "kgv": None}
+        extraction_notes = ["layout_table_extraction"]
+        if ambiguous_years or ambiguous_kinds:
+            extraction_notes.append("valuation_metrics_ambiguous")
+        if any(m.group(1).casefold() == "kbv" or year not in {None, "26e", "2026e"}
+            for m, year in zip(metric_headers, metric_years)):
+            extraction_notes.append("valuation_columns_not_in_workbook_schema")
+        if not ambiguous_years:
+            for i, (metric, year) in enumerate(zip(metric_headers, metric_years)):
+                kind = metric.group(1).casefold()
+                if kind in valuation_values and kind not in ambiguous_kinds and year in {None, "26e", "2026e"}:
+                    valuation_values[kind] = _dash_to_empty(fields[f"metric{i}"])
+        recommendation_text = fields["recommendation"].casefold().strip()
+        if recommendation_text == "neuempfehlung":
             recommendation_status = "new_recommendation"
-        elif "kein kauf" in recommendation_text:
+        elif recommendation_text == "kein kauf":
             recommendation_status = "no_buy"
         elif recommendation_text.startswith("kauflimit:"):
             limit_prices = _money_values_in_text(fields["recommendation"])
@@ -740,6 +780,14 @@ def _extract_layout_table_cards(
                 continue
             recommendation_status = f"Kauflimit: {limit_prices[0]}"
         else:
+            if not re.fullmatch(
+                r"(?:(?:[+-]?\d+(?:,\d+)?\s*%\s+)?"
+                r"(?:\d{1,2}/(?:\d{2}|\d{4})|depotkauf)"
+                r"(?:\s+\d{2}\.\d{2}\.\d{2,4})?"
+                r"|[+-]?\d+(?:,\d+)?\s*%\s+\d{2}\.\d{2}\.\d{2,4})",
+                recommendation_text.strip(),
+            ):
+                continue
             recommendation_status = "follow_up"
 
         performance_match = re.search(
@@ -766,9 +814,9 @@ def _extract_layout_table_cards(
                     _percentage_from_table_value(fields["dividend_yield"])
                     if has_dividend else None
                 ),
-                kuv_26e=_dash_to_empty(fields["kuv"]),
-                kgv_26e=_dash_to_empty(fields["kgv"]),
-                extraction_notes=("layout_table_extraction",),
+                kuv_26e=valuation_values["kuv"],
+                kgv_26e=valuation_values["kgv"],
+                extraction_notes=tuple(extraction_notes),
             )
         )
     return tuple(cards)
@@ -1375,7 +1423,7 @@ def _pair_visual_dot_ratings(
 
 
 def _market_cap_from_billions_value(value: str) -> str | None:
-    if DECIMAL_VALUE_RE.match(value):
+    if re.fullmatch(GROUPED_DECIMAL_VALUE + r"\*?", value):
         return f"{value} Mrd. EUR"
     return None
 
