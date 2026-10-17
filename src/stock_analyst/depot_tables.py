@@ -18,7 +18,7 @@ DATE_RE = re.compile(
 PRICE_RE = re.compile(r"\d+(?:\.\d{3})*,\d+\s*EUR\*?")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 QUANTITY_RE = re.compile(r"^\d+(?:\.\d{3})*$")
-TRANSACTION_ACTIONS = {"Kauf", "Verkauf", "Teilkauf", "Teilverkauf"}
+TRANSACTION_ACTIONS = {"Kauf", "Verkauf", "Teilkauf", "Teilverkauf", "Einbuchung"}
 
 
 @dataclass(frozen=True)
@@ -184,27 +184,31 @@ def _extract_transaction_rows(
     boundaries = {"Aktie/Derivat", "Durchgeführte Transaktionen", "Hinweis auf Interessenkonflikte:"}
     while cursor < len(lines) and lines[cursor] not in boundaries:
         action = lines[cursor]
+        inline_instrument = ""
+        if action.startswith("Einbuchung "):
+            action, inline_instrument = action.split(" ", 1)
         if action not in TRANSACTION_ACTIONS:
             raise ValueError("publisher depot transaction row does not match schema")
         wkn_index = _next_wkn_index(lines, cursor + 1)
-        if wkn_index is None or wkn_index == cursor + 1:
+        if wkn_index is None or (wkn_index == cursor + 1 and not inline_instrument):
             raise ValueError("publisher depot transaction identity is incomplete")
-        instrument_parts = lines[cursor + 1:wkn_index]
-        if any(part in TRANSACTION_ACTIONS for part in instrument_parts):
+        instrument_parts = ([inline_instrument] if inline_instrument else []) + list(lines[cursor + 1:wkn_index])
+        if any(part in TRANSACTION_ACTIONS or part.startswith("Einbuchung ") for part in instrument_parts):
             raise ValueError("publisher depot transaction identity is ambiguous")
         tail = lines[wkn_index + 1:wkn_index + 5]
         if len(tail) != 4 or not (
             QUANTITY_RE.fullmatch(tail[0])
             and re.fullmatch(r"\d{2}\.\d{2}\.\d{2}", tail[1])
             and PRICE_RE.fullmatch(tail[2])
-            and PERCENT_RE.fullmatch(tail[3])
+            and (PERCENT_RE.fullmatch(tail[3]) or _is_dash(tail[3]))
         ):
             raise ValueError("publisher depot transaction values are incomplete")
         rows.append(DepotTransactionRow(
             issue_id=issue_id, page=page_number, action=action,
             instrument=" ".join(instrument_parts), wkn=lines[wkn_index],
-            quantity=tail[0], transaction_date=tail[1], price=tail[2],
-            performance_since_buy=tail[3],
+            quantity=tail[0], transaction_date=tail[1],
+            price=tail[2],
+            performance_since_buy="" if _is_dash(tail[3]) else tail[3],
         ))
         cursor = wkn_index + 5
     return tuple(rows)

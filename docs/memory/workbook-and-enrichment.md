@@ -56,6 +56,10 @@ Created: 2026-06-06
 - Depot extraction preserves full purchase-date lists and supports structurally
   complete executed transactions, including partial sales. Malformed identity or
   value tails fail locally; never silently replace executed rows with no-data.
+- Depot transactions retain the controlled booking action `Einbuchung` without
+  creating a Buy/Sell recommendation, including an inline booking instrument.
+  Explicit dash performance cells become blank; numeric prices and all four
+  physical transaction value cells remain required, with no inferred values.
 - An exact sold literal in the Chart Check or Quick Check target cell is an
   explicit Sell action. Its target price remains blank; prose is not an action.
 - Comparison-table valuation columns are consumed in their printed header order.
