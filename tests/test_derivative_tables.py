@@ -97,6 +97,54 @@ EXTRA_METRICS_LINES = (
 
 
 class DerivativeOverviewTablesTest(unittest.TestCase):
+    def test_strike_runtime_token_preserves_mixed_unit_rows(self) -> None:
+        cases = (("0,01", "7.000 Pkte. open end", "7.000 Pkte."),
+                 ("1,00", "700,00GBx open end", "700,00GBx"),
+                 ("10,00", "12,50 NOK open end", "12,50 NOK"),
+                 ("0,10", "2.000 DKK open end", "2.000 DKK"))
+        base = list(BASE_PAGE_LINES[:10])
+        for ordinal, (ratio, token, _) in enumerate(cases, 1):
+            base.extend((f"Synthetic Product {ordinal}", f"ZZ{ordinal:04d}",
+                         "Example Issuer", "Turbo-Long", ratio, token, "3,0"))
+        base.append("Derivate-Tipps im Rückblick")
+        result = extract_derivative_overview_result_from_page_lines(
+            ((12, base), (13, METRICS_HEADER_LINES + BAYER_METRICS_LINES * len(cases))),
+            issue_id="2099-W01")
+        self.assertEqual(result.exceptions, ())
+        self.assertEqual(len(result.rows), len(cases))
+        for row, (ratio, _, strike) in zip(result.rows, cases):
+            self.assertEqual((row.ratio, row.strike_cap, row.runtime, row.omega_hebel),
+                             (ratio, strike, "open end", "3,0"))
+            self.assertEqual(row.source_pages, (12, 13))
+
+    def test_direction_ratio_strike_runtime_token_retains_original_boundaries(self) -> None:
+        base = (*BASE_PAGE_LINES[:-1], "Synthetic Currency", "ZZ0001", "Example Issuer",
+                "Turbo-Short 100,00 13,50 NOK open end", "4,5",
+                "Derivate-Tipps im Rückblick")
+        result = extract_derivative_overview_result_from_page_lines(
+            ((12, base), (13, METRICS_HEADER_LINES + BAYER_METRICS_LINES * 3)),
+            issue_id="2099-W01")
+        self.assertEqual(result.exceptions, ())
+        self.assertEqual(len(result.rows), 3)
+        row = result.rows[-1]
+        self.assertEqual((row.direction, row.ratio, row.strike_cap, row.runtime, row.omega_hebel),
+                         ("Turbo-Short", "100,00", "13,50 NOK", "open end", "4,5"))
+        self.assertEqual(row.source_pages, (12, 13))
+
+    def test_malformed_strike_runtime_tail_rejects_entire_table(self) -> None:
+        for token in ("7.000 open end", "7.000 Pkte. open end extra",
+                      "7.000 Pkte. 99.99.9999", "7.000 XYZ open end",
+                      "7.000 Pkte. open end 2,0"):
+            with self.subTest(token=token):
+                base = (*BASE_PAGE_LINES[:-1], "Synthetic Product", "ZZ0001",
+                        "Example Issuer", "Turbo-Long", "0,01", token, "3,0",
+                        "Derivate-Tipps im Rückblick")
+                result = extract_derivative_overview_result_from_page_lines(
+                    ((12, base), (13, METRICS_HEADER_LINES + BAYER_METRICS_LINES * 3)),
+                    issue_id="2099-W01")
+                self.assertEqual(result.rows, ())
+                self.assertEqual(result.exceptions[0].reason, "base_row_parse_failed")
+
     def test_combined_fx_strike_runtime_and_split_headers_preserve_all_rows(self) -> None:
         base = list(BASE_PAGE_LINES[:10])
         base[5:9] = ("Strike", "Cap", "Laufzeit", "Hebel", "Omega")

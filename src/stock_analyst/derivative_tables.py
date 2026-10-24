@@ -17,9 +17,13 @@ DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{2}$")
 PRICE_RE = re.compile(r"^(?:\d+(?:\.\d{3})*,\d+|\d+,\d+)\s*(?:EUR|USD|HKD)$")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 RATIO_RE = re.compile(r"^\d+(?:,\d+)?$")
+STRIKE_VALUE_PATTERN = r"\d+(?:\.\d{3})*(?:\s*,\d+)?\s*(?:EUR|USD|HKD|GBP|JPY|CHF|DKK|NOK|GBx|Pkte\.)"
+STRIKE_RUNTIME_RE = re.compile(
+    rf"^(?P<strike>{STRIKE_VALUE_PATTERN})(?:\s+(?P<runtime>open end|\d{{2}}\.\d{{2}}\.\d{{2}}))?$"
+)
 COMBINED_RATIO_STRIKE_RE = re.compile(
     r"^(?P<ratio>\d+(?:\s*,\d+)?)\s+"
-    r"(?P<strike>\d+(?:\.\d{3})*(?:\s*,\d+)?\s*(?:EUR|USD|HKD|GBP|JPY|CHF|DKK))"
+    rf"(?P<strike>{STRIKE_VALUE_PATTERN})"
     r"(?:\s+(?P<runtime>open end|\d{2}\.\d{2}\.\d{2}))?$"
 )
 TYPE_WORDS = {
@@ -479,6 +483,10 @@ def _parse_base_tail(tail: Sequence[str]) -> dict[str, Any] | None:
     if not issuer:
         return None
     index = direction_index + direction_consumed
+    if direction_consumed == 0:
+        # Direction and numeric columns share one original reader token.
+        # Replace locally without changing the original-token consumed count.
+        tail = (*tail[:index], tail[index][len(direction) + 1:], *tail[index + 1:])
     if index >= len(tail):
         return None
     combined = COMBINED_RATIO_STRIKE_RE.fullmatch(tail[index])
@@ -492,7 +500,11 @@ def _parse_base_tail(tail: Sequence[str]) -> dict[str, Any] | None:
         index += 1
     elif RATIO_RE.fullmatch(tail[index]) and index + 1 < len(tail):
         ratio = tail[index]
-        strike_cap = tail[index + 1]
+        strike = STRIKE_RUNTIME_RE.fullmatch(tail[index + 1])
+        if strike is None:
+            return None
+        strike_cap = re.sub(r"\s+(?=,)", "", strike.group("strike"))
+        combined_runtime = strike.group("runtime")
         index += 2
     else:
         return None
@@ -528,6 +540,10 @@ def _first_direction_match(lines: Sequence[str]) -> tuple[int, str, int] | None:
         candidate = lines[index]
         if candidate in TYPE_WORDS:
             return index, candidate, 1
+        for direction in TYPE_WORDS:
+            prefix = direction + " "
+            if candidate.startswith(prefix) and COMBINED_RATIO_STRIKE_RE.fullmatch(candidate[len(prefix):]):
+                return index, direction, 0
         if candidate.endswith("-") and index + 1 < len(lines):
             joined = f"{candidate}{lines[index + 1]}"
             if joined in TYPE_WORDS:
