@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import unicodedata
 from zoneinfo import ZoneInfo
 
 from stock_analyst.tsi_registry import assert_private_output, load_registry, validate_registry
@@ -113,6 +114,18 @@ def _money(value,currency) -> str:
     return text+(' '+_string(currency) if currency else ' (currency unresolved)')
 
 
+def _ranking_delta(value) -> str:
+    """Label font-only evidence; never interpret its direction or action."""
+    result=[];previous_graphic=False
+    for character in _string(value):
+        graphic=unicodedata.category(character) in ('Co','Cs')
+        if graphic:
+            if not previous_graphic:result.append('[graphic: review]')
+        else:result.append(character)
+        previous_graphic=graphic
+    return ''.join(result)
+
+
 def _display_row(row: dict,today: date) -> dict:
     f=row['printed_fields'];kind=row['record_type']
     table=f.get('instrument_type','stock') if kind=='recommendation' else kind
@@ -137,7 +150,7 @@ def _display_row(row: dict,today: date) -> dict:
         values += [f.get('action'),f.get('quantity'),f.get('price'),f.get('stop'),f.get('weight_percent'),
                    f.get('performance_percent'),f.get('effective_date'),'','']
     else:
-        values += [row.get('universe'),f.get('rank'),f.get('score'),f.get('rank_change'),f.get('score_change'),
+        values += [row.get('universe'),f.get('rank'),f.get('score'),_ranking_delta(f.get('rank_change')),_ranking_delta(f.get('score_change')),
                    f.get('high_low_comparison'),'','','']
     monetary_indexes=({'stock':(3,4,5,6),'derivative':(3,4,5,6),
                        'portfolio_snapshot':(4,5,6,8),'transaction':(4,5)}).get(table,())

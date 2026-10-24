@@ -67,8 +67,39 @@ second read before correction. The guide explicitly lists the derivative
 purchase fields intentionally omitted from this selected-field preview but
 preserved in its exact private binding. No source financial values changed.
 
-Iteration 2: pending independent re-review of these corrections.
+Iteration 2 accepted frozen code commit
+`264336dac5f33eece880d3284e1d3b0736e17b79` from both independent reviewers
+with no required feedback remaining. The primary independently passed
+compilation, 465 full tests, seven bundled tests, exact source bindings and
+private flags for all 66 selected observations, and the complete 143-by-17
+payload before explicitly releasing live creation.
 
-Live write/readback, unchanged core-tab checks and remote SHA publication are
-pending primary verification. No source observation approval is implied by
-engineering review or successful presentation readback.
+The bounded writer created the fresh TSI tab, restored its reversible probe,
+protected/formatted only that tab and verified exact RAW values. Its identical
+owned repeat returned a no-op. Engineering success did not change any source
+review state: zero approvals and `familyVisibleSafe=false` remain explicit.
+
+The primary's native Google PDF inspection covered all six exported pages.
+Coverage/footer caveats and section layouts were readable. It found a final
+display defect: three ranking-change cells used a font-specific private-use
+glyph that rendered as an unreadable box. A synthetic regression reproduced
+the unrenderable glyph before the display-only correction. The projection now
+labels private-use/surrogate glyphs `[graphic: review]` without interpreting
+direction; numeric deltas and `NEU` remain literal and private source bindings
+retain their original exact glyphs. Source financial facts and all 66 IDs are
+unchanged. This native-rendering learning is local to this TSI presentation.
+
+A private, one-off correction plan is prepared for those three ranking-delta
+cells only. It requires the exact old ownership, old complete live values,
+frozen old/new plan hashes and unchanged source bindings before RAW updates,
+then verifies the full new grid before committing its new ownership hash. It
+does not add a reusable refresh operation or modify styles/protections. The
+primary must approve the focused re-review before that correction executes.
+
+The primary independently confirmed 71 live tabs, TSI in index 2, 17 visible
+columns, six frozen rows, three frozen columns, one correct protection and zero
+formulas in TSI. All existing tab metadata except shifted indices and all full
+Search/Aktuell/Insider values/formulas matched the pre-write snapshot. The final
+glyph correction and remote SHA publication remain pending their required
+gates. No source observation approval is implied by engineering review or
+successful presentation readback.

@@ -10,7 +10,7 @@ import unittest
 from stock_analyst.tsi_records import make_observation
 from stock_analyst.tsi_sheet_preview import (
     OWNER_KEY, OWNER_NAME, apply_preview, build_preview_plan, build_values, format_requests,
-    validate_preview_plan, validate_owner, write_private_plan,
+    validate_preview_plan, validate_owner, write_private_plan, _ranking_delta,
 )
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -87,6 +87,19 @@ class TsiSheetPlanTests(unittest.TestCase):
         rec = next(s for s in plan['sections'] if s['record_type']=='recommendation')['rows'][0]
         self.assertEqual(rec['values'][7], 'Ausgestoppt')
         self.assertEqual(rec['values'][2], '')
+
+    def test_private_font_rank_changes_are_labelled_without_interpreting_direction(self):
+        registry=registry_with([
+            spec('2026-10-01','ranking',dict(name='Synthetic',rank='1',score='99',rank_change='\uf0d8 +2',score_change='NEU'),universe='Big Caps'),
+            spec('2026-10-01','ranking',dict(name='Other',rank='2',score='98',rank_change='-3',score_change='+7'),universe='Big Caps'),
+        ])
+        plan=build_preview_plan(registry,today=date(2026,10,25))
+        rows=[r for s in plan['sections'] for r in s['rows']]
+        self.assertEqual(rows[0]['values'][5],'[graphic: review] +2')
+        self.assertEqual(rows[0]['values'][6],'NEU')
+        self.assertEqual(rows[0]['binding']['printed_fields']['rank_change'],'\uf0d8 +2')
+        self.assertEqual(rows[1]['values'][5:7],['-3','+7'])
+        self.assertEqual(_ranking_delta('\ud800 -2'),'[graphic: review] -2')
 
     def test_same_instrument_differing_evidence_is_not_merged(self):
         registry = registry_with([spec('2026-10-01'), spec('2026-10-01',fields=dict(name='Synthetic Corp',wkn='SYN123',instrument_type='stock',current_price='9,87',currency='EUR'))])

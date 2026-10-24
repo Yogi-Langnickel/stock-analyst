@@ -27,6 +27,9 @@ Separate stacked tables show:
   Summary-only transaction observations are withheld with visible counts.
 - A top-five preview per ranking universe, each labelled with its source date
   and displayed/available counts. Ranking membership never means Buy.
+  Font-specific private-use ranking-change glyphs display `[graphic: review]`
+  rather than unreadable boxes; numeric deltas and `NEU` remain literal. The
+  original glyph remains unchanged in private source evidence and bindings.
 - Source coverage, unsupported documents, supported-source exceptions and
   complete omission counts. Expected graphical review flags are distinguished
   from extraction exceptions; unsupported page counts are not financial rows.
