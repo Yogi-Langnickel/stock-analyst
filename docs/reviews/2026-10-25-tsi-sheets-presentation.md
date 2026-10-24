@@ -52,9 +52,22 @@ Sheets rendering after the authorized creation.
 
 ## Persona review and final delivery
 
-Iteration 1: pending stable feature baseline and independent domain/QA review.
+Iteration 1 reviewed frozen feature commit
+`772da7678be87f3f2bb83cfd81a2f28ea709d258`. The independent domain reviewer
+passed; QA required a P2 presentation correction: long coverage and footer
+notes were still ordinary single cells despite their required caveats. A
+synthetic formatting invariant reproduced the missing spans before the fix.
+Coverage, source-document and footer notes now use freeze-safe `A:C` / `D:Q`
+merged spans without crossing frozen column C, retaining readable row heights.
 
-Iteration 2: pending required-fix resolution and independent re-review.
+Two optional observations were addressed rather than deferred. Probe
+restoration verification now runs inside `finally`, so a failed probe still
+confirms the cleared cell; a failure-path regression reproduced the absent
+second read before correction. The guide explicitly lists the derivative
+purchase fields intentionally omitted from this selected-field preview but
+preserved in its exact private binding. No source financial values changed.
+
+Iteration 2: pending independent re-review of these corrections.
 
 Live write/readback, unchanged core-tab checks and remote SHA publication are
 pending primary verification. No source observation approval is implied by

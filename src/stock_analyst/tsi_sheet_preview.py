@@ -247,10 +247,10 @@ def build_values(plan: dict) -> list[list[str]]:
                        'Expected graphical review flags are not additional parse failures.'),
                _padded(['Disposition','Count'])]
     values.extend(_padded([key.replace('_',' '),count]) for key,count in sorted(plan['dispositions'].items()) if count)
-    values.append(_padded(['Source documents: unsupported layouts remain explicit']))
+    values.append(_banner('Source documents','Unsupported layouts remain explicit; unsubstantiated source dates stay unresolved.'))
     values.append(_padded(['Product','Publication date','Extraction status','Pages','Observations','Exceptions']))
     values.extend(_padded([d['product'],d['publication_date'],d['status'],d['page_count'],d['observation_count'],d['exception_count']]) for d in plan['coverage'])
-    values.append(_padded(['This summarizes publisher evidence for private review. It is not personal financial advice.']))
+    values.append(_banner('PRIVATE REVIEW','This summarizes publisher evidence for private review. It is not personal financial advice.'))
     return values
 
 
@@ -275,6 +275,11 @@ def format_requests(plan: dict,sheet_id: int) -> list[dict]:
         merges(offset+1)
         requests.append({'repeatCell':{'range':{'sheetId':sheet_id,'startRowIndex':offset+2,'endRowIndex':offset+3,'startColumnIndex':0,'endColumnIndex':WIDTH},'cell':{'userEnteredFormat':{'backgroundColor':blue,'textFormat':{'bold':True}}},'fields':'userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.bold'}})
         offset+=4+len(section['rows'])
+    # These explanatory rows carry long text too; ordinary single-cell widths
+    # would clip the unsupported-source caveat and financial-review boundary.
+    for index,row in enumerate(values):
+        if row[0] in ('Coverage and omitted evidence','Source documents','PRIVATE REVIEW'):
+            bar(index)
     return requests
 
 
@@ -350,8 +355,8 @@ def apply_preview(config,plan: dict,registry: dict,*,sheets_service_factory=None
         if read!=[[probe]]:raise ValueError('Private TSI reversible write/readback failed')
     finally:
         values_api.clear(spreadsheetId=spreadsheet_id,range="'TSI'!A1",body={}).execute()
-    if values_api.get(spreadsheetId=spreadsheet_id,range="'TSI'!A1",valueRenderOption='FORMULA').execute().get('values',[]):
-        raise ValueError('Private TSI probe restoration failed')
+        if values_api.get(spreadsheetId=spreadsheet_id,range="'TSI'!A1",valueRenderOption='FORMULA').execute().get('values',[]):
+            raise ValueError('Private TSI probe restoration failed')
     requests=format_requests(plan,sheet_id)
     requests.append({'addProtectedRange':{'protectedRange':{'range':{'sheetId':sheet_id},'description':OWNER_KEY,'warningOnly':False,'editors':{'users':[config.service_account_email]}}}})
     book.batchUpdate(spreadsheetId=spreadsheet_id,body={'requests':requests}).execute()

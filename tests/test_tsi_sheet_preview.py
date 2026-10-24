@@ -193,6 +193,20 @@ class TsiSheetPlanTests(unittest.TestCase):
         self.assertEqual(fake.values_data,[])
         self.assertEqual(json.loads(fake.sheet['developerMetadata'][0]['metadataValue'])['phase'],'initializing')
         self.assertEqual(fake.protection_count,0)
+        self.assertEqual(sum(call['range']=="'TSI'!A1" for call in fake.value_reads),2)
+
+    def test_coverage_source_and_footer_notes_have_freeze_safe_readable_spans(self):
+        plan=build_preview_plan(registry_with([spec('2026-10-01')]),today=date(2026,10,25))
+        values=build_values(plan)
+        indexes=[next(i for i,row in enumerate(values) if row[0]=='Coverage and omitted evidence'),
+                 next(i for i,row in enumerate(values) if row[0].startswith('Source documents')),len(values)-1]
+        requests=format_requests(plan,123)
+        for index in indexes:
+            spans=[(request['mergeCells']['range']['startColumnIndex'],request['mergeCells']['range']['endColumnIndex'])
+                   for request in requests if 'mergeCells' in request and request['mergeCells']['range']['startRowIndex']==index]
+            self.assertEqual(sorted(spans),[(0,3),(3,17)])
+            self.assertTrue(values[index][3])
+        self.assertIn('not personal financial advice',values[-1][3])
 
     def test_plan_output_does_not_overwrite_unowned_registry(self):
         root=Path('data/private');root.mkdir(parents=True,exist_ok=True)
@@ -209,7 +223,7 @@ class FakeResult:
 
 
 class FakeSheets:
-    def __init__(self):self.sheet=None;self.values_data=[];self.mutations=[];self.protection_count=0;self.probe_mismatch=False
+    def __init__(self):self.sheet=None;self.values_data=[];self.mutations=[];self.protection_count=0;self.probe_mismatch=False;self.value_reads=[]
     def spreadsheets(self):return self
     def values(self):return FakeValues(self)
     def get(self,**kwargs):return FakeResult({'sheets':[self.sheet] if self.sheet else []})
@@ -234,7 +248,10 @@ class FakeSheets:
 class FakeValues:
     def __init__(self,parent):self.parent=parent
     def get(self,**kwargs):
-        if self.parent.probe_mismatch and kwargs['range']=="'TSI'!A1":return FakeResult({'values':[['Incorrect probe']]})
+        self.parent.value_reads.append(kwargs)
+        if self.parent.probe_mismatch and kwargs['range']=="'TSI'!A1":
+            self.parent.probe_mismatch=False
+            return FakeResult({'values':[['Incorrect probe']]})
         return FakeResult({'values':self.parent.values_data})
     def update(self,**kwargs):self.parent.mutations.append(deepcopy(kwargs));self.parent.values_data=deepcopy(kwargs['body']['values']);return FakeResult({})
     def clear(self,**kwargs):self.parent.mutations.append(kwargs);self.parent.values_data=[];return FakeResult({})

@@ -35,6 +35,10 @@ Each financial display row binds to one original observation and exact review
 fingerprint in the private plan. Same-WKN evidence from different source pages
 is retained separately. Article text, OCR text, source aliases, local paths and
 credentials do not enter the spreadsheet. Missing facts stay blank/unresolved.
+The 17-column derivative preview intentionally omits the printed purchase price
+and combined purchase-date/issue field; they remain unchanged in the private
+observation binding. This is a selected-field presentation, not a complete
+financial-field export.
 
 ## Irregular updates and future complementary views
 
@@ -89,6 +93,7 @@ initializing marker or unowned existing `TSI` tab is preserved and refused;
 this command never clears and replaces an existing presentation. A failed new
 publish leaves an explicit initializing marker for investigation. The probe
 cell is restored in `finally`, including a failed probe readback.
+The restoration is read back and confirmed even when the probe itself fails.
 
 Google Sheets values and identifiers, plans, receipts and any screenshots stay
 private under ignored storage. The plan records `privateDraftReviewOnly=true`,
