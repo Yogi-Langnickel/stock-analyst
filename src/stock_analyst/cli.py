@@ -84,6 +84,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="stock-analyst")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
+    tsi_import = subcommands.add_parser('tsi-import', help='Import local private TSI PDF/image sources.')
+    tsi_import.add_argument('source', type=Path)
+    tsi_import.add_argument('--output-dir', type=Path, default=Path('data/private/tsi-review-v1/local'))
+    tsi_import.add_argument('--no-ocr', action='store_true')
+    tsi_import.add_argument('--reprocess', action='store_true', help='Re-extract cached documents, preserving first ingestion time.')
+    tsi_import.add_argument('--region', type=int, nargs=4, metavar=('X0','Y0','X1','Y1'))
+    tsi_status = subcommands.add_parser('tsi-status', help='Report aggregate private registry coverage only.')
+    tsi_status.add_argument('registry', type=Path)
+    tsi_preview = subcommands.add_parser('tsi-preview', help='Write an offline private HTML reviewer preview.')
+    tsi_preview.add_argument('registry', type=Path)
+    tsi_preview.add_argument('--output', type=Path, required=True)
+
     process_pdf = subcommands.add_parser(
         "process-pdf",
         help="Validate a PDF and show the local processing plan.",
@@ -1612,7 +1624,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        if args.command == "process-pdf":
+        if args.command in {'tsi-import','tsi-status','tsi-preview'}:
+            from stock_analyst.tsi_registry import import_sources, load_registry, registry_summary
+            try:
+                registry = (import_sources(args.source,args.output_dir,ocr=not args.no_ocr,
+                            region=tuple(args.region) if args.region else None,
+                            reprocess=args.reprocess) if args.command=='tsi-import'
+                            else load_registry(args.registry))
+                result = registry_summary(registry)
+                if args.command=='tsi-preview':
+                    from stock_analyst.tsi_preview import write_preview
+                    write_preview(registry,args.output)
+                    result['preview_written'] = True
+            except Exception:
+                # Parser/decoder exceptions can contain private paths or source text.
+                parser.exit(2, 'error: private local TSI operation failed; check source, registry, dependencies and private output path\n')
+        elif args.command == "process-pdf":
             result = run_process_pdf(args.pdf, dry_run=args.dry_run, upload_dir=args.upload_dir)
         elif args.command == "import-pdf-folder":
             result = run_import_pdf_folder(

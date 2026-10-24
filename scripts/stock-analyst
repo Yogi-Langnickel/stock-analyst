@@ -26,6 +26,9 @@ Usage:
   scripts/stock-analyst compile
   scripts/stock-analyst test
   scripts/stock-analyst cli <stock_analyst.cli args...>
+  scripts/stock-analyst tsi-import <local-folder-or-file> [--output-dir data/private/tsi-review-v1/local]
+  scripts/stock-analyst tsi-status <private-registry.json>
+  scripts/stock-analyst tsi-preview <private-registry.json> --output data/private/tsi-review-v1/preview.html
   scripts/stock-analyst corpus-status [issues-folder]
   scripts/stock-analyst workbook-export-plan <pdf> [args...]
   scripts/stock-analyst refinement-plan <pdf> [args...]
@@ -74,7 +77,7 @@ case "${COMMAND}" in
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "$@"
     ;;
-  workbook-export-plan|refinement-plan|recommendation-cards|section-inventory|dividend-strategy|quick-check|chart-check|visual-ocr-review|ocr-fixture-plan|ocr-needed|market-data-plan|market-symbol-map-template|process-pdf|import-pdf-folder|corpus-status|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap|google-sheets-clear-data|google-sheets-refresh-search|google-sheets-export-plan|google-sheets-refinement)
+  tsi-import|tsi-status|tsi-preview|workbook-export-plan|refinement-plan|recommendation-cards|section-inventory|dividend-strategy|quick-check|chart-check|visual-ocr-review|ocr-fixture-plan|ocr-needed|market-data-plan|market-symbol-map-template|process-pdf|import-pdf-folder|corpus-status|extraction-quality-report|review-queue|google-access-smoke|google-drive-pdfs|google-sheets-bootstrap|google-sheets-clear-data|google-sheets-refresh-search|google-sheets-export-plan|google-sheets-refinement)
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" -m stock_analyst.cli "${COMMAND}" "$@"
     ;;

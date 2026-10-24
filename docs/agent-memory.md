@@ -13,6 +13,13 @@ Last compacted: 2026-06-06
 - Local PDF intake can validate one PDF or a folder, copy PDFs into ignored
   private storage, record metadata-only JSONL manifests, and dedupe by
   checksum.
+- TSI has a separate local reviewer adapter: `tsi-import`, `tsi-status` and
+  `tsi-preview`; see `docs/tsi-local-review.md`. Its full-hash registry retains
+  aliases, all page coverage, typed publisher evidence and exact review hashes.
+  Modern USA is supported; legacy USA/Premium and special reports stay visibly
+  unsupported. TSI never uses DA week identities or the opening-page skip.
+  All TSI observations remain private, `needs_review` and non-exportable; no
+  Sheets/Search integration or automatic approvals are part of this milestone.
 - The local private corpus is present under ignored `data/private/issues/`
   through latest issue `DA_2026_25.pdf`. Corpus availability is no longer a
   blocker; use metadata-only `corpus-status` to verify counts, latest issue,
