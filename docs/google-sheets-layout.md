@@ -270,6 +270,24 @@ and `privateDraftReviewOnly=false`; draft reviewer writes return
 `exportMode=private_draft_review_export`, `familyVisibleSafe=false`, and
 `privateDraftReviewOnly=true`.
 
+For the established private weekly workflow, use `--require-sec-enrichment`
+together with `--allow-draft-rows`. Required missing SEC configuration fails
+before writes. Configured SEC failure or partial coverage is incomplete with a
+nonzero process exit; retain the nested `issueExport` receipt if the issue phase
+succeeded. The complete weekly refresh also requires exact fetch-disabled replay
+and `google-sheets-verify-plan PLAN --env-file .env --expected-ledger-rows N`.
+The verifier is GET-only, compares the documented visible plan projection and
+rebuilt live Search index, and returns redacted booleans/counts with a nonzero
+exit on incomplete state. Take `N` from the successful enrichment receipt.
+See [weekly execution](weekly-execution.md) for the canonical completion steps.
+
+Ledger replacements write Company filing hyperlinks and transaction values
+together in one atomic Sheets update, avoiding mismatched identities after an
+intermediate request failure. Search installs its replacement index before
+clearing stale tails, preserving existing data if replacement fails. These
+per-write safeguards do not make the multi-request weekly refresh transactional;
+a later failure can leave completed phases visible and requires verification.
+
 Use `scripts/stock-analyst google-sheets-refresh-search --env-file .env` to
 apply the clean live-tab structure and rebuild `Search` from existing issue
 tabs without re-exporting magazine rows.

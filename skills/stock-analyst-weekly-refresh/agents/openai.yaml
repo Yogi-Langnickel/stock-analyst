@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stock Analyst Weekly Refresh"
+  short_description: "Safely refresh the weekly issue and insider ledger"
+  default_prompt: "Use $stock-analyst-weekly-refresh to process the newest private issue, reconcile review evidence, and refresh Insider Activity safely."

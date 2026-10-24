@@ -85,6 +85,16 @@ runtime requirement and cite its stated reason; do not claim the original task
 lacked authority. A later acceptance proves launch permission only; completion
 requires successful receipts, exact replay and independent live verification.
 
+Use [docs/weekly-execution.md](docs/weekly-execution.md) for the concrete first
+request template, phase status contract and read-only verification command.
+The tracked `skills/stock-analyst-weekly-refresh/` bundle is the maintained source
+for the installed skill; synchronize it from the reviewed commit with
+`scripts/install-weekly-skill`, then require a passing `--check`. Weekly exports
+use `--require-sec-enrichment` and must pass `google-sheets-verify-plan` plus
+exact fetch-disabled replay before completion. A successful issue phase alone
+is insufficient. Merely reading or repairing this workflow does not invoke a
+weekly refresh or authorize an unsolicited workbook write.
+
 ## Memory
 
 This repo starts with lightweight documentation:

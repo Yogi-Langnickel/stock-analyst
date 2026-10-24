@@ -36,6 +36,7 @@ from stock_analyst.google_access import (
     _managed_insider_filter_view_specs,
     _reorder_issue_review_tabs_newest_first,
     _project_legacy_aktuell_derivative_values,
+    _refresh_issue_search_sheet,
     _simplify_insider_transaction,
     bootstrap_google_sheet,
     build_drive_pdf_metadata_result,
@@ -158,6 +159,7 @@ class _FakeSpreadsheets:
         self.payload = payload
         self.operation_log = operation_log if operation_log is not None else []
         self.batch_update_requests = []
+        self.fail_update_cells = False
         self.values_resource = _FakeValues(operation_log=self.operation_log)
 
     def get(self, **_kwargs):
@@ -166,6 +168,10 @@ class _FakeSpreadsheets:
     def batchUpdate(self, **kwargs):
         self.operation_log.append(("spreadsheets.batchUpdate", kwargs))
         self.batch_update_requests.append(kwargs)
+        if self.fail_update_cells and any(
+            "updateCells" in request for request in kwargs.get("body", {}).get("requests", [])
+        ):
+            raise RuntimeError("simulated atomic cells update failure")
         sheets = self.payload.get("sheets", [])
         for request in kwargs.get("body", {}).get("requests", []):
             if "addSheet" in request:
@@ -195,7 +201,10 @@ class _FakeSpreadsheets:
                     if item["properties"].get("sheetId") == sheet_id
                 )
                 sheet = sheets.pop(sheet_index)
-                sheet["properties"].update(update)
+                grid_properties = update.get("gridProperties")
+                if grid_properties is not None:
+                    sheet["properties"].setdefault("gridProperties", {}).update(grid_properties)
+                sheet["properties"].update({key: value for key, value in update.items() if key != "gridProperties"})
                 sheets.insert(min(int(update.get("index", sheet_index)), len(sheets)), sheet)
         return _FakeExecute({"updated": True})
 
@@ -257,6 +266,28 @@ class _FakeSheets:
 
     def spreadsheets(self):
         return self.spreadsheets_resource
+
+
+def _insider_cell_write(sheets: _FakeSheets) -> dict[str, object]:
+    writes = [
+        request["updateCells"]
+        for batch in sheets.spreadsheets_resource.batch_update_requests
+        for request in batch["body"]["requests"]
+        if request.get("updateCells", {}).get("start", {}).get("sheetId") == 30
+    ]
+    if len(writes) != 1:
+        raise AssertionError(f"expected one atomic ledger replacement, found {len(writes)}")
+    return writes[0]
+
+
+def _insider_written_rows(sheets: _FakeSheets) -> list[list[str]]:
+    return [
+        [
+            value["userEnteredValue"].get("stringValue", value["userEnteredValue"].get("formulaValue"))
+            for value in row["values"]
+        ]
+        for row in _insider_cell_write(sheets)["rows"][3:]
+    ]
 
 
 class GoogleAccessTest(unittest.TestCase):
@@ -1118,38 +1149,17 @@ class GoogleAccessTest(unittest.TestCase):
         insider_header_write_index = next(
             index
             for index, (operation, request) in enumerate(sheets.operation_log)
-            if operation == "values.batchUpdate"
+            if operation == "spreadsheets.batchUpdate"
             and any(
-                item["range"] == "'Insider Activity'!A3:L3"
-                for item in request["body"]["data"]
+                item.get("updateCells", {}).get("start", {}).get("sheetId") == 30
+                for item in request["body"]["requests"]
             )
         )
         self.assertGreater(stale_banner_clear_index, insider_header_write_index)
-        raw_batches = [
-            request["body"]["data"]
-            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
-            if request["body"].get("valueInputOption") == "RAW"
-        ]
-        insider_write = next(
-            item
-            for batch in raw_batches
-            for item in batch
-            if item["range"] == "'Insider Activity'!B4:L5"
-        )
-        self.assertTrue(any(row[0] == "A0ONE | A0TWO" for row in insider_write["values"]))
-        formula_batches = [
-            request["body"]["data"]
-            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
-            if request["body"].get("valueInputOption") == "USER_ENTERED"
-        ]
-        company_write = next(
-            item
-            for batch in formula_batches
-            for item in batch
-            if item["range"] == "'Insider Activity'!A4:A5"
-        )
+        written_rows = _insider_written_rows(sheets)
+        self.assertTrue(any(row[1] == "A0ONE | A0TWO" for row in written_rows))
         self.assertTrue(
-            all(value[0].startswith('=HYPERLINK("https://sec/') for value in company_write["values"])
+            all(row[0].startswith('=HYPERLINK("https://sec/') for row in written_rows)
         )
         grid_updates = [
             request["updateSheetProperties"]
@@ -1354,14 +1364,7 @@ class GoogleAccessTest(unittest.TestCase):
 
         self.assertEqual(result["rowsRetained"], 1)
         self.assertEqual(result["rowsExcludedByTransactionType"], 2)
-        raw_write = next(
-            item
-            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
-            if request["body"].get("valueInputOption") == "RAW"
-            for item in request["body"]["data"]
-            if item["range"] == "'Insider Activity'!B4:L4"
-        )
-        self.assertEqual(raw_write["values"][0][6], "sale")
+        self.assertEqual(_insider_written_rows(sheets)[0][7], "sale")
 
     def test_insider_activity_rejects_partial_header_before_mutation(self) -> None:
         for header in (
@@ -1440,14 +1443,7 @@ class GoogleAccessTest(unittest.TestCase):
             sheets_service_factory=lambda: sheets,
         )
 
-        raw_write = next(
-            item
-            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
-            if request["body"].get("valueInputOption") == "RAW"
-            for item in request["body"]["data"]
-            if item["range"] == "'Insider Activity'!B4:L4"
-        )
-        self.assertEqual(raw_write["values"][0], [
+        self.assertEqual(_insider_written_rows(sheets)[0][1:], [
             "OLDWKN | NEWWKN", "EXM", "Jane Doe", "Director", "110",
             "2026-08-01", "purchase", "Acquired", "10", "12.50", "125.00",
         ])
@@ -1498,14 +1494,128 @@ class GoogleAccessTest(unittest.TestCase):
         )
 
         self.assertEqual(result["rowsRetained"], 1)
-        raw_write = next(
-            item
-            for request in sheets.spreadsheets_resource.values_resource.batch_update_requests
-            if request["body"].get("valueInputOption") == "RAW"
-            for item in request["body"]["data"]
-            if item["range"] == "'Insider Activity'!B4:L4"
+        self.assertEqual(_insider_written_rows(sheets)[0][6:9], ["2026-08-01", "purchase", "Acquired"])
+
+    def test_insider_atomic_replacement_keeps_reordered_retained_rows_and_literal_values_together(self) -> None:
+        sheets = _FakeSheets({"sheets": [
+            {"properties": {"sheetId": 10, "title": "Search"}},
+            {"properties": {"sheetId": 20, "title": "Aktuell"}},
+            {"properties": {"sheetId": 30, "title": "Insider Activity"}},
+        ]})
+        oldest = [
+            '=HYPERLINK("https://sec/oldest","Oldest")', "000001", "OLD", "Pat", "Director",
+            "9007199254740993", "2026-08-01", "purchase", "Acquired", "12", "10.00", "120.00",
+        ]
+        newest = [
+            '=HYPERLINK("https://sec/newest","Newest")', "000003", "NEW", "Sam", "Officer",
+            "40", "2026-08-03", "sale", "Disposed", "3", "20.00", "60.00",
+        ]
+        incoming = [
+            'Middle "Quoted"', '=IMPORTXML("https://invalid.test","//x")', "+TICKER", "=1+1", "@Director",
+            "-123", "2026-08-02", "purchase", "Acquired", "0012", "12.50", "150.00",
+        ]
+        sheets.spreadsheets_resource.values_resource.values_by_range["'Insider Activity'!A1:S"] = [
+            list(_headers_for("Insider Activity")), oldest, newest,
+        ]
+        result = write_insider_activity_rows_to_google_sheet(
+            GoogleAccessConfig(
+                drive_folder_id="synthetic-drive-folder-id-0001",
+                sheets_spreadsheet_id="test-spreadsheet",
+                credentials_path=Path("synthetic.json"),
+                service_account_email="stock-analyst@example.test",
+            ),
+            [incoming],
+            source_urls=["https://sec/middle"],
+            sheets_service_factory=lambda: sheets,
         )
-        self.assertEqual(raw_write["values"][0][5:8], ["2026-08-01", "purchase", "Acquired"])
+
+        self.assertEqual(result["rowsRetained"], 3)
+        written_rows = _insider_written_rows(sheets)
+        self.assertEqual(written_rows[0], newest)
+        self.assertEqual(written_rows[2], oldest)
+        self.assertEqual(written_rows[1][1:], incoming[1:])
+        self.assertEqual(written_rows[1][0], '=HYPERLINK("https://sec/middle","Middle ""Quoted""")')
+        update = _insider_cell_write(sheets)
+        self.assertEqual(update["start"], {"sheetId": 30, "rowIndex": 0, "columnIndex": 0})
+        self.assertEqual(update["fields"], "userEnteredValue")
+        for row in update["rows"][3:]:
+            self.assertEqual(len(row["values"]), 12)
+            self.assertEqual(set(row["values"][0]["userEnteredValue"]), {"formulaValue"})
+            for cell in row["values"][1:]:
+                self.assertEqual(set(cell["userEnteredValue"]), {"stringValue"})
+        self.assertFalse(any(
+            re.search(r"'Insider Activity'![AB]4", item["range"])
+            for batch in sheets.spreadsheets_resource.values_resource.batch_update_requests
+            for item in batch["body"]["data"]
+        ))
+
+    def test_insider_atomic_replacement_failure_keeps_old_grid_and_skips_cleanup(self) -> None:
+        spec = next(spec for spec in DEFAULT_SHEET_TABS if spec.title == "Insider Activity")
+        sheets = _FakeSheets({"sheets": [
+            {"properties": {"sheetId": 10, "title": "Search"}},
+            {"properties": {"sheetId": 20, "title": "Aktuell"}},
+            {"properties": {"sheetId": 30, "title": "Insider Activity", "gridProperties": {"rowCount": 500, "columnCount": 12}}},
+        ]})
+        retained = [
+            '=HYPERLINK("https://sec/retained","Retained")', "000001", "OLD", "Pat", "Director",
+            "90", "2026-08-01", "purchase", "Acquired", "12", "10.00", "120.00",
+        ]
+        header_rows = [[value] for _cell, value in spec.metadata_cells] + [list(spec.headers)]
+        values = sheets.spreadsheets_resource.values_resource
+        values.values_by_range["'Insider Activity'!A1:S"] = [*header_rows, retained]
+        values.values_by_range["'Insider Activity'!A1:S3"] = header_rows
+        sheets.spreadsheets_resource.fail_update_cells = True
+
+        with self.assertRaisesRegex(GoogleAccessError, "read back the ledger before retrying"):
+            write_insider_activity_rows_to_google_sheet(
+                GoogleAccessConfig(
+                    drive_folder_id="synthetic-drive-folder-id-0001",
+                    sheets_spreadsheet_id="test-spreadsheet",
+                    credentials_path=Path("synthetic.json"),
+                    service_account_email="stock-analyst@example.test",
+                ),
+                (),
+                sheets_service_factory=lambda: sheets,
+            )
+
+        atomic_batch = next(
+            batch for batch in sheets.spreadsheets_resource.batch_update_requests
+            if any("updateCells" in request for request in batch["body"]["requests"])
+        )
+        self.assertIn("updateSheetProperties", atomic_batch["body"]["requests"][0])
+        self.assertEqual(_insider_written_rows(sheets), [retained])
+        ledger_properties = next(
+            sheet["properties"] for sheet in sheets.spreadsheets_resource.payload["sheets"]
+            if sheet["properties"]["sheetId"] == 30
+        )
+        self.assertEqual(ledger_properties["gridProperties"]["rowCount"], 500)
+        # Bootstrap changes only frozen dimensions; the failed atomic resize
+        # cannot delete any of the old ledger's transaction rows.
+        self.assertFalse(any(
+            request["range"].startswith("'Insider Activity'!")
+            for request in values.clear_requests
+        ))
+
+    def test_insider_company_without_filing_url_keeps_formula_like_name_literal(self) -> None:
+        sheets = _FakeSheets({"sheets": [
+            {"properties": {"sheetId": 10, "title": "Search"}},
+            {"properties": {"sheetId": 20, "title": "Aktuell"}},
+            {"properties": {"sheetId": 30, "title": "Insider Activity"}},
+        ]})
+        row = ['=IMPORTXML("https://invalid.test","//x")', "000001", "EXM", "Pat", "Director",
+               "90", "2026-08-01", "purchase", "Acquired", "12", "10.00", "120.00"]
+        write_insider_activity_rows_to_google_sheet(
+            GoogleAccessConfig(
+                drive_folder_id="synthetic-drive-folder-id-0001",
+                sheets_spreadsheet_id="test-spreadsheet",
+                credentials_path=Path("synthetic.json"),
+                service_account_email="stock-analyst@example.test",
+            ),
+            [row],
+            sheets_service_factory=lambda: sheets,
+        )
+        company_value = _insider_cell_write(sheets)["rows"][3]["values"][0]["userEnteredValue"]
+        self.assertEqual(company_value, {"formulaValue": '=T("=IMPORTXML(""https://invalid.test"",""//x"")")'})
 
     def test_insider_activity_has_requested_headers_and_direction_colours(self) -> None:
         self.assertEqual(
@@ -2078,6 +2188,7 @@ class GoogleAccessTest(unittest.TestCase):
                 for item in batch
             )
         )
+
         self.assertFalse(
             any(
                 item["range"].startswith("'DA_2026_30'!")
@@ -2136,6 +2247,54 @@ class GoogleAccessTest(unittest.TestCase):
             input_format["cell"]["note"],
             "Enter a company name or WKN.",
         )
+
+    def test_search_replacement_failure_preserves_existing_index_query_and_capacity(self) -> None:
+        sheets = _FakeSheets({"sheets": [
+            {"properties": {"sheetId": 10, "title": "Search", "gridProperties": {"rowCount": 500}}},
+        ]})
+        values = sheets.spreadsheets_resource.values_resource
+        values.values_by_range["'Search'!B1:C1"] = [["", "Existing query"]]
+        values.fail_batch_update = True
+
+        with self.assertRaisesRegex(RuntimeError, "simulated batch update failure"):
+            _refresh_issue_search_sheet(
+                sheets,
+                spreadsheet_id="test-spreadsheet",
+                sheet_ids_by_title={"Search": 10},
+            )
+
+        self.assertEqual(values.clear_requests, [])
+        self.assertEqual(len(values.batch_update_requests), 1)
+        self.assertEqual(values.batch_update_requests[0]["body"]["valueInputOption"], "RAW")
+        self.assertEqual(sheets.spreadsheets_resource.payload["sheets"][0]["properties"]["gridProperties"]["rowCount"], 500)
+        self.assertEqual(values.values_by_range["'Search'!B1:C1"], [["", "Existing query"]])
+
+    def test_search_replacement_precedes_cleanup_without_full_index_clear(self) -> None:
+        sheets = _FakeSheets({"sheets": [
+            {"properties": {"sheetId": 10, "title": "Search", "gridProperties": {"rowCount": 500}}},
+        ]})
+        result = _refresh_issue_search_sheet(
+            sheets,
+            spreadsheet_id="test-spreadsheet",
+            sheet_ids_by_title={"Search": 10},
+        )
+
+        self.assertEqual(result, 0)
+        replacement_index = next(
+            index for index, (operation, request) in enumerate(sheets.operation_log)
+            if operation == "values.batchUpdate"
+            and request["body"]["valueInputOption"] == "RAW"
+        )
+        clear_indices = [
+            index for index, (operation, _request) in enumerate(sheets.operation_log)
+            if operation == "values.clear"
+        ]
+        self.assertTrue(clear_indices)
+        self.assertTrue(all(index > replacement_index for index in clear_indices))
+        clear_ranges = [request["range"] for request in sheets.spreadsheets_resource.values_resource.clear_requests]
+        self.assertIn("'Search'!U2:AQ", clear_ranges)
+        self.assertNotIn("'Search'!T:AQ", clear_ranges)
+        self.assertEqual(sheets.spreadsheets_resource.payload["sheets"][0]["properties"]["gridProperties"]["rowCount"], 500)
 
     def test_aktuell_table_format_uses_colored_stacked_section_headers(self) -> None:
         requests = _build_aktuell_table_format_requests(

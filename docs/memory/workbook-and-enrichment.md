@@ -8,6 +8,11 @@ Created: 2026-06-06
 - Existing weekly private reviewer-workbook authority and execution-denial
   handling are recorded in [AGENTS.md](../../AGENTS.md#weekly-execution-authorization).
   Private draft import does not approve source rows or authorize family export.
+  [Weekly execution](../weekly-execution.md) carries the redacted first-request
+  template, retained cumulative effects, phase receipts and completion gates.
+  The five-file `skills/stock-analyst-weekly-refresh/` bundle is the tracked source;
+  `scripts/install-weekly-skill --check` detects installed drift. Install reviewed
+  bytes using its commit/digest guards; do not edit an untracked copy separately.
 
 - A local embedded-text recommendation-card extractor captures printed company
   name, instrument type, WKN, current price, target, stop, chance/risk dots,
@@ -96,8 +101,10 @@ Created: 2026-06-06
 - Google Sheets export replaces `Aktuell` on each
   same-issue export so the tab stays focused on the latest plan.
 - Google Sheets row replacement writes the new combined ranges before clearing
-  stale trailing rows. Do not reintroduce clear-before-write behavior; a failed
-  write must leave existing rows intact.
+  stale trailing rows. Search replacement follows the same write-before-clear
+  rule. A failed replacement must leave existing data intact. Insider filing
+  hyperlinks and all transaction values are written in one atomic update so
+  identity and values cannot be split by an intermediate request failure.
 - Google Sheets export results must distinguish approved-family writes from
   private draft-review writes. Default exports return
   `exportMode=approved_family_export` and `familyVisibleSafe=true`; explicit
@@ -143,6 +150,15 @@ Created: 2026-06-06
 
 - General market-data enrichment is disabled by default. SEC Form 4 enrichment
   runs after Google Sheets issue imports when `SEC_USER_AGENT` is configured.
+  Weekly exports add `--require-sec-enrichment` so missing configuration fails
+  before writes. Configured SEC failure or partial scan returns an incomplete
+  overall export and nonzero exit, retaining successful `issueExport` evidence.
+  Export write success alone never proves weekly completion: require exact
+  fetch-disabled replay plus `google-sheets-verify-plan` against the retained
+  plan and expected retained ledger count from the successful SEC receipt.
+- Unresolved/non-US candidates remain explicitly uncovered. Ambiguous identity
+  blocks mapping that candidate; never infer an issuer. A complete scan of resolved
+  issuers does not establish coverage of unresolved candidates.
 - Stooq CSV parsing exists only as fixture-driven enrichment and cannot
   overwrite magazine source values.
 - Provider symbols must currently be derived from exact-width `Stocks` rows,
@@ -183,6 +199,9 @@ Created: 2026-06-06
 - `Insider Activity` is a visible cumulative ledger. Weekly runs deduplicate by
   filing transaction, retain direct SEC URLs as company hyperlinks, and Search
   displays matching insider rows below Derivatives. The visible ledger has 12
-  columns in reviewer order; transaction codes are simplified to purchase,
-  sale, Conversion, Payment, Gift, Awarded, or Other. Acquired rows are green
-  and disposed rows are red.
+  columns in reviewer order. The live ledger retains only non-derivative stock
+  transactions labelled `purchase` or `sale`, with `Acquired` or `Disposed`
+  direction. Label and direction remain independent source fields; do not require
+  particular pairs or infer cash consideration/open-market execution. Other parsed
+  transaction types are excluded. Acquired rows are green and disposed rows are
+  red, with row-4-relative rules beneath the row-3 header.

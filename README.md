@@ -225,6 +225,31 @@ Unapproved draft rows are skipped unless `--allow-draft-rows` is supplied for
 the private reviewer workbook. The approval CSV and reviewed workbook plan are
 private artifacts; command output returns counts and paths, not row content.
 
+For the established weekly private reviewer workflow, a normal weekly-update
+request already authorizes `needs_review` publication into the known workbook
+with zero synthetic approvals. Use the tracked
+[weekly skill](skills/stock-analyst-weekly-refresh/SKILL.md) and
+[weekly execution guide](docs/weekly-execution.md) for the bounded first network
+request and completion evidence. Explicit offline restrictions take priority.
+
+Weekly exports use `--allow-draft-rows --require-sec-enrichment`. Missing required
+SEC configuration fails before writes; configured SEC failure or partial coverage
+returns an incomplete overall result and a nonzero exit even if issue rows were
+written. Preserve the nested issue-phase receipt and resolve the remaining phase.
+Completion also requires exact fetch-disabled SEC replay and the maintained
+read-only live check against the retained plan:
+
+```sh
+scripts/stock-analyst google-sheets-verify-plan ./data/private/workbook-plan.json \
+  --env-file .env --expected-ledger-rows EXPECTED_RETAINED_ROW_COUNT
+```
+
+Take the expected ledger count from the successful enrichment receipt. The
+verifier returns only redacted checks/counts and exits nonzero on incomplete
+state. It does not replace source reconciliation, visual inspection or reviewer
+approval. `scripts/install-weekly-skill --check` detects drift between the reviewed
+tracked bundle and installed skill; the guide documents guarded synchronization.
+
 The manifest records only local metadata such as checksum, guessed issue date,
 private storage filename, and processing status. Source PDFs and extracted text
 remain in ignored private storage and must not be committed.
@@ -281,6 +306,7 @@ manual activation is optional for interactive work.
 - [Implementation plan](docs/implementation-plan.md)
 - [Free market data options](docs/free-market-data-options.md)
 - [Google Sheets layout](docs/google-sheets-layout.md)
+- [Weekly execution and completion](docs/weekly-execution.md)
 - [Local scheduling](docs/local-scheduling.md)
 - [OCR options](docs/ocr-options.md)
 - [Persona review and revisions](docs/persona-review.md)

@@ -1414,8 +1414,40 @@ def write_insider_activity_rows_to_google_sheet(
         "startColumnIndex": 0,
         "endColumnIndex": len(spec.headers),
     }
-    body_start = spec.header_row + 1
     body_end = spec.header_row + len(combined)
+    # Send every transaction's filing identity and literal values together.
+    # Separate USER_ENTERED/RAW calls can leave reordered retained transactions
+    # attached to another filing if the second call fails. updateCells provides
+    # explicit formula/string types within one atomic Sheets request instead.
+    # Keep the resize in that request too, so a rejected replacement cannot
+    # truncate the old ledger. Sheets has no hard request-size limit; do not
+    # chunk this visible replacement into independently committed calls.
+    ledger_rows = [
+        {"values": [{"userEnteredValue": {"stringValue": str(value)}}]}
+        for _cell, value in spec.metadata_cells
+    ]
+    ledger_rows.append(
+        {"values": [{"userEnteredValue": {"stringValue": header}} for header in spec.headers]}
+    )
+    ledger_rows.extend(
+        {
+            "values": [
+                {
+                    "userEnteredValue": {
+                        "formulaValue": _insider_company_formula(
+                            record["values"][company_index],
+                            str(record.get("source_url") or ""),
+                        )
+                    }
+                },
+                *[
+                    {"userEnteredValue": {"stringValue": value}}
+                    for value in record["values"][1:]
+                ],
+            ]
+        }
+        for record in combined
+    )
     try:
         sheets.spreadsheets().batchUpdate(
             spreadsheetId=config.sheets_spreadsheet_id,
@@ -1447,46 +1479,17 @@ def write_insider_activity_rows_to_google_sheet(
                                 "gridProperties.frozenColumnCount"
                             ),
                         }
-                    }
+                    },
+                    {
+                        "updateCells": {
+                            "start": {"sheetId": sheet_id, "rowIndex": 0, "columnIndex": 0},
+                            "rows": ledger_rows,
+                            "fields": "userEnteredValue",
+                        }
+                    },
                 ]
             },
         ).execute()
-        user_entered_ranges = list(_build_sheet_header_ranges((spec,)))
-        if combined:
-            user_entered_ranges.append(
-                {
-                    "range": f"'Insider Activity'!A{body_start}:A{body_end}",
-                    "values": [
-                        [
-                            _insider_company_formula(
-                                record["values"][company_index],
-                                str(record.get("source_url") or ""),
-                            )
-                        ]
-                        for record in combined
-                    ],
-                }
-            )
-        sheets.spreadsheets().values().batchUpdate(
-            spreadsheetId=config.sheets_spreadsheet_id,
-            body={
-                "valueInputOption": "USER_ENTERED",
-                "data": user_entered_ranges,
-            },
-        ).execute()
-        if combined:
-            sheets.spreadsheets().values().batchUpdate(
-                spreadsheetId=config.sheets_spreadsheet_id,
-                body={
-                    "valueInputOption": "RAW",
-                    "data": [
-                        {
-                            "range": f"'Insider Activity'!B{body_start}:L{body_end}",
-                            "values": [record["values"][1:] for record in combined],
-                        }
-                    ],
-                },
-            ).execute()
         # A legacy row-1 ledger leaves its former headers and first record to
         # the right of the A:C instruction merge. Clear that unmerged area only
         # after all replacement values have been written successfully.
@@ -1561,7 +1564,8 @@ def write_insider_activity_rows_to_google_sheet(
     except Exception as error:
         raise GoogleAccessError(
             "Google Sheets insider activity merge failed. Verify network access, "
-            "service-account sheet sharing, and workbook protections."
+            "service-account sheet sharing, and workbook protections. A timeout "
+            "can leave the outcome unknown; read back the ledger before retrying."
         ) from error
     return {
         "ok": True,
@@ -3475,6 +3479,11 @@ def _refresh_issue_search_sheet(
         {},
     )
     existing_rule_count = len(search_properties.get("conditionalFormats", []))
+    # A smaller regenerated index must not shrink away the previous index
+    # before its replacement succeeds.
+    existing_row_count = _fetch_sheet_row_counts_by_title(
+        sheets, spreadsheet_id=spreadsheet_id
+    ).get("Search", 0)
     sheets.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={
@@ -3486,7 +3495,7 @@ def _refresh_issue_search_sheet(
                             "gridProperties": {
                                 "frozenRowCount": SEARCH_SHEET_TAB.frozen_rows,
                                 "columnCount": 43,
-                                "rowCount": max(100, len(index_rows) + 10),
+                                "rowCount": max(100, len(index_rows) + 10, existing_row_count),
                             },
                         },
                         "fields": (
@@ -3631,37 +3640,6 @@ def _refresh_issue_search_sheet(
             ]
         },
     ).execute()
-    sheets.spreadsheets().values().clear(
-        spreadsheetId=spreadsheet_id,
-        range="'Search'!J:S",
-        body={},
-    ).execute()
-    sheets.spreadsheets().values().clear(
-        spreadsheetId=spreadsheet_id,
-        range="'Search'!T:AQ",
-        body={},
-    ).execute()
-    sheets.spreadsheets().values().clear(
-        spreadsheetId=spreadsheet_id,
-        range="'Search'!B1",
-        body={},
-    ).execute()
-    sheets.spreadsheets().values().batchUpdate(
-        spreadsheetId=spreadsheet_id,
-        body={
-            "valueInputOption": "USER_ENTERED",
-            "data": [
-                {
-                    "range": "'Search'!C1",
-                    "values": [[search_input]],
-                },
-                {
-                    "range": "'Search'!A4",
-                    "values": [[_build_issue_search_results_formula()]],
-                }
-            ],
-        },
-    ).execute()
     index_write_ranges: list[dict[str, object]] = [
         {
             "range": "'Search'!U1:AQ1",
@@ -3679,10 +3657,35 @@ def _refresh_issue_search_sheet(
         spreadsheetId=spreadsheet_id,
         body={"valueInputOption": "RAW", "data": index_write_ranges},
     ).execute()
+    # Preserve the old index, query and formula until the new index is written.
+    # Clear only stale index rows; the former T:AQ clear erased the usable index
+    # before replacement and made an interrupted refresh leave Search empty.
     sheets.spreadsheets().values().clear(
         spreadsheetId=spreadsheet_id,
         range=f"'Search'!U{len(index_rows) + 2}:AQ",
         body={},
+    ).execute()
+    for range_name in ("'Search'!J:S", "'Search'!T:T", "'Search'!B1"):
+        sheets.spreadsheets().values().clear(
+            spreadsheetId=spreadsheet_id,
+            range=range_name,
+            body={},
+        ).execute()
+    sheets.spreadsheets().values().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={
+            "valueInputOption": "USER_ENTERED",
+            "data": [
+                {
+                    "range": "'Search'!C1",
+                    "values": [[search_input]],
+                },
+                {
+                    "range": "'Search'!A4",
+                    "values": [[_build_issue_search_results_formula()]],
+                },
+            ],
+        },
     ).execute()
     sheets.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,

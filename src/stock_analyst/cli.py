@@ -77,6 +77,7 @@ from stock_analyst.sec_insider import (
 from stock_analyst.section_inventory import build_section_inventory_from_pdf
 from stock_analyst.visual_ocr import build_visual_ocr_bundle, parse_page_selection
 from stock_analyst.workbook_export import build_workbook_export_plan_from_pdf
+from stock_analyst.workbook_verification import verify_google_sheet_workbook
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -609,6 +610,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-draft-rows",
         action="store_true",
         help="Opt in to writing unapproved reviewer-draft rows to the private workbook.",
+    )
+    google_sheets_export_plan.add_argument(
+        "--require-sec-enrichment",
+        action="store_true",
+        help="Require configured and complete SEC enrichment; fail before writes if absent.",
+    )
+
+    google_sheets_verify_plan = subcommands.add_parser(
+        "google-sheets-verify-plan",
+        help="Read-only aggregate verification of a retained private reviewer plan in Sheets.",
+    )
+    google_sheets_verify_plan.add_argument("workbook_plan_file", type=Path)
+    google_sheets_verify_plan.add_argument("--env-file", type=Path, default=None)
+    google_sheets_verify_plan.add_argument(
+        "--expected-ledger-rows", type=int, default=None,
+        help="Optional exact cumulative ledger count from the successful write receipt.",
     )
 
     workbook_approval_template = subcommands.add_parser(
@@ -1208,12 +1225,64 @@ def _mark_insider_review_required(sheet_result: dict[str, object]) -> None:
     sheet_result["insiderReviewRequired"] = True
 
 
+def _finalize_sheet_delivery_result(
+    sheet_result: dict[str, object],
+    *,
+    issue_receipt: dict[str, object],
+    sec_required: bool,
+) -> dict[str, object]:
+    """Preserve the issue receipt while reporting the combined write outcome."""
+
+    enrichment = sheet_result.get("insiderEnrichment", {})
+    sec_complete = (
+        isinstance(enrichment, dict)
+        and enrichment.get("status") == "completed"
+        and enrichment.get("complete") is True
+    )
+    issue_ok = issue_receipt.get("ok") is True
+    sheet_result["issueExport"] = issue_receipt
+    sheet_result["secEnrichmentRequired"] = sec_required
+    sheet_result["deliveryScope"] = "issue_and_insider" if sec_required else "issue_only"
+    sheet_result["ok"] = issue_ok and (not sec_required or sec_complete)
+    sheet_result["deliveryStatus"] = "written" if sheet_result["ok"] else "incomplete"
+    # A write receipt does not prove live parity, whole-issue completeness,
+    # cache-only replay, or reviewer approval.
+    sheet_result["verificationStatus"] = "pending"
+    sheet_result["weeklyRefreshComplete"] = False
+    return sheet_result
+
+
+def run_google_sheets_verify_plan_command(
+    workbook_plan_file: Path,
+    *,
+    env_file: Path | None = None,
+    expected_ledger_rows: int | None = None,
+) -> dict[str, object]:
+    # Plan/config errors can include private paths, identifiers or input text.
+    # This read-only command always returns a fixed redacted failure contract.
+    try:
+        payload = json.loads(workbook_plan_file.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("invalid plan")
+        config = load_google_access_config(env_file=env_file)
+    except Exception:
+        return {
+            "ok": False, "status": "incomplete", "readOnly": True,
+            "rowContentReturned": False, "privateIdentifiersReturned": False,
+            "reason": "invalid_verification_input",
+        }
+    return verify_google_sheet_workbook(
+        config, payload, expected_ledger_rows=expected_ledger_rows,
+    )
+
+
 def run_google_sheets_export_plan_command(
     workbook_plan_file: Path,
     *,
     env_file: Path | None = None,
     replace_issue: bool = True,
     allow_draft_rows: bool = False,
+    require_sec_enrichment: bool = False,
 ) -> dict[str, object]:
     payload = json.loads(workbook_plan_file.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -1227,6 +1296,16 @@ def run_google_sheets_export_plan_command(
     if env_file is not None:
         env_values.update(load_env_file(env_file))
     sec_config = load_sec_insider_config(env_values)
+    sec_required = require_sec_enrichment or sec_config is not None
+    if require_sec_enrichment and sec_config is None:
+        return _finalize_sheet_delivery_result(
+            {"insiderEnrichment": {
+                "status": "skipped", "complete": False,
+                "reason": "required_sec_configuration_missing", "networkAccess": False,
+            }},
+            issue_receipt={"ok": False, "status": "not_started"},
+            sec_required=True,
+        )
 
     symbol_map_path: Path | None = None
     refreshed_csv = ""
@@ -1284,16 +1363,20 @@ def run_google_sheets_export_plan_command(
         replace_issue=replace_issue,
         allow_draft_rows=allow_draft_rows,
     )
+    issue_receipt = dict(sheet_result)
     if sec_config is None:
         sheet_result["insiderSchemaMigration"] = insider_schema_migration
         sheet_result["insiderEnrichment"] = {
             "status": "skipped",
+            "complete": False,
             "reason": "SEC_USER_AGENT is not configured",
             "networkAccess": False,
         }
         if int(insider_schema_migration.get("rowsRetained") or 0) > 0:
             _mark_insider_review_required(sheet_result)
-        return sheet_result
+        return _finalize_sheet_delivery_result(
+            sheet_result, issue_receipt=issue_receipt, sec_required=sec_required,
+        )
     sheet_result["insiderSchemaMigration"] = insider_schema_migration
     try:
         enrichment = enrich_sec_form4(sec_candidates, sec_config)
@@ -1323,7 +1406,9 @@ def run_google_sheets_export_plan_command(
         # A failed merge may already have exposed new unreviewed rows, even
         # when the initial ledger was empty. Failure cannot establish approval.
         _mark_insider_review_required(sheet_result)
-        return sheet_result
+        return _finalize_sheet_delivery_result(
+            sheet_result, issue_receipt=issue_receipt, sec_required=sec_required,
+        )
     enrichment_complete = (
         not enrichment.request_budget_exhausted
         and enrichment.failed_issuer_count == 0
@@ -1374,7 +1459,9 @@ def run_google_sheets_export_plan_command(
         # New parsed rows are therefore reviewer-only until a separate,
         # source-linked approval mechanism exists.
         _mark_insider_review_required(sheet_result)
-    return sheet_result
+    return _finalize_sheet_delivery_result(
+        sheet_result, issue_receipt=issue_receipt, sec_required=sec_required,
+    )
 
 
 def run_workbook_approval_template_command(
@@ -1667,6 +1754,12 @@ def main(argv: list[str] | None = None) -> int:
                 env_file=args.env_file,
                 replace_issue=not args.append,
                 allow_draft_rows=args.allow_draft_rows,
+                require_sec_enrichment=args.require_sec_enrichment,
+            )
+        elif args.command == "google-sheets-verify-plan":
+            result = run_google_sheets_verify_plan_command(
+                args.workbook_plan_file, env_file=args.env_file,
+                expected_ledger_rows=args.expected_ledger_rows,
             )
         elif args.command == "workbook-approval-template":
             result = run_workbook_approval_template_command(
@@ -1692,6 +1785,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.exit(2, f"error: {error}\n")
 
     print(json.dumps(result, indent=2, sort_keys=True))
+    if args.command in {"google-sheets-export-plan", "google-sheets-verify-plan"} and result.get("ok") is not True:
+        return 1
     return 0
 
 
