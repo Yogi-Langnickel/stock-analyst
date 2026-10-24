@@ -5,6 +5,10 @@ Created: 2026-06-06
 
 ## Workbook Export
 
+- Existing weekly private reviewer-workbook authority and execution-denial
+  handling are recorded in [AGENTS.md](../../AGENTS.md#weekly-execution-authorization).
+  Private draft import does not approve source rows or authorize family export.
+
 - A local embedded-text recommendation-card extractor captures printed company
   name, instrument type, WKN, current price, target, stop, chance/risk dots,
   market cap, recommendation status, performance, issue/date, dividend

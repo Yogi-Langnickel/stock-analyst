@@ -29,9 +29,19 @@ interests. Treat it as private by default.
 Manual review is mandatory before:
 
 - showing a digest to family readers
-- exporting rows to Google Sheets
+- exporting approved family-facing rows to Google Sheets
 - translating summaries for sharing
 - using extracted rows as fixtures
+
+The existing user-authorized weekly workflow may load unapproved `needs_review`
+rows into the known configured private reviewer workbook for review, using
+`--allow-draft-rows`, `privateDraftReviewOnly=true`, and `familyVisibleSafe=false`.
+It never creates reviewer approvals or authorizes family publication. This is a
+record of the established workflow's authority, not a grant for other workbooks,
+credentials, destinations or external actions. Source provenance, whole-issue
+visual reconciliation and all live-write checks still apply. Follow
+[weekly execution authorization](../AGENTS.md#weekly-execution-authorization)
+when requesting execution; a runtime denial must not be bypassed.
 
 ## External Services
 
