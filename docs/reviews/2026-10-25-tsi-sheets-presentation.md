@@ -89,17 +89,50 @@ direction; numeric deltas and `NEU` remain literal and private source bindings
 retain their original exact glyphs. Source financial facts and all 66 IDs are
 unchanged. This native-rendering learning is local to this TSI presentation.
 
-A private, one-off correction plan is prepared for those three ranking-delta
-cells only. It requires the exact old ownership, old complete live values,
+A focused independent domain and QA re-review accepted corrected code commit
+`42802b1b902056146a412f2588777bfe9d0cbcbe`, with no required findings. QA
+independently exercised the one-off private correction: success changes exactly
+three RAW cells plus their ownership hash, changed ownership/live values
+produce zero mutations, and failed full readback does not commit metadata.
+The primary passed compilation, 466 full tests, 15 focused tests, seven bundled
+tests, diff checks and installed-skill synchronization on the corrected code.
+
+After that review, the primary explicitly released the three-cell display
+correction. It required the exact old ownership, old complete live values,
 frozen old/new plan hashes and unchanged source bindings before RAW updates,
-then verifies the full new grid before committing its new ownership hash. It
-does not add a reusable refresh operation or modify styles/protections. The
-primary must approve the focused re-review before that correction executes.
+then verified the full new grid before committing its new ownership hash. The
+receipt confirms exactly three display cells changed and all source bindings
+remained unchanged. The reusable creation-only command then returned an exact
+owned no-op under the new plan. No general refresh operation was added.
 
 The primary independently confirmed 71 live tabs, TSI in index 2, 17 visible
 columns, six frozen rows, three frozen columns, one correct protection and zero
 formulas in TSI. All existing tab metadata except shifted indices and all full
-Search/Aktuell/Insider values/formulas matched the pre-write snapshot. The final
-glyph correction and remote SHA publication remain pending their required
-gates. No source observation approval is implied by engineering review or
-successful presentation readback.
+Search/Aktuell/Insider values/formulas matched the pre-write snapshot. Final
+live readback matches the complete corrected 143-by-17 payload and committed
+ownership. TSI formatting and its single protection are unchanged by the
+three-cell correction. The final display has three readable graphic-review
+labels and zero private-use display characters. The primary re-exported all
+six native Google PDF pages and rechecked the corrected ranking page; full
+coverage/source/footer caveats and the review boundary remain readable.
+
+## Retained private delivery evidence
+
+All of these artifacts are ignored, privately permissioned and not committed:
+
+- `data/private/tsi-sheets-presentation/plan.json`: corrected selected-evidence
+  plan with exact observation bindings and unapproved draft flags.
+- `live-create-receipt.json` and `live-noop-receipt.json`: initial creation and
+  its exact owned no-op verification.
+- `live-symbol-patch-receipt.json` and `live-final-noop-receipt.json`: bounded
+  display correction, full-grid readback and final no-op verification.
+- `live-preview.pdf`: accepted six-page native Google Sheets presentation.
+- `final-live-verification.json`: primary redacted final value, ownership,
+  core-tab preservation and native-rendering verification metrics.
+
+The source registry and its review/export flags are unchanged. This is a
+66-observation selected presentation; a cumulative ledger and actual
+Search/Aktuell connections remain proposals. The primary records Git
+integration, remote SHA verification and the separate governance closeout
+against the actual final repository state. No source observation approval is
+implied by engineering review or successful presentation readback.

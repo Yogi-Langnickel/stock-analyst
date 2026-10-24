@@ -20,6 +20,10 @@ Last compacted: 2026-06-06
   unsupported. TSI never uses DA week identities or the opening-page skip.
   All TSI observations remain private, `needs_review` and non-exportable; no
   Sheets/Search integration or automatic approvals are part of this milestone.
+- A separately user-authorized private `TSI` Sheets presentation is described in
+  `docs/tsi-sheets-presentation.md`. It is a dated selected-evidence preview;
+  source review/export flags remain unchanged. Actual Search/Aktuell connections
+  and a cumulative TSI ledger remain future proposals.
 - The local private corpus is present under ignored `data/private/issues/`
   through latest issue `DA_2026_25.pdf`. Corpus availability is no longer a
   blocker; use metadata-only `corpus-status` to verify counts, latest issue,
