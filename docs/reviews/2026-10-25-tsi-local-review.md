@@ -33,9 +33,50 @@ No real screenshot extraction fidelity is claimed.
 
 ## Implementation review iterations
 
-Iteration 1: pending stable feature commit and independent domain/QA review.
+Iteration 1 reviewed frozen feature commit
+`a374a99befab0490ee9d1bb2b19c14ec950c4077` with independent domain/source and
+QA/privacy/governance lenses. Outcome: **FAIL, required corrections**:
 
-Iteration 2: pending required-fix resolution and independent re-review.
+- P1: reject source-directory and retained-file symlinks before any source
+  copy, including symlinks into another private source tree.
+- P1: reset inherited ranking universe on a fresh unsupported universe title;
+  preserve the candidate with unresolved universe rather than assigning the
+  preceding table's universe.
+- P2: map each Top-Tipp stock/derivative column to its own record or exception,
+  including one-valid/one-malformed and both-malformed identifier cases.
+- P2: retain the supported printed `Hebel` variant as a typed leverage field.
+- Operational: restrict only assistant-owned generated artifact directories to
+  `0700` and files to `0600`; preserve original sources and shared private roots.
+
+Focused regressions reproduced each behavioral defect before the fixes.
+Confinement tests verify no writes outside the selected source-storage subtree,
+including another directory inside the private root. These defects did not
+reach develop. The parser/confinement learnings are local to this integration;
+no cross-repository policy or user-memory change is required.
+
+The primary independently ran compilation, 444 full-suite tests, seven bundled
+weekly tests and diff checks on the first review baseline. It also performed a
+fresh import, ordinary repeat and explicit reprocess with socket connections
+blocked: extraction call counts were 24 / 0 / 24, both repeated registries were
+byte-identical, zero network attempts occurred and every original source hash
+remained unchanged. The full private HTML preview passed an actual headless
+Chrome visual inspection, including the newest-first document index.
+
+All 153 supported source pages were visually inspected across the primary and
+two source reviewers. Source-level mapping established 3,600 ranking rows, 90
+full portfolio rows, 44 transaction-table rows, 14 explicit cover summaries,
+219 recommendation observations and 153 commentary/context observations. Eight
+allocation sidebars add 80 separate snapshot rows. The remaining graphical
+sidebar has ten unresolved row candidates in an explicit full-sidebar region
+exception. One conflicting printed page-header date is retained as a separate
+exception, and competing maturity evidence remains linked for review.
+
+Accepted v1 limits: legacy/special-report parsing is unsupported; screenshot
+proof is synthetic only; ranking graphics and portfolio category bands require
+visual review; source date/maturity conflicts remain unresolved. None grants
+approval or export authority.
+
+Iteration 2: pending independent re-review of the corrected stable commit.
 
 The primary assistant owns final source mapping, replay verification, remote
 SHA publication evidence and the separate governance closeout review. This

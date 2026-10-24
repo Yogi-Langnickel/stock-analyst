@@ -135,7 +135,10 @@ def import_sources(source: Path, output: Path, *, ocr: bool = True,
         target=output/'registry.json'
         registry=load_registry(target) if target.exists() else dict(schema_version=1,documents={})
         timestamp=datetime.now(timezone.utc).isoformat()
-        sources=output/'sources';sources.mkdir(exist_ok=True,mode=0o700)
+        if (output/'sources').is_symlink():
+            raise ValueError('Private source storage must not be a symlink')
+        sources=assert_private_output(output/'sources')
+        sources.mkdir(exist_ok=True,mode=0o700)
         processed=set()
         for path in candidates:
             extension=path.suffix.lower()
@@ -164,7 +167,12 @@ def import_sources(source: Path, output: Path, *, ocr: bool = True,
                 doc=registry['documents'][checksum]
                 doc['aliases']=sorted(set(doc['aliases']+[alias]))
                 continue
-            stored=sources/(checksum+extension)
+            stored_candidate=sources/(checksum+extension)
+            if stored_candidate.is_symlink():
+                raise ValueError('Retained private source must not be a symlink')
+            stored=assert_private_output(stored_candidate)
+            if not _is_below(stored,sources):
+                raise ValueError('Retained source must stay inside selected source storage')
             if stored.exists() and _checksum(stored)!=checksum:
                 raise ValueError('Existing private source copy conflicts; import refused')
             ingested_at=previous['ingested_at'] if previous else timestamp

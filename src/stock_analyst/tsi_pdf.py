@@ -167,17 +167,19 @@ def _as_of_date(text: str) -> str | None:
     return matches[0] if len(matches)==1 else None
 
 
-def _top_tip_rows(page) -> list[dict]:
+def _top_tip_rows(page) -> tuple[list[dict],list[dict]]:
     import fitz
     words=page.get_text('words')
     header=[w for w in words if w[4] in ('OS','Aktie') and 90<w[1]<150 and w[0]>430]
     if len(header)!=2:
-        return []
+        return [],[dict(reason='unsupported_top_tip_column_layout',bbox=[399,80,554,325],
+                        source_text=page.get_text(clip=fitz.Rect(399,80,554,325)),
+                        unresolved_candidate_count=2)]
     labels={'WKN':'wkn','Kurs':'price','Ziel':'target','Stopp':'stop',
             'Kauf-Limit':'limit_purchase_price','Omega':'omega','Laufzeit':'expiry',
-            'Ersatzschein':'alternative_wkn'}
+            'Ersatzschein':'alternative_wkn','Hebel':'leverage'}
     company=page.get_text(clip=fitz.Rect(399,80,553,105)).strip()
-    result=[]
+    result=[];exceptions=[]
     for instrument,left,right in [('derivative',450,502),('stock',502,554)]:
         fields=dict(name=company,instrument_type=instrument,currency='EUR')
         for label in [w for w in words if 399<w[0]<450 and 120<w[1]<325]:
@@ -193,7 +195,11 @@ def _top_tip_rows(page) -> list[dict]:
             bbox=[left,105,right,325]
             raw=page.get_text(clip=fitz.Rect(399,80,554,325))
             result.append(dict(printed_fields=fields,bbox=bbox,source_text=raw))
-    return result
+        else:
+            exceptions.append(dict(reason='top_tip_instrument_identifier_unresolved',
+                bbox=[left,105,right,325],source_text=page.get_text(clip=fitz.Rect(399,80,554,325)),
+                printed_fields=fields))
+    return result,exceptions
 
 
 def extract_pdf_document(path, *, stored_path, ingested_at: str) -> dict:
@@ -262,6 +268,8 @@ def extract_pdf_document(path, *, stored_path, ingested_at: str) -> dict:
             header = header_text.upper()
             if 'TSI-RANGLISTEN' in header or 'TSI-RANGLISTE' in header:
                 kind = 'ranking'
+                if re.search(r'TSI-Rangliste\b',header_text,re.I):
+                    universe=None
                 for match in re.finditer(r'(?:TSI-Rangliste\s+)(Big Caps|Mid Caps|Small Caps|Micro Caps)', header_text, re.I):
                     universe = match.group(1).title()
             elif 'TSI-USA-Depot' in text and 'Stückzahl' in text and 'Kaufdatum' in text:
@@ -330,14 +338,15 @@ def extract_pdf_document(path, *, stored_path, ingested_at: str) -> dict:
                 # Detail tip tables require explicit evidence review rather than mixing
                 # stock and warrant values into a single instrument record.
                 if number == 2 and 'Ersatzschein' in text:
-                    tip_rows = _top_tip_rows(page)
+                    tip_rows,tip_errors = _top_tip_rows(page)
                     for item in tip_rows:
                         record('recommendation',item['bbox'],item['printed_fields'],
                                item['source_text'],strategy='TSI USA',
                                unresolved=['action_not_explicit_in_tip_table'])
-                    if not tip_rows:
-                        exception('top_tip_stock_derivative_columns_require_review')
-                    inventory['candidate_count'] += max(1,len(tip_rows))
+                    for item in tip_errors:
+                        exception(item['reason'],item['bbox'],item['source_text'])
+                        document['exceptions'][-1].update({k:v for k,v in item.items()
+                            if k in ('unresolved_candidate_count','printed_fields')})
                 if number == 1:
                     for block in page.get_text('blocks'):
                         raw = block[4]

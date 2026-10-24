@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 
 from stock_analyst.tsi_pdf import (
-    _row_boundaries, classify_document, extract_pdf_document, parse_table_rows,
+    _row_boundaries, _top_tip_rows, classify_document, extract_pdf_document, parse_table_rows,
 )
 
 
@@ -12,6 +12,56 @@ def word(x, y, text):
 
 
 class TsiPdfTests(unittest.TestCase):
+    def test_tip_columns_individually_map_to_record_or_exception(self):
+        try:import fitz
+        except ImportError:self.skipTest('optional local PDF dependency unavailable')
+        for identifiers,expected in [(('SYN456','BAD'),(1,1)),(('BAD','BAD'),(0,2))]:
+            with fitz.open() as pdf:
+                page=pdf.new_page(width=595.276,height=841.89)
+                page.insert_text((400,100),'Synthetic Corp',fontsize=8)
+                page.insert_text((470,115),'OS',fontsize=8)
+                page.insert_text((515,115),'Aktie',fontsize=8)
+                page.insert_text((405,140),'WKN',fontsize=7)
+                page.insert_text((465,140),identifiers[0],fontsize=7)
+                page.insert_text((515,140),identifiers[1],fontsize=7)
+                rows,errors=_top_tip_rows(page)
+                self.assertEqual((len(rows),len(errors)),expected)
+                self.assertEqual(len(rows)+len(errors),2)
+
+    def test_tip_hebel_is_a_typed_printed_field(self):
+        try:import fitz
+        except ImportError:self.skipTest('optional local PDF dependency unavailable')
+        with fitz.open() as pdf:
+            page=pdf.new_page(width=595.276,height=841.89)
+            for x,y,value in [(400,100,'Synthetic'),(470,115,'OS'),(515,115,'Aktie'),
+                              (405,140,'WKN'),(465,140,'SYN456'),(515,140,'SYN123'),
+                              (405,180,'Hebel'),(465,180,'5,0'),(515,180,'-')]:
+                page.insert_text((x,y),value,fontsize=7)
+            rows,errors=_top_tip_rows(page)
+            self.assertEqual(errors,[])
+            self.assertEqual(rows[0]['printed_fields']['leverage'],'5,0')
+
+    def test_new_unknown_ranking_title_does_not_inherit_previous_universe(self):
+        try:import fitz
+        except ImportError:self.skipTest('optional local PDF dependency unavailable')
+        root=Path('data/private');root.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=root) as directory:
+            source=Path(directory)/'synthetic.pdf'
+            with fitz.open() as pdf:
+                cover=pdf.new_page(width=595.276,height=841.89)
+                cover.insert_text((43,50),'TSI USA www.tsi-usa.de 02.01.2026 Nr. 01/26',fontsize=8)
+                for universe in ('Big Caps','Nano Caps'):
+                    page=pdf.new_page(width=595.276,height=841.89)
+                    page.insert_text((43,95),'TSI-Rangliste '+universe,fontsize=10)
+                    for x,value in [(45,'1'),(87.9,'Synthetic'),(210,'99')]:
+                        page.insert_text((x,150),value,fontsize=7)
+                pdf.save(source)
+            doc=extract_pdf_document(source,stored_path=source,ingested_at='2026-01-04T00:00:00Z')
+            ranking=[r for r in doc['observations'] if r['record_type']=='ranking']
+            self.assertEqual(ranking[0]['universe'],'Big Caps')
+            self.assertIsNone(ranking[1]['universe'])
+            self.assertIn('ranking_universe_unresolved',ranking[1]['unresolved'])
+
     def test_product_and_date_are_source_specific(self):
         doc = classify_document('TSI USA www.tsi-usa.de 02.01.2026 Nr. 01/26', '')
         self.assertEqual(doc['product'], 'TSI USA')

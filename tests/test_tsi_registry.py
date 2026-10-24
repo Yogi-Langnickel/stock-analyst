@@ -9,6 +9,49 @@ from stock_analyst.tsi_registry import (
 
 
 class TsiRegistryTests(unittest.TestCase):
+    def test_source_storage_symlink_is_rejected_before_any_copy(self):
+        try:import fitz
+        except ImportError:self.skipTest('optional local PDF dependency unavailable')
+        root=Path('data/private');root.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=root) as directory, tempfile.TemporaryDirectory() as external:
+            folder=Path(directory);source=folder/'input.pdf';output=folder/'output';output.mkdir()
+            with fitz.open() as pdf:
+                pdf.new_page().insert_text((50,50),'Synthetic source')
+                pdf.save(source)
+            (output/'sources').symlink_to(Path(external),target_is_directory=True)
+            with self.assertRaises(ValueError):import_sources(source,output)
+            self.assertEqual(list(Path(external).iterdir()),[])
+
+    def test_source_storage_symlink_cannot_target_another_private_source_tree(self):
+        try:import fitz
+        except ImportError:self.skipTest('optional local PDF dependency unavailable')
+        root=Path('data/private');root.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=root) as directory:
+            folder=Path(directory);source=folder/'input.pdf';output=folder/'output';output.mkdir()
+            protected=folder/'originals';protected.mkdir()
+            with fitz.open() as pdf:
+                pdf.new_page().insert_text((50,50),'Synthetic source')
+                pdf.save(source)
+            (output/'sources').symlink_to(protected,target_is_directory=True)
+            with self.assertRaises(ValueError):import_sources(source,output)
+            self.assertEqual(list(protected.iterdir()),[])
+
+    def test_retained_source_file_symlink_is_rejected(self):
+        try:import fitz
+        except ImportError:self.skipTest('optional local PDF dependency unavailable')
+        from hashlib import sha256
+        root=Path('data/private');root.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=root) as directory:
+            folder=Path(directory);source=folder/'input.pdf';output=folder/'output'
+            sources=output/'sources';sources.mkdir(parents=True)
+            with fitz.open() as pdf:
+                pdf.new_page().insert_text((50,50),'Synthetic source')
+                pdf.save(source)
+            payload=source.read_bytes();checksum=sha256(payload).hexdigest()
+            (sources/(checksum+'.pdf')).symlink_to(source.resolve())
+            with self.assertRaises(ValueError):import_sources(source,output)
+            self.assertEqual(source.read_bytes(),payload)
+
     def test_private_guard_rejects_repo_docs_even_named_private(self):
         with self.assertRaises(ValueError):
             assert_private_output(Path('docs/private/registry.json'))
