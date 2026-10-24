@@ -98,8 +98,31 @@ network attempts occurred and all original source file hashes were unchanged.
 The result remained 4,200 observations, zero approvals and zero exportable
 records. The final private reconciliation hash matches its registry.
 
-Final independent re-review of this minimal correction is pending.
+Final independent re-review accepted code commit
+`e7253cf9228ad0435d7c8612338e24e57aa41af0`: **PASS from both reviewers, no
+required feedback remaining**. The domain reviewer passed 41 focused TSI tests,
+verified all 24 retained source hashes and confirmed the 4,200-record private
+mapping/review gates. QA independently reproduced the corrected optional-row
+case with two recommendations, zero exceptions and two candidates, and passed
+the same 41 focused tests. This closes the required two persona iterations and
+the focused corrective re-review.
 
-The primary assistant owns final source mapping, replay verification, remote
-SHA publication evidence and the separate governance closeout review. This
-document does not claim develop integration before those gates pass.
+The primary independently passed compilation, all 451 repository tests, seven
+bundled weekly tests and diff checks on that exact code commit. It verified
+finite, in-bounds source regions for every observation, globally unique
+observation IDs, 900 ranking rows in each of four distinct universes, two typed
+leverage fields and ignored status for private artifacts. The source-page review
+was divided into 49 pages for the domain reviewer, 54 for QA and 50 for the
+primary, covering all 153 supported pages.
+
+The private registry, offline preview and accepted extraction reconciliation are
+`data/private/tsi-review-v1/local/registry.json`,
+`data/private/tsi-review-v1/preview-v1.html` and
+`data/private/tsi-review-v1/reconciliation-v1.json`. Reconciliation acceptance is
+QA evidence only: all 4,200 observations remain `needs_review`, zero approvals
+exist and zero records are exportable. Accepted limitations above remain visible
+in the preview and private source mapping.
+
+The primary assistant owns remote SHA publication evidence and the separate
+governance closeout review. Develop integration and publication are pending
+those final gates; no master promotion or external publication is authorized.
