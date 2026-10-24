@@ -337,7 +337,9 @@ def extract_pdf_document(path, *, stored_path, ingested_at: str) -> dict:
                            unresolved=['printed_purchase_date_requires_execution_review'])
                 # Detail tip tables require explicit evidence review rather than mixing
                 # stock and warrant values into a single instrument record.
-                if number == 2 and 'Ersatzschein' in text:
+                tip_columns={w[4] for w in words if w[4] in ('OS','Aktie')
+                             and 90<w[1]<150 and w[0]>430}
+                if number == 2 and ('TOP-TIPP' in header or tip_columns):
                     tip_rows,tip_errors = _top_tip_rows(page)
                     for item in tip_rows:
                         record('recommendation',item['bbox'],item['printed_fields'],

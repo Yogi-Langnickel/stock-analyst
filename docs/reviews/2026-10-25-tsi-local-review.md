@@ -76,7 +76,29 @@ proof is synthetic only; ranking graphics and portfolio category bands require
 visual review; source date/maturity conflicts remain unresolved. None grants
 approval or export authority.
 
-Iteration 2: pending independent re-review of the corrected stable commit.
+Iteration 2 reviewed corrected frozen commit
+`1dcba589369fbcdd5d5f20b4c0323b4fd68c1687`. The independent domain reviewer
+passed the corrections. QA outcome: **FAIL, one required P2 correction**. The
+pipeline still invoked the Top-Tipp column parser only when an optional
+`Ersatzschein` label was present, silently omitting both explicit instrument
+columns when that optional row was absent.
+
+A pipeline-level synthetic regression reproduced the missing candidates before
+the minimal correction. Top-Tipp header/column recognition now invokes the
+parser independently of the optional alternative-warrant row. The existing
+private corpus already contains that row, so its values, record counts and
+reconciliation hash are unchanged by this correction. Compilation, the full
+451-test suite, seven bundled tests and diff checks passed on the corrected
+baseline.
+
+The primary also verified the actual CLI on the second baseline with socket
+connections blocked: fresh/repeat/reprocess extraction counts were 24 / 0 / 24,
+CLI receipts and registry bytes were identical for both repeat modes, zero
+network attempts occurred and all original source file hashes were unchanged.
+The result remained 4,200 observations, zero approvals and zero exportable
+records. The final private reconciliation hash matches its registry.
+
+Final independent re-review of this minimal correction is pending.
 
 The primary assistant owns final source mapping, replay verification, remote
 SHA publication evidence and the separate governance closeout review. This

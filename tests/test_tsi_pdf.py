@@ -12,6 +12,31 @@ def word(x, y, text):
 
 
 class TsiPdfTests(unittest.TestCase):
+    def test_tip_pipeline_does_not_require_optional_alternative_warrant(self):
+        try:import fitz
+        except ImportError:self.skipTest('optional local PDF dependency unavailable')
+        root=Path('data/private');root.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=root) as directory:
+            source=Path(directory)/'synthetic.pdf'
+            with fitz.open() as pdf:
+                cover=pdf.new_page(width=595.276,height=841.89)
+                cover.insert_text((43,50),'TSI USA www.tsi-usa.de 02.01.2026 Nr. 01/26',fontsize=8)
+                page=pdf.new_page(width=595.276,height=841.89)
+                for x,y,value in [(450,50,'TOP-TIPP'),(400,100,'Synthetic'),
+                    (470,115,'OS'),(515,115,'Aktie'),(405,140,'WKN'),
+                    (465,140,'SYN456'),(515,140,'SYN123'),(405,160,'Kurs'),
+                    (465,160,'1,00'),(515,160,'2,00'),(405,180,'Stopp'),
+                    (465,180,'0,50'),(515,180,'1,50'),(405,200,'Laufzeit'),
+                    (465,200,'16.06.27'),(515,200,'-')]:
+                    page.insert_text((x,y),value,fontsize=7)
+                pdf.save(source)
+            doc=extract_pdf_document(source,stored_path=source,ingested_at='2026-01-04T00:00:00Z')
+            tips=[r for r in doc['observations'] if r['record_type']=='recommendation'
+                  and r['evidence']['page']==2]
+            self.assertEqual(len(tips),2)
+            self.assertEqual(doc['pages'][1]['candidate_count'],2)
+            self.assertEqual(doc['pages'][1]['exception_ids'],[])
+
     def test_tip_columns_individually_map_to_record_or_exception(self):
         try:import fitz
         except ImportError:self.skipTest('optional local PDF dependency unavailable')
