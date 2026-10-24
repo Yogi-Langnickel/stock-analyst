@@ -121,6 +121,17 @@ class TsiSheetPlanTests(unittest.TestCase):
         self.assertEqual(rows['UNK123']['values'][3],'7,65 (currency unresolved)')
         self.assertEqual(rows['USD123']['binding']['printed_fields']['current_price'],'1,23')
 
+    def test_new_entry_recommendation_shape_preserves_printed_stop_price(self):
+        registry=registry_with([spec('2026-10-01',fields=dict(name='Synthetic Entry',wkn='ENT123',
+            instrument_type='stock',action='Kauf',purchase_price='12,34',stop_price='10,11',
+            purchase_date='2026-10-01',currency='EUR'))])
+        plan=build_preview_plan(registry,today=date(2026,10,25))
+        row=plan['sections'][0]['rows'][0]
+        self.assertEqual(row['values'][2],'Kauf')
+        self.assertEqual(row['values'][5],'10,11 EUR')
+        self.assertEqual(row['values'][6],'12,34 EUR')
+        self.assertEqual(row['binding']['printed_fields']['stop_price'],'10,11')
+
     def test_unknown_dates_and_article_text_are_not_exported(self):
         registry = registry_with([spec(None), spec('2026-10-01','commentary',dict(context_kind='publisher_commentary'))])
         plan = build_preview_plan(registry,today=date(2026,10,25))

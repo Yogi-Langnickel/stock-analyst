@@ -130,6 +130,15 @@ All of these artifacts are ignored, privately permissioned and not committed:
 - `final-live-verification.json`: primary redacted final value, ownership,
   core-tab preservation and native-rendering verification metrics.
 
+The primary also identified a supported-source-shape omission before Git
+publication: recommendation entry banners store their printed stop under
+`stop_price`, while recommendation tables use `stop`. A focused synthetic
+entry-banner regression first reproduced a blank displayed Stop, then verified
+the direct printed-value fallback. No price is inferred or recalculated. The
+current selected 66 observations already use `stop`, so their plan hash,
+payload hash and live values are unchanged; no additional provider write or
+native export is required for this source-key compatibility correction.
+
 The source registry and its review/export flags are unchanged. This is a
 66-observation selected presentation; a cumulative ledger and actual
 Search/Aktuell connections remain proposals. The primary records Git

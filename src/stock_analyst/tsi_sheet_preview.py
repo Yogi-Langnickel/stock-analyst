@@ -135,7 +135,7 @@ def _display_row(row: dict,today: date) -> dict:
         targets=f.get('target') or f.get('targets')
         if not targets:
             targets=' / '.join(_string(f[k]) for k in ('target_1','target_2') if f.get(k))
-        values += [f.get('action'), f.get('current_price') or f.get('price'),targets,f.get('stop'),
+        values += [f.get('action'), f.get('current_price') or f.get('price'),targets,f.get('stop') or f.get('stop_price'),
                    f.get('limit_purchase_price') or (f.get('purchase_price') if table=='stock' else None)]
         if table=='derivative':
             values += [f.get('alternative_wkn'),f.get('omega_or_leverage') or f.get('leverage') or f.get('omega'),
