@@ -9,6 +9,55 @@ from stock_analyst.workbook_export import build_workbook_export_plan
 
 
 class DepotTablesTest(unittest.TestCase):
+    def test_position_omits_blank_stop_at_next_row_and_end_of_table(self) -> None:
+        header = ("AKTIONÄR-Depot", "Aktie/Derivat", "WKN", "Stopp-", "kurs")
+        tail = ("25", "03.04.26", "7,00 EUR", "8,00 EUR", "200,00 EUR", "+14,3 %")
+        lines = header + (
+            "Synthetic Alpha", "ZZ0001", *tail, "6,00 EUR",
+            "Synthetic Beta", "ZZ0002", *tail, "–",
+            "Synthetic Gamma", "ZZ0003", *tail,
+            "Synthetic Delta", "ZZ0004", *tail,
+            "Depotwert", "800,00 EUR", "Durchgeführte Transaktionen",
+        )
+        rows, _ = extract_depot_rows_from_page_lines(((12, lines),), issue_id="2099-W01")
+        self.assertEqual([row.instrument for row in rows], [
+            "Synthetic Alpha", "Synthetic Beta", "Synthetic Gamma", "Synthetic Delta",
+        ])
+        self.assertEqual([row.stop for row in rows], ["6,00 EUR", "", "", ""])
+        self.assertEqual([row.wkn for row in rows], ["ZZ0001", "ZZ0002", "ZZ0003", "ZZ0004"])
+        self.assertTrue(all(row.page == 12 for row in rows))
+
+    def test_position_omission_preserves_fail_closed_row_boundaries(self) -> None:
+        header = ("AKTIONÄR-Depot", "Aktie/Derivat", "WKN", "Stopp-", "kurs")
+        tail = ("25", "03.04.26", "7,00 EUR", "8,00 EUR", "200,00 EUR", "+14,3 %")
+        first_position = header + ("Synthetic Alpha", "ZZ0001", *tail)
+        footer = ("Depotwert", "800,00 EUR", "Durchgeführte Transaktionen")
+        for later_position in (
+            ("Synthetic Beta", "ZZ0002", *tail[:-1]),
+            ("ZZ0002", *tail),
+            ("99,00 USD", "ZZ0002", *tail),
+            ("Zwischensumme", "ZZ0002", *tail),
+            ("Stopp fehlt", "ZZ0002", *tail),
+            ("Synthetic Multi", "Line Beta", "ZZ0002", *tail),
+            ("Zwischensumme", "Synthetic Beta", "ZZ0002", *tail),
+            ("Zwischensumme",),
+        ):
+            with self.subTest(later_position=later_position), self.assertRaises(ValueError):
+                lines = first_position + later_position + footer
+                extract_depot_rows_from_page_lines(((12, lines),), issue_id="2099-W01")
+
+    def test_multiline_position_names_preserved_after_explicit_stop(self) -> None:
+        header = ("AKTIONÄR-Depot", "Aktie/Derivat", "WKN", "Stopp-", "kurs")
+        tail = ("25", "03.04.26 7,00 EUR", "8,00 EUR", "200,00 EUR", "+14,3 %")
+        lines = header + (
+            "Synthetic Alpha", "ZZ0001", *tail, "6,00 EUR",
+            "Synthetic Multi", "Line Beta", "ZZ0002", *tail,
+            "Depotwert", "400,00 EUR", "Durchgeführte Transaktionen",
+        )
+        rows, _ = extract_depot_rows_from_page_lines(((12, lines),), issue_id="2099-W01")
+        self.assertEqual([row.instrument for row in rows], ["Synthetic Alpha", "Synthetic Multi Line Beta"])
+        self.assertEqual([row.stop for row in rows], ["6,00 EUR", ""])
+
     def test_executed_transactions_preserve_purchase_and_booking_with_printed_dashes(self) -> None:
         header = ("Transaktion", "Wertpapier", "WKN", "Kurs", "Performance", "seit Kauf")
         for dash in ("-", "–"):

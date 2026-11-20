@@ -18,6 +18,10 @@ DATE_RE = re.compile(
 PRICE_RE = re.compile(r"\d+(?:\.\d{3})*,\d+\s*EUR\*?")
 PERCENT_RE = re.compile(r"^[+-]?\d+(?:,\d+)?\s*%$")
 QUANTITY_RE = re.compile(r"^\d+(?:\.\d{3})*$")
+POSITION_NON_NAME_RE = re.compile(
+    r"^(?:[+-]?\d+[.,]\d|(?:stopp\w*|depotwert|zwischensumme|summe|cashquote)\b)",
+    re.IGNORECASE,
+)
 TRANSACTION_ACTIONS = {"Kauf", "Verkauf", "Teilkauf", "Teilverkauf", "Einbuchung"}
 
 
@@ -218,7 +222,7 @@ def _parse_position_tail(
     body: Sequence[str],
     start_index: int,
 ) -> tuple[dict[str, str] | None, int]:
-    if start_index + 5 >= len(body):
+    if start_index + 1 >= len(body):
         return None, start_index + 1
     quantity = body[start_index]
     if not QUANTITY_RE.match(quantity):
@@ -243,13 +247,12 @@ def _parse_position_tail(
         buy_price = body[index]
         index += 1
 
-    if index + 3 >= len(body):
+    if index + 2 >= len(body):
         return None, index
     current_price = body[index]
     value = body[index + 1]
     performance_since_buy = body[index + 2]
-    stop = body[index + 3]
-    index += 4
+    index += 3
 
     if not PRICE_RE.search(buy_price):
         return None, index
@@ -259,6 +262,17 @@ def _parse_position_tail(
         return None, index
     if not PERCENT_RE.match(performance_since_buy):
         return None, index
+
+    # A printed blank contributes no text. Consume the stop token only when it
+    # is present, retaining the next instrument name for its own row.
+    stop = ""
+    if index < len(body):
+        cell = body[index]
+        if PRICE_RE.fullmatch(cell) or _is_dash(cell):
+            stop = cell
+            index += 1
+        elif not _starts_position_after_blank_stop(body, index):
+            return None, index
 
     return (
         {
@@ -271,6 +285,17 @@ def _parse_position_tail(
             "stop": "" if _is_dash(stop) else stop,
         },
         index,
+    )
+
+
+def _starts_position_after_blank_stop(body: Sequence[str], index: int) -> bool:
+    if index + 1 >= len(body) or not WKN_RE.fullmatch(body[index + 1]):
+        return False
+    name = body[index]
+    return (
+        any(character.isalpha() for character in name)
+        and not WKN_RE.fullmatch(name)
+        and not POSITION_NON_NAME_RE.match(name)
     )
 
 
