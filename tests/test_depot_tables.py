@@ -110,6 +110,51 @@ class DepotTablesTest(unittest.TestCase):
                 _extract_transaction_rows(header + body + ("Durchgeführte Transaktionen",),
                     issue_id="2099-W01", page_number=12)
 
+    def test_sale_keeps_two_distinct_printed_percentages_without_inventing_currency(self) -> None:
+        header = ("Transaktion", "Wertpapier", "WKN", "Kurs", "Performance", "seit Kauf")
+        body = ("Verkauf", "Synthetic Issuer", "ZZ0001", "25", "03.04.26", "+7,2 %", "-12,3 %")
+        rows = _extract_transaction_rows(header + body + ("Aktie/Derivat",),
+            issue_id="2099-W01", page_number=12)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].price, "+7,2 %")
+        self.assertEqual(rows[0].performance_since_buy, "-12,3 %")
+        self.assertEqual(rows[0].review_status.value, "needs_review")
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2099_01.pdf"),
+            issue_id="2099-W01", stock_update_date="2099-01-01", depot_transactions=rows,
+        ).to_dict()
+        transactions = [row for row in plan["rows"] if row["tab"] == "Depot Transactions"]
+        self.assertEqual(transactions[0]["values"][5:7], ["+7,2 %", "-12,3 %"])
+        self.assertFalse(any(row["tab"] == "Aktuell" for row in plan["rows"]))
+
+    def test_purchase_omits_blank_performance_at_typed_next_row_and_observed_boundary(self) -> None:
+        header = ("Transaktion", "Wertpapier", "WKN", "Kurs", "Performance", "seit Kauf")
+        lines = header + (
+            "Kauf", "Synthetic Purchase A", "ZZ0001", "25", "03.04.26", "7,20 EUR",
+            "Verkauf", "Synthetic Sale", "ZZ0002", "30", "03.04.26", "8,50 EUR", "-12,3 %",
+            "Kauf", "Synthetic Purchase B", "ZZ0003", "45", "03.04.26", "2,10 EUR",
+            "Aktie/Derivat",
+        )
+        rows = _extract_transaction_rows(lines, issue_id="2099-W01", page_number=12)
+        self.assertEqual([row.wkn for row in rows], ["ZZ0001", "ZZ0002", "ZZ0003"])
+        self.assertEqual([row.price for row in rows], ["7,20 EUR", "8,50 EUR", "2,10 EUR"])
+        self.assertEqual([row.performance_since_buy for row in rows], ["", "-12,3 %", ""])
+
+    def test_new_transaction_shapes_reject_malformed_or_out_of_scope_fields(self) -> None:
+        header = ("Transaktion", "Wertpapier", "WKN", "Kurs", "Performance", "seit Kauf")
+        purchase = ("Kauf", "Synthetic Purchase", "ZZ0001", "25", "03.04.26", "7,20 EUR")
+        sale = ("Verkauf", "Synthetic Sale", "ZZ0002", "30", "03.04.26", "8,50 EUR", "-12,3 %")
+        for bad_rows in (
+            purchase + ("Aktie und Derivat",),
+            purchase + sale[:-1] + ("unresolved", "Aktie/Derivat"),
+            sale[:-1] + purchase + ("Aktie/Derivat",),
+            sale[:-2] + ("4,0 %", "–", "Aktie/Derivat"),
+            purchase[:-1] + ("4,0 %", "-12,3 %", "Aktie/Derivat"),
+            purchase[:-1] + ("unresolved", "Aktie/Derivat"),
+        ):
+            with self.subTest(bad_rows=bad_rows), self.assertRaises(ValueError):
+                _extract_transaction_rows(header + bad_rows, issue_id="2099-W01", page_number=12)
+
     def test_full_dates_preserve_multiple_purchase_dates_and_values(self) -> None:
         for dates in ("01.02.25/03.04.26", "01.02./03.04.26"):
             with self.subTest(dates=dates):

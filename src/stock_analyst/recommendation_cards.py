@@ -74,6 +74,7 @@ UNAVAILABLE_VALUATION_METRICS = frozenset(
 )
 EUROPEAN_AMOUNT_RE = r"[+-]?(?:\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d+)?"
 MONEY_VALUE_RE = re.compile(rf"^{EUROPEAN_AMOUNT_RE}\s+(?:EUR|USD)$")
+MARKET_CAP_VALUE_RE = re.compile(rf"^{EUROPEAN_AMOUNT_RE}\s+(?:Mio\.|Mrd\.)\s+(?:EUR|USD)$")
 LAYOUT_TABLE_HEADER_RE = re.compile(
     r"\bUnternehmen\b.*\bWKN\b.*\bChance\b.*\bRisiko\b",
     flags=re.IGNORECASE,
@@ -357,6 +358,20 @@ def extract_recommendation_cards_from_lines(
             if card is not None:
                 cards.append(card)
                 index = next_index
+                continue
+        unlabelled_end = _unlabelled_stock_card_end(normalized_lines, index)
+        if unlabelled_end is not None:
+            card, _ = _parse_labelled_card(
+                ("Aktie", *normalized_lines[index:unlabelled_end]),
+                0,
+                issue_id=issue_id,
+                page_number=page_number,
+            )
+            if card is not None:
+                cards.append(replace(card, extraction_notes=(
+                    *card.extraction_notes, "stock_card_type_from_printed_field_layout",
+                )))
+                index = unlabelled_end
                 continue
         index += 1
 
@@ -944,6 +959,7 @@ def _has_unambiguous_recommendation_signal(
             _looks_like_derivative(line)
             and _line_at(page_lines, index + 1) == "WKN"
         )
+        or _unlabelled_stock_card_end(page_lines, index) is not None
     )
     return card_start_count == 1 and _has_recommendation_signal(page_lines, signal)
 
@@ -1077,6 +1093,59 @@ def _parse_labelled_card(
     )
 
 
+def _unlabelled_stock_card_end(lines: Sequence[str], start: int) -> int | None:
+    """Recognize the complete printed stock-card shape when its type label is absent."""
+    if (
+        len(lines) - start < 5
+        or lines[start + 1] != "Chance"
+        or lines[start + 2] != "Risiko"
+        or not all(_is_dot_rating(value) and len(value) <= 5 for value in lines[start + 3:start + 5])
+        or _instrument_type_for_card_start(_line_at(lines, start - 1) or "") is not None
+    ):
+        return None
+    name = lines[start]
+    if (
+        not re.fullmatch(r"[\w .,’'&+()/\-]{2,80}", name)
+        or not any(char.isalpha() for char in name)
+        or name.casefold() in {
+            "aktie", "aktie der woche", "chance", "risiko", "unternehmen",
+            "top-tipp", "top-tipp der woche", "neuempfehlung", "kaufempfehlung", "verkaufssignal",
+        }
+        or _looks_like_derivative(name)
+        or re.search(r"\b(?:ETF|Fonds|Anleihe|Index|Vergleich|Vergleichstabelle|Beispiel)\b", name, re.I)
+    ):
+        return None
+
+    index = start + 5
+    for key, value_pattern in (
+        ("current_price", MONEY_VALUE_RE), ("wkn", WKN_RE),
+        ("target", MONEY_VALUE_RE), ("stop", MONEY_VALUE_RE),
+        ("market_cap", MARKET_CAP_VALUE_RE), ("dividend_yield", PERCENT_RE),
+        ("kuv_26e", DECIMAL_VALUE_RE), ("kgv_26e", DECIMAL_VALUE_RE),
+    ):
+        if index >= len(lines):
+            return None
+        label, consumed = _combined_label(lines, index)
+        value = _line_at(lines, index + consumed)
+        if LABEL_ALIASES.get(label) != key or value is None or not value_pattern.fullmatch(value):
+            return None
+        index += consumed + 1
+    if _line_at(lines, index) != "Neuempfehlung":
+        return None
+
+    end = index + 1
+    if end < len(lines):
+        label, consumed = _combined_label(lines, end)
+        date_index = end + consumed
+        if (
+            LABEL_ALIASES.get(label) == "next_report_date"
+            and re.fullmatch(r"\d{2}\.\d{2}\.\d{2,4}", _line_at(lines, date_index) or "")
+            and _line_at(lines, date_index + 1) == "Quartalszahlen"
+        ):
+            end = date_index + 2
+    return end
+
+
 def _collect_fields(lines: Sequence[str], start_index: int) -> tuple[dict[str, str], int]:
     fields: dict[str, str] = {}
     chance_risk_pending: list[str] = []
@@ -1093,6 +1162,8 @@ def _collect_fields(lines: Sequence[str], start_index: int) -> tuple[dict[str, s
             and _line_at(lines, index + 1) == "WKN"
             and ("wkn" in fields or "current_price" in fields)
         ):
+            break
+        if ("wkn" in fields or "current_price" in fields) and _unlabelled_stock_card_end(lines, index) is not None:
             break
         if any(line.startswith(marker) for marker in CARD_END_MARKERS):
             break

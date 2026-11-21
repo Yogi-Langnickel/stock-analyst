@@ -199,22 +199,42 @@ def _extract_transaction_rows(
         instrument_parts = ([inline_instrument] if inline_instrument else []) + list(lines[cursor + 1:wkn_index])
         if any(part in TRANSACTION_ACTIONS or part.startswith("Einbuchung ") for part in instrument_parts):
             raise ValueError("publisher depot transaction identity is ambiguous")
-        tail = lines[wkn_index + 1:wkn_index + 5]
-        if len(tail) != 4 or not (
+        tail = lines[wkn_index + 1:wkn_index + 4]
+        if len(tail) != 3 or not (
             QUANTITY_RE.fullmatch(tail[0])
             and re.fullmatch(r"\d{2}\.\d{2}\.\d{2}", tail[1])
-            and PRICE_RE.fullmatch(tail[2])
-            and (PERCENT_RE.fullmatch(tail[3]) or _is_dash(tail[3]))
         ):
+            raise ValueError("publisher depot transaction values are incomplete")
+        quantity, transaction_date, price = tail
+        performance_index = wkn_index + 4
+        performance = lines[performance_index] if performance_index < len(lines) else ""
+        has_percentage_performance = PERCENT_RE.fullmatch(performance) is not None
+        # A sale may carry a literal percentage in the printed quote column.
+        # Preserve it only with a separate, explicit percentage for performance.
+        has_percentage_quote = (
+            action == "Verkauf" and has_percentage_performance and PERCENT_RE.fullmatch(price)
+        )
+        if not PRICE_RE.fullmatch(price) and not has_percentage_quote:
+            raise ValueError("publisher depot transaction values are incomplete")
+        if has_percentage_performance or _is_dash(performance):
+            cursor = performance_index + 1
+        elif action == "Kauf" and (
+            performance == "Aktie/Derivat"
+            or performance in TRANSACTION_ACTIONS
+            or performance.startswith("Einbuchung ")
+        ):
+            # A blank performance cell has no text. Leave the next row or
+            # explicit table boundary available to the parser.
+            cursor = performance_index
+            performance = ""
+        else:
             raise ValueError("publisher depot transaction values are incomplete")
         rows.append(DepotTransactionRow(
             issue_id=issue_id, page=page_number, action=action,
             instrument=" ".join(instrument_parts), wkn=lines[wkn_index],
-            quantity=tail[0], transaction_date=tail[1],
-            price=tail[2],
-            performance_since_buy="" if _is_dash(tail[3]) else tail[3],
+            quantity=quantity, transaction_date=transaction_date, price=price,
+            performance_since_buy="" if _is_dash(performance) else performance,
         ))
-        cursor = wkn_index + 5
     return tuple(rows)
 
 

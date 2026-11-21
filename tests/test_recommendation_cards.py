@@ -10,6 +10,64 @@ from stock_analyst.schemas import InstrumentType
 
 
 class RecommendationCardsTest(unittest.TestCase):
+    def test_unlabelled_stock_new_recommendation_requires_complete_printed_card(self) -> None:
+        body = (
+            "Synthetic Example Holdings AG", "Chance", "Risiko", "••••", "•••",
+            "Akt. Kurs", "33,21 EUR", "WKN", "SYN104", "Ziel", "45,00 EUR",
+            "Stopp", "23,00 EUR", "Markt-", "kapitalisierung", "51,0 Mrd. EUR",
+            "Dividendenrendite", "0,5 %", "KUV", "26e", "3,1", "KGV", "26e",
+            "26,1", "Neuempfehlung", "Nächster", "Termin", "13.12.26", "Quartalszahlen",
+        )
+        cards = extract_recommendation_cards_from_lines(
+            ("Editorial headline", *body, "This following paragraph must not supply fields."),
+            issue_id="2099-W01", page_number=12,
+        )
+        self.assertEqual(len(cards), 1)
+        card = cards[0]
+        self.assertEqual(card.instrument_name, "Synthetic Example Holdings AG")
+        self.assertEqual(card.instrument_type, InstrumentType.STOCK)
+        self.assertEqual(card.wkn, "SYN104")
+        self.assertEqual((card.current_price, card.target, card.stop), ("33,21 EUR", "45,00 EUR", "23,00 EUR"))
+        self.assertEqual((card.chance, card.risk), (4, 3))
+        self.assertEqual((card.dividend_yield, card.kuv_26e, card.kgv_26e), ("0,5 %", "3,1", "26,1"))
+        self.assertEqual(card.next_report_date, "13.12.26 Quartalszahlen")
+        self.assertEqual(card.recommendation_status, "new_recommendation")
+        self.assertEqual(card.page, 12)
+        self.assertEqual(card.review_status.value, "needs_review")
+
+        for rejected in (
+            ("Vergleich zweier Instrumente", *body[1:]),
+            ("Synthetic Broad Market ETF", *body[1:]),
+            ("Synthetic Turbo Long", *body[1:]),
+            ("Top-Tipp", *body[1:]),
+            ("Neuempfehlung", *body[1:]),
+            ("Aktie der Woche", *body[1:]),
+            ("Verkaufssignal", *body[1:]),
+            ("UNTERNEHMEN", *body[1:]),
+            (*body[:5], "This paragraph separates two independent blocks.", *body[5:]),
+            (*body[:10], "45,00", *body[11:]),
+            (*body[:21], "Vergleichsbewertung", *body[22:]),
+            (*body[:24], "Vergleich einer früheren Neuempfehlung", *body[25:]),
+            (*body[:24], "Kein Kauf", *body[25:]),
+        ):
+            with self.subTest(rejected=rejected):
+                self.assertEqual(extract_recommendation_cards_from_lines(
+                    rejected, issue_id="2099-W01", page_number=12,
+                ), ())
+
+        for signal in ("Top-Tipp", "Verkaufssignal"):
+            with self.subTest(signal=signal):
+                page = (signal, "Aktie", "Synthetic Neutral AG", "WKN", "NEUT01",
+                        "Akt. Kurs", "10,00 EUR", *body)
+                cards = extract_recommendation_cards_from_lines(page, issue_id="2099-W01", page_number=12)
+                self.assertEqual([card.wkn for card in cards], ["NEUT01", "SYN104"])
+                self.assertEqual([card.recommendation_status for card in cards], [None, "new_recommendation"])
+
+        explicit = extract_recommendation_cards_from_lines(
+            ("ETF", *body), issue_id="2099-W01", page_number=12,
+        )
+        self.assertEqual([card.instrument_type for card in explicit], [InstrumentType.ETF])
+
     def test_explicit_wait_card_labels_override_follow_up(self) -> None:
         for label in ("Abwarten", "Wait", "ABWARTEN"):
             with self.subTest(label=label):
