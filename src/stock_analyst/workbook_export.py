@@ -491,6 +491,12 @@ def _latest_issue_recommendation_rows(
                 emitted_derivative_row_indexes[card.wkn] = len(rows) - 1
     for derivative_row in derivative_overview_rows:
         publisher_action = _publisher_action(derivative_row.recommendation)
+        if (
+            derivative_row.metrics_page == derivative_row.page + 1
+            and derivative_row.exit_status == "Verkaufen"
+            and derivative_row.recommendation.casefold() == "gewinne realisieren"
+        ):
+            publisher_action = "Sell"
         if publisher_action is None:
             continue
         values_by_header = {

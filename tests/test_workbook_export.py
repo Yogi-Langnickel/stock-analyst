@@ -1398,6 +1398,39 @@ class WorkbookExportPlanTest(unittest.TestCase):
             ["Dabei- bleiben", "Ausgestoppt"],
         )
 
+    def test_profit_taking_requires_the_exact_paired_sale_status(self) -> None:
+        def derivative_row(wkn, recommendation, exit_status, metrics_page):
+            return DerivativeOverviewRow(
+                issue_id="2099-W01", page=62, underlying="Synthetic Instrument",
+                product="Synthetic Instrument", direction="Call", wkn=wkn,
+                issuer="Example Issuer", ratio="1,00", strike_cap="12,00 EUR",
+                omega_hebel="3,0", runtime="open end", target="", stop="",
+                recommendation=recommendation, metrics_page=metrics_page,
+                exit_status=exit_status,
+            )
+
+        plan = build_workbook_export_plan(
+            pdf_path=Path("data/private/issues/DA_2099_01.pdf"),
+            issue_id="2099-W01", stock_update_date="2099-01-03",
+            derivative_overview=(
+                derivative_row("SYN001", "Gewinne realisieren", "Verkaufen", 63),
+                derivative_row("SYN002", "Gewinne realisieren", "", 63),
+                derivative_row("SYN003", "Später Gewinne realisieren", "Verkaufen", 63),
+                derivative_row("SYN004", "Gewinne realisieren", "Verkaufen", None),
+                derivative_row("SYN005", "Gewinne realisieren", "Verkaufen", 62),
+            ),
+        ).to_dict()
+        projected = [row for row in plan["rows"] if row["tab"] == "Aktuell"]
+        self.assertEqual(len(projected), 1)
+        row = projected[0]
+        values = dict(zip(AKTUELL_DERIVATIVE_HEADERS, row["values"]))
+        self.assertEqual((values["WKN"], values["Action"]), ("SYN001", "Sell"))
+        self.assertEqual(values["Reviewer note"], "Gewinne realisieren")
+        self.assertEqual(values["Issue:Page"], "2099-W01:62 | 2099-W01:63")
+        self.assertEqual((values["Target"], values["Stop"]), ("", ""))
+        self.assertTrue(row["requiresManualReview"])
+        self.assertFalse(row["exportable"])
+
     def test_routes_derivative_follow_up_actions_and_skips_card_duplicate(self) -> None:
         def derivative_row(wkn: str, recommendation: str) -> DerivativeOverviewRow:
             return DerivativeOverviewRow(

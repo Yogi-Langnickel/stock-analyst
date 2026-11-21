@@ -12,6 +12,7 @@ from stock_analyst.schemas import ReviewStatus
 
 
 WKN_RE = re.compile(r"^[A-Z0-9]{6}$")
+WKN_AND_ISSUER_RE = re.compile(r"(?P<wkn>[A-Z0-9]{6})\s+(?P<issuer>[^\W\d_].*)")
 ISSUE_RE = re.compile(r"^\d{2}/\d{2}\s*$")
 DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{2}$")
 PRICE_RE = re.compile(r"^(?:\d+(?:\.\d{3})*,\d+|\d+,\d+)\s*(?:EUR|USD|HKD)$")
@@ -62,6 +63,7 @@ class DerivativeOverviewRow:
     recommendation: str = ""
     metrics_page: int | None = None
     review_status: ReviewStatus = ReviewStatus.NEEDS_REVIEW
+    exit_status: str = ""
 
     @property
     def source_pages(self) -> tuple[int, ...]:
@@ -70,7 +72,7 @@ class DerivativeOverviewRow:
         return (self.page, self.metrics_page)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "issueId": self.issue_id,
             "page": self.page,
             "underlying": self.underlying,
@@ -92,6 +94,9 @@ class DerivativeOverviewRow:
             "sourcePages": list(self.source_pages),
             "reviewStatus": self.review_status.value,
         }
+        if self.exit_status:
+            result["exitStatus"] = self.exit_status
+        return result
 
 
 @dataclass(frozen=True)
@@ -358,6 +363,7 @@ class _DerivativeMetrics:
     target: str = ""
     stop: str = ""
     recommendation: str = ""
+    exit_status: str = ""
 
 
 def _extract_base_rows(
@@ -398,15 +404,7 @@ def _extract_base_rows(
         if wkn_match is None:
             # Never retain an apparently valid prefix of an incomplete table.
             return ()
-        wkn_index, embedded_underlying, wkn = wkn_match
-        underlying_parts = (*body[cursor:wkn_index], embedded_underlying)
-        underlying = " ".join(part for part in underlying_parts if part).strip()
-        tail = body[wkn_index + 1 :]
-        parsed = _parse_base_tail(tail)
-        if not underlying or parsed is None:
-            # A partially parsed table can silently shift every following row.
-            # Fail the complete base table so the caller emits a review exception.
-            return ()
+        wkn_index, underlying, wkn, parsed = wkn_match
         rows.append(
             DerivativeOverviewRow(
                 issue_id=issue_id,
@@ -429,57 +427,60 @@ def _extract_base_rows(
 
 def _next_wkn_match(
     lines: Sequence[str], start_index: int,
-) -> tuple[int, str, str] | None:
-    """Find one structurally valid WKN before the row's direction token.
-
-    Mixed embedded and standalone candidates have no source-backed precedence.
-    Multiple candidates of either shape fail closed instead of guessing between
-    an underlying, WKN, and issuer.
-    """
-
+) -> tuple[int, str, str, dict[str, Any]] | None:
+    """Find one structurally valid identifier before the row's direction."""
     direction_match = _first_direction_match(lines[start_index:])
     if direction_match is None:
         return None
     direction_index = start_index + direction_match[0]
-    candidates: list[tuple[bool, int, str, str]] = []
-    for index in range(start_index, len(lines)):
-        if index >= direction_index:
-            break
+    candidates = []
+    for index in range(start_index, direction_index):
         line = lines[index]
         if WKN_RE.fullmatch(line):
-            embedded_underlying = ""
-            wkn = line
-            standalone = True
+            identities = ((line, "", ""),)
         else:
-            embedded = re.fullmatch(
-                r"(?P<label>.+\S)\s+(?P<wkn>[A-Z0-9]{6})", line
-            )
-            if embedded is None:
-                continue
-            embedded_underlying = embedded.group("label")
-            wkn = embedded.group("wkn")
-            standalone = False
-        underlying_parts = (*lines[start_index:index], embedded_underlying)
-        underlying = " ".join(part for part in underlying_parts if part).strip()
-        if underlying and _parse_base_tail(lines[index + 1 :]) is not None:
-            candidates.append((standalone, index, embedded_underlying, wkn))
+            parts = line.split()
+            if parts and _is_digit_bearing_wkn(parts[0]) and any(
+                _is_digit_bearing_wkn(part) for part in parts[1:]
+            ):
+                # A broken identity line cannot become the underlying of a later candidate.
+                return None
+            identities = _embedded_identities(line)
+        for wkn, embedded_underlying, embedded_issuer in identities:
+            underlying_parts = (*lines[start_index:index], embedded_underlying)
+            underlying = " ".join(part for part in underlying_parts if part).strip()
+            parsed = _parse_base_tail(lines[index + 1 :], embedded_issuer=embedded_issuer)
+            if underlying and parsed is not None:
+                candidates.append((index, underlying, wkn, parsed))
 
-    standalone_candidates = [candidate for candidate in candidates if candidate[0]]
-    if standalone_candidates and len(standalone_candidates) != len(candidates):
-        return None
-    eligible = standalone_candidates or candidates
-    if len(eligible) != 1:
-        return None
-    _, index, embedded_underlying, wkn = eligible[0]
-    return index, embedded_underlying, wkn
+    # Multiple usable shapes are ambiguous even if they share an input token.
+    return candidates[0] if len(candidates) == 1 else None
 
 
-def _parse_base_tail(tail: Sequence[str]) -> dict[str, Any] | None:
+def _embedded_identities(line: str) -> tuple[tuple[str, str, str], ...]:
+    identities = []
+    wkn_issuer = WKN_AND_ISSUER_RE.fullmatch(line)
+    if wkn_issuer is not None:
+        wkn = wkn_issuer.group("wkn")
+        # An all-letter prefix can be an ordinary word in the instrument or issuer.
+        if _is_digit_bearing_wkn(wkn):
+            identities.append((wkn, "", wkn_issuer.group("issuer")))
+    underlying_wkn = re.fullmatch(r"(?P<label>.+\S)\s+(?P<wkn>[A-Z0-9]{6})", line)
+    if underlying_wkn is not None:
+        identities.append((underlying_wkn.group("wkn"), underlying_wkn.group("label"), ""))
+    return tuple(identities)
+
+
+def _is_digit_bearing_wkn(value: str) -> bool:
+    return bool(WKN_RE.fullmatch(value)) and any(character.isdigit() for character in value)
+
+
+def _parse_base_tail(tail: Sequence[str], *, embedded_issuer: str = "") -> dict[str, Any] | None:
     direction_match = _first_direction_match(tail)
     if direction_match is None:
         return None
     direction_index, direction, direction_consumed = direction_match
-    issuer = " ".join(tail[:direction_index]).strip()
+    issuer = " ".join(part for part in (embedded_issuer, *tail[:direction_index]) if part).strip()
     if not issuer:
         return None
     index = direction_index + direction_consumed
@@ -542,7 +543,14 @@ def _first_direction_match(lines: Sequence[str]) -> tuple[int, str, int] | None:
             return index, candidate, 1
         for direction in TYPE_WORDS:
             prefix = direction + " "
-            if candidate.startswith(prefix) and COMBINED_RATIO_STRIKE_RE.fullmatch(candidate[len(prefix):]):
+            if not candidate.startswith(prefix):
+                continue
+            numeric = candidate[len(prefix):]
+            if COMBINED_RATIO_STRIKE_RE.fullmatch(numeric) or (
+                RATIO_RE.fullmatch(numeric)
+                and index + 1 < len(lines)
+                and STRIKE_RUNTIME_RE.fullmatch(lines[index + 1])
+            ):
                 return index, direction, 0
         if candidate.endswith("-") and index + 1 < len(lines):
             joined = f"{candidate}{lines[index + 1]}"
@@ -597,6 +605,7 @@ def _extract_metrics_rows(lines: Sequence[str]) -> tuple[_DerivativeMetrics, ...
                 target="" if target in {"Verkauft", "Verkaufen"} else target,
                 stop="" if stop in {"Verkauft", "Verkaufen"} else stop,
                 recommendation=" ".join(recommendation_parts).strip(),
+                exit_status="Verkaufen" if "Verkaufen" in (target, stop) else "",
             )
         )
         index = row_end
@@ -679,6 +688,7 @@ def _apply_metrics(
         stop=metrics.stop,
         recommendation=metrics.recommendation,
         metrics_page=metrics_page,
+        exit_status=metrics.exit_status,
     )
 
 

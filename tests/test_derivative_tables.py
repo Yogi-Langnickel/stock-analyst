@@ -131,6 +131,61 @@ class DerivativeOverviewTablesTest(unittest.TestCase):
                          ("Turbo-Short", "100,00", "13,50 NOK", "open end", "4,5"))
         self.assertEqual(row.source_pages, (12, 13))
 
+    def test_wkn_issuer_and_direction_ratio_tokens_keep_metrics_row_alignment(self) -> None:
+        base = (
+            *BASE_PAGE_LINES[:10],
+            "Synthetic First", "ZZ0001 ABC", "Call", "0,02", "15,00 USD",
+            "18.12.26", "2,0",
+            "Synthetic Second", "ZZ0002", "Example Issuer",
+            "Turbo-Short 1,00", "12,50 NOK", "open end", "3,0",
+            "Derivate-Tipps im Rückblick",
+        )
+        sale_metrics = (*EXTRA_METRICS_LINES[:5], "Verkaufen", "••••", "••••",
+                        "Gewinne", "realisieren")
+        result = extract_derivative_overview_result_from_page_lines(
+            ((12, base), (13, METRICS_HEADER_LINES + BAYER_METRICS_LINES + sale_metrics)),
+            issue_id="2099-W01",
+        )
+
+        self.assertEqual(result.exceptions, ())
+        self.assertEqual(len(result.rows), 2)
+        first, second = result.rows
+        self.assertEqual((first.underlying, first.wkn, first.issuer),
+                         ("Synthetic First", "ZZ0001", "ABC"))
+        self.assertEqual((second.underlying, second.wkn, second.issuer),
+                         ("Synthetic Second", "ZZ0002", "Example Issuer"))
+        self.assertEqual((second.direction, second.ratio, second.strike_cap,
+                          second.runtime, second.omega_hebel),
+                         ("Turbo-Short", "1,00", "12,50 NOK", "open end", "3,0"))
+        self.assertEqual((first.current_price, second.current_price), ("1,94 EUR", "2,20 EUR"))
+        self.assertEqual((first.exit_status, second.exit_status), ("", "Verkaufen"))
+        self.assertNotIn("exitStatus", first.to_dict())
+        self.assertEqual(second.to_dict()["exitStatus"], "Verkaufen")
+        self.assertEqual((second.target, second.stop, second.recommendation),
+                         ("", "", "Gewinne realisieren"))
+        self.assertEqual((first.source_pages, second.source_pages), ((12, 13), (12, 13)))
+
+    def test_ambiguous_wkn_issuer_or_malformed_fused_direction_rejects_table(self) -> None:
+        for identity_and_type in (
+            ("ZZ0001 ABC", "ZZ0002", "Example Issuer", "Call", "0,02"),
+            ("ZZ0001 ZZ0002", "Call", "0,02"),
+            ("ZZ0001 ABC ZZ0002", "Call", "0,02"),
+            ("ZZ0001 ZZ0002", "ZZ0003", "Example Issuer", "Call", "0,02"),
+            ("ZZ0001 123456", "ZZ0003", "Example Issuer", "Call", "0,02"),
+            ("ZZ0001", "Example Issuer", "Turbo-Short 0,02 extra"),
+        ):
+            with self.subTest(identity_and_type=identity_and_type):
+                base = (
+                    *BASE_PAGE_LINES[:-1], "Synthetic Product", *identity_and_type,
+                    "15,00 USD", "18.12.26", "2,0", "Derivate-Tipps im Rückblick",
+                )
+                result = extract_derivative_overview_result_from_page_lines(
+                    ((12, base), (13, METRICS_HEADER_LINES + BAYER_METRICS_LINES * 3)),
+                    issue_id="2099-W01",
+                )
+                self.assertEqual(result.rows, ())
+                self.assertEqual(result.exceptions[0].reason, "base_row_parse_failed")
+
     def test_malformed_strike_runtime_tail_rejects_entire_table(self) -> None:
         for token in ("7.000 open end", "7.000 Pkte. open end extra",
                       "7.000 Pkte. 99.99.9999", "7.000 XYZ open end",
